@@ -1,0 +1,133 @@
+## Hive Mind Configuration - Software Engineering Team
+## Topology: hierarchical-mesh | Consensus: raft
+
+hive:
+  name: "software-engineering-hive"
+  topology: "hierarchical-mesh"
+  consensus: "raft"
+  max_agents: 10
+
+  queen:
+    agent: "tech-lead"
+    capabilities:
+      - task_decomposition
+      - architecture_decisions
+      - team_coordination
+      - quality_gate
+
+  workers:
+    - name: "architect"
+      specialization: "system-design"
+      capabilities: ["system_design", "api_design", "database_modeling"]
+      auto_spawn: true
+
+    - name: "coder"
+      specialization: "implementation"
+      capabilities: ["code_generation", "refactoring", "optimization"]
+      auto_spawn: true
+      replicas: 2  # Can spawn multiple coders for parallel work
+
+    - name: "debugger"
+      specialization: "investigation"
+      capabilities: ["root_cause_analysis", "stack_trace_analysis"]
+      auto_spawn: false  # Spawn on demand
+
+    - name: "tester"
+      specialization: "validation"
+      capabilities: ["unit_testing", "integration_testing", "e2e_testing"]
+      auto_spawn: true
+
+    - name: "reviewer"
+      specialization: "quality"
+      capabilities: ["code_review", "security_audit", "best_practices"]
+      auto_spawn: true
+
+    - name: "security-engineer"
+      specialization: "security"
+      capabilities: ["threat_modeling", "vulnerability_assessment"]
+      auto_spawn: false  # Spawn on demand
+
+    - name: "performance-engineer"
+      specialization: "performance"
+      capabilities: ["profiling", "bottleneck_analysis", "optimization"]
+      auto_spawn: false  # Spawn on demand
+
+    - name: "docs-writer"
+      specialization: "documentation"
+      capabilities: ["api_documentation", "architecture_docs"]
+      auto_spawn: false  # Spawn on demand
+
+    - name: "devops-engineer"
+      specialization: "operations"
+      capabilities: ["ci_cd_pipelines", "containerization", "monitoring"]
+      auto_spawn: false  # Spawn on demand
+
+  memory:
+    namespace: "software-engineering"
+    sync_interval: "30s"
+    shared_keys:
+      - "swarm/tech-lead/*"
+      - "swarm/shared/*"
+      - "swarm/*/status"
+
+  anti_drift:
+    enabled: true
+    checkpoint_interval: "5m"
+    max_drift_score: 0.3
+    recovery_strategy: "queen-realign"
+
+  workflows:
+    feature:
+      description: "Standard feature development workflow"
+      steps:
+        - agent: "tech-lead"
+          action: "decompose"
+        - agent: "architect"
+          action: "design"
+          depends_on: ["tech-lead"]
+        - agent: "coder"
+          action: "implement"
+          depends_on: ["architect"]
+        - agent: "tester"
+          action: "test"
+          depends_on: ["coder"]
+        - agent: "reviewer"
+          action: "review"
+          depends_on: ["tester"]
+
+    bugfix:
+      description: "Bug investigation and fix workflow"
+      steps:
+        - agent: "debugger"
+          action: "investigate"
+        - agent: "coder"
+          action: "fix"
+          depends_on: ["debugger"]
+        - agent: "tester"
+          action: "regression-test"
+          depends_on: ["coder"]
+
+    security_audit:
+      description: "Security assessment workflow"
+      steps:
+        - agent: "security-engineer"
+          action: "threat-model"
+        - agent: "security-engineer"
+          action: "scan"
+        - agent: "coder"
+          action: "remediate"
+          depends_on: ["security-engineer"]
+
+    performance_optimization:
+      description: "Performance profiling and optimization"
+      steps:
+        - agent: "performance-engineer"
+          action: "profile"
+        - agent: "performance-engineer"
+          action: "analyze"
+        - agent: "coder"
+          action: "optimize"
+          depends_on: ["performance-engineer"]
+        - agent: "tester"
+          action: "benchmark"
+          depends_on: ["coder"]
