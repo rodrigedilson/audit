@@ -1,15 +1,29 @@
 {
   "name": "audit",
   "version": "1.0.0",
-  "main": "index.js",
+  "type": "module",
+  "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit",
+    "dev": "tsx src/index.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "ESAA-Flow: Event Sourcing for Autonomous Agents integrated with Hive Mind orchestration",
   "dependencies": {
-    "claude-flow": "^3.5.2"
+    "ajv": "^8.17.1",
+    "claude-flow": "^3.5.2",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.13.4"
   }
 }

@@ -54,3 +54,7 @@ Thumbs.db
 dist/
 out/
 *.tgz
+
+# === Artefatos de migracao de PC (nao versionar) ===
+RESTORE.md
+_venv_requirements/

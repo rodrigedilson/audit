@@ -1,0 +1,40 @@
+esaa:
+  version: "0.4.0"
+
+  event_store:
+    path: ".roadmap/activity.jsonl"
+    schema_path: ".roadmap/schemas/event.schema.json"
+
+  materialized_view:
+    path: ".roadmap/roadmap.json"
+    auto_project: true
+
+  contracts:
+    agent_contract: "config/AGENT_CONTRACT.yaml"
+    orchestrator_contract: "config/ORCHESTRATOR_CONTRACT.yaml"
+
+  runtime:
+    attempt_ttl_minutes: 30
+    max_attempts_per_task: 3
+    cooldown_minutes: 2
+    single_writer: true
+
+  verification:
+    auto_verify: true
+    hash_algorithm: "sha256"
+    replay_on_startup: true
+
+  sync:
+    hive_mind_interval_seconds: 30
+    memory_namespace: "software-engineering"
+    coordination_namespace: "coordination"
+
+  escalation:
+    - level: low
+      action: log_only
+    - level: medium
+      action: log_and_flag
+    - level: high
+      action: block_task
+    - level: critical
+      action: halt_pipeline

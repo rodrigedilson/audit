@@ -1,0 +1,189 @@
+agents:
+  tech-lead:
+    task_kind: orchestrator
+    allowed_actions:
+      - run.start
+      - task.create
+      - hotfix.create
+      - verify.start
+      - verify.ok
+      - verify.fail
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+        - config/
+      writable:
+        - .roadmap/
+        - docs/
+      forbidden: []
+
+  architect:
+    task_kind: spec
+    allowed_actions:
+      - claim
+      - complete
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+      writable:
+        - docs/spec/
+      forbidden:
+        - src/
+        - tests/
+
+  docs-writer:
+    task_kind: spec
+    allowed_actions:
+      - claim
+      - complete
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+      writable:
+        - docs/spec/
+        - docs/
+      forbidden:
+        - src/
+        - tests/
+
+  coder:
+    task_kind: impl
+    allowed_actions:
+      - claim
+      - complete
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+        - config/
+      writable:
+        - src/
+        - tests/
+      forbidden:
+        - .roadmap/
+
+  devops-engineer:
+    task_kind: impl
+    allowed_actions:
+      - claim
+      - complete
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+        - config/
+        - scripts/
+      writable:
+        - src/
+        - config/
+        - scripts/
+      forbidden:
+        - .roadmap/
+
+  tester:
+    task_kind: qa
+    allowed_actions:
+      - claim
+      - complete
+      - review
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+      writable:
+        - docs/qa/
+        - tests/
+      forbidden:
+        - src/
+        - .roadmap/
+
+  security-engineer:
+    task_kind: qa
+    allowed_actions:
+      - claim
+      - complete
+      - review
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+        - config/
+      writable:
+        - docs/qa/
+        - tests/
+      forbidden:
+        - src/
+        - .roadmap/
+
+  performance-engineer:
+    task_kind: qa
+    allowed_actions:
+      - claim
+      - complete
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+      writable:
+        - docs/qa/
+        - tests/
+      forbidden:
+        - src/
+        - .roadmap/
+
+  reviewer:
+    task_kind: review
+    allowed_actions:
+      - review
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+      writable: []
+      forbidden:
+        - src/
+        - tests/
+        - .roadmap/
+
+  debugger:
+    task_kind: hotfix
+    allowed_actions:
+      - claim
+      - complete
+      - issue.report
+    boundaries:
+      readable:
+        - .roadmap/
+        - docs/
+        - src/
+        - tests/
+      writable:
+        - src/
+        - tests/
+      forbidden:
+        - .roadmap/

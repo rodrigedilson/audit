@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ESAA Event",
+  "description": "Schema for ESAA event entries in activity.jsonl",
+  "type": "object",
+  "required": ["event_id", "event_seq", "action", "task_id", "actor", "ts", "schema_version", "payload"],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique event identifier (UUID v4)"
+    },
+    "event_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Strictly monotonic, gap-free sequence number"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "run.start",
+        "task.create",
+        "claim",
+        "complete",
+        "review",
+        "issue.report",
+        "hotfix.create",
+        "output.rejected",
+        "verify.start",
+        "verify.ok",
+        "verify.fail",
+        "orchestrator.file.write",
+        "phase.complete"
+      ],
+      "description": "Event action from controlled vocabulary"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Task identifier (e.g., T-1000)"
+    },
+    "actor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Agent or orchestrator that emitted this event"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "0.4.0",
+      "description": "ESAA schema version"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Action-specific payload data"
+    }
+  },
+  "additionalProperties": false
+}

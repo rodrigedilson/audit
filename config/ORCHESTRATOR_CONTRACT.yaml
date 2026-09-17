@@ -1,0 +1,47 @@
+invariants:
+  INV-001:
+    description: "done is terminal — no regression allowed"
+    enforcement: "ImmutabilityGuardService rejects any mutation on done tasks"
+
+  INV-002:
+    description: "No effect persists before complete validation"
+    enforcement: "ValidationPipeline runs 7 layers before event is appended"
+
+  INV-003:
+    description: "Enforce boundaries by task_kind with path normalization"
+    enforcement: "ContractEnforcerService validates file_updates against agent boundary"
+
+  INV-004:
+    description: "event_seq strictly monotonic, gap-free; event_id unique"
+    enforcement: "EventAppenderService ensures next seq = last + 1"
+
+  INV-005:
+    description: "Single writer — one orchestrator instance at a time"
+    enforcement: "Lock file mechanism prevents concurrent orchestrator execution"
+
+  INV-006:
+    description: "Projection verifiable by deterministic replay"
+    enforcement: "HashVerifierService replays events and compares SHA-256 hash"
+
+runtime_policies:
+  attempt_ttl_minutes: 30
+  max_attempts_per_task: 3
+  cooldown_minutes: 2
+  escalation_levels:
+    - level: low
+      action: log_only
+    - level: medium
+      action: log_and_flag
+    - level: high
+      action: block_task
+    - level: critical
+      action: halt_pipeline
+
+rejection_conditions:
+  - unknown_action
+  - schema_violation
+  - boundary_violation
+  - immutable_done_violation
+  - lock_violation
+  - invalid_transition
+  - verification_mismatch

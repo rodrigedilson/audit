@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx claude-flow init --help)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}
