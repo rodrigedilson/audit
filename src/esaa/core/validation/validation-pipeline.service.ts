@@ -1,4 +1,5 @@
-import type { ESAAIntention, ESAAEventData, MaterializedRoadmap } from '../../shared/types/esaa-event.types.js';
+import type { ESAAIntention, ESAAEventData } from '../../shared/types/esaa-event.types.js';
+import type { FiscalProjection } from '../../../fiscal/shared/fiscal-projection.types.js';
 import type { ValidationError } from '../../shared/types/esaa-errors.js';
 import { JsonParseValidator } from './validators/json-parse.validator.js';
 import { SchemaValidator } from './validators/schema.validator.js';
@@ -8,7 +9,7 @@ import { BoundaryValidator } from './validators/boundary.validator.js';
 import { ImmutabilityValidator } from './validators/immutability.validator.js';
 import { VerificationGateValidator } from './validators/verification-gate.validator.js';
 import type { ContractEnforcerService } from '../contracts/contract-enforcer.service.js';
-import type { HashVerifierService } from '../projection/hash-verifier.service.js';
+import type { FiscalHashVerifierService } from '../../../fiscal/projection/fiscal-hash-verifier.service.js';
 
 export interface ValidationResult {
   valid: boolean;
@@ -27,7 +28,7 @@ export class ValidationPipelineService {
 
   constructor(
     contractEnforcer: ContractEnforcerService,
-    hashVerifier: HashVerifierService,
+    hashVerifier: FiscalHashVerifierService,
   ) {
     this.jsonParseValidator = new JsonParseValidator();
     this.schemaValidator = new SchemaValidator();
@@ -40,7 +41,7 @@ export class ValidationPipelineService {
 
   validate(
     intention: ESAAIntention,
-    roadmap: MaterializedRoadmap,
+    projection: FiscalProjection,
     events: ESAAEventData[],
   ): ValidationResult {
     const errors: ValidationError[] = [];
@@ -56,16 +57,16 @@ export class ValidationPipelineService {
       this.vocabularyValidator.validate(intention);
 
       // Layer 4: State Machine
-      this.stateMachineValidator.validate(intention, roadmap);
+      this.stateMachineValidator.validate(intention, projection);
 
       // Layer 5: Boundary
       this.boundaryValidator.validate(intention);
 
       // Layer 6: Immutability
-      this.immutabilityValidator.validate(intention, roadmap);
+      this.immutabilityValidator.validate(intention, projection);
 
       // Layer 7: Verification Gate
-      this.verificationGateValidator.validate(events, roadmap);
+      this.verificationGateValidator.validate(events, projection);
 
       return { valid: true, errors: [], layerReached: 7 };
     } catch (error) {

@@ -2,6 +2,10 @@ import { ValidationError } from '../../../shared/types/esaa-errors.js';
 import type { ESAAIntention } from '../../../shared/types/esaa-event.types.js';
 import type { ContractEnforcerService } from '../../contracts/contract-enforcer.service.js';
 
+/**
+ * Camada 5 — fronteiras do `AGENT_CONTRACT.yaml`. Aplica-se a agentes; usuários
+ * passam direto (ver ContractEnforcerService).
+ */
 export class BoundaryValidator {
   readonly layer = 5;
 

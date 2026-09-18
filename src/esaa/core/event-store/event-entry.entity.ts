@@ -1,20 +1,21 @@
 import { Entity } from '../../shared/domain/entity.js';
-import type { ESAAEventData, ESAAPayload } from '../../shared/types/esaa-event.types.js';
-import type { ESAAAction } from '../../shared/types/esaa-vocabulary.js';
+import type { ESAAEventData } from '../../shared/types/esaa-event.types.js';
+import type { FiscalAction } from '../../../fiscal/shared/fiscal-vocabulary.js';
+import type { FiscalPayload } from '../../../fiscal/shared/fiscal-projection.types.js';
 import { EventId } from './value-objects/event-id.vo.js';
 import { EventSeq } from './value-objects/event-seq.vo.js';
 import { Actor } from './value-objects/actor.vo.js';
 import { EventScope } from './value-objects/event-scope.vo.js';
 
-const SCHEMA_VERSION = '0.4.0';
+const SCHEMA_VERSION = '0.5.0';
 
 export interface NewEventInput {
   scope: EventScope;
   seq: number;
-  action: ESAAAction;
+  action: FiscalAction;
   taskId: string;
   actorName: string;
-  payload: ESAAPayload;
+  payload: FiscalPayload;
   period?: string;
 }
 
@@ -22,11 +23,11 @@ export class EventEntry extends Entity<string> {
   private constructor(
     private readonly eventId: EventId,
     private readonly eventSeq: EventSeq,
-    private readonly action: ESAAAction,
+    private readonly action: FiscalAction,
     private readonly taskId: string,
     private readonly actor: Actor,
     private readonly timestamp: Date,
-    private readonly payload: ESAAPayload,
+    private readonly payload: FiscalPayload,
     private readonly scope: EventScope,
     private readonly period: string | undefined,
   ) {
@@ -102,7 +103,7 @@ export class EventEntry extends Entity<string> {
     return JSON.stringify(this.toData());
   }
 
-  getAction(): ESAAAction {
+  getAction(): FiscalAction {
     return this.action;
   }
 
@@ -118,7 +119,7 @@ export class EventEntry extends Entity<string> {
     return this.eventSeq.toNumber();
   }
 
-  getPayload(): ESAAPayload {
+  getPayload(): FiscalPayload {
     return this.payload;
   }
 

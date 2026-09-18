@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import type { ApiDeps } from '../server.js';
 import { PostgresEventStoreRepository } from '../../infrastructure/persistence/postgres-event-store.repository.js';
 import { EventReplayerService } from '../../esaa/core/event-store/event-replayer.service.js';
-import { ProjectorService } from '../../esaa/core/projection/projector.service.js';
-import { HashVerifierService } from '../../esaa/core/projection/hash-verifier.service.js';
+import { FiscalProjectorService } from '../../fiscal/projection/fiscal-projector.service.js';
+import { FiscalHashVerifierService } from '../../fiscal/projection/fiscal-hash-verifier.service.js';
 
 const CNPJ_PARAM = {
   type: 'object',
@@ -83,15 +83,15 @@ export async function registerEventRoutes(app: FastifyInstance, deps: ApiDeps): 
       const repo = new PostgresEventStoreRepository(deps.pool, scope);
       const events = await new EventReplayerService(repo).replayAll();
 
-      const projector = new ProjectorService();
-      const roadmap = projector.project(events);
-      const verification = new HashVerifierService(projector).verify(events, roadmap);
+      const projector = new FiscalProjectorService();
+      const projection = projector.project(scope.tenantId, scope.cnpj, events);
+      const verification = new FiscalHashVerifierService(projector).verify(events, projection);
 
       return reply.code(200).send({
         ok: verification.valid,
         stored_hash: verification.storedHash,
         replayed_hash: verification.replayHash,
-        last_event_seq: roadmap.last_event_seq,
+        last_event_seq: projection.last_event_seq,
       });
     },
   );

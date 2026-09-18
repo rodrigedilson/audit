@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
@@ -16,11 +16,14 @@ import type pg from 'pg';
  * append-only bloqueia DELETE em `events`.
  */
 export async function applyMigrations(pool: pg.Pool): Promise<void> {
-  const sql = await readFile(
-    join(process.cwd(), 'supabase/migrations/20260918120000_multi_tenancy.sql'),
-    'utf8',
-  );
-  await pool.query(sql);
+  const dir = join(process.cwd(), 'supabase/migrations');
+  // Ordem lexicográfica é a ordem cronológica: os arquivos são prefixados com
+  // timestamp. Aplicar fora de ordem quebraria as FKs.
+  const files = (await readdir(dir)).filter((name) => name.endsWith('.sql')).sort();
+
+  for (const file of files) {
+    await pool.query(await readFile(join(dir, file), 'utf8'));
+  }
 }
 
 /** CNPJ sintético de 14 dígitos. Não valida dígito verificador — o banco não exige. */

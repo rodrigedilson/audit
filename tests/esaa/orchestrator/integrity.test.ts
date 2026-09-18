@@ -6,10 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { JsonlEventStoreRepository } from '../../../src/esaa/core/event-store/jsonl-event-store.repository.js';
 import type { EventDraft, IEventStoreRepository } from '../../../src/esaa/core/event-store/event-store.repository.js';
 import { ContractLoaderService } from '../../../src/esaa/core/contracts/contract-loader.service.js';
-import { ESAAOrchestratorService } from '../../../src/esaa/orchestrator/esaa-orchestrator.service.js';
+import { FiscalOrchestratorService } from '../../../src/esaa/orchestrator/fiscal-orchestrator.service.js';
 import { IntegrityViolationError } from '../../../src/esaa/shared/types/esaa-errors.js';
 import type { ESAAEventData } from '../../../src/esaa/shared/types/esaa-event.types.js';
-import { TEST_SCOPE } from '../../helpers/scope.js';
+import { TEST_SCOPE, TEST_USER_ID, payloads } from '../../helpers/scope.js';
 
 /**
  * Um escritor concorrente é a única forma realista de a projeção divergir do log
@@ -40,19 +40,15 @@ class RaceInjectingStore implements IEventStoreRepository {
     const intruder: ESAAEventData = {
       event_id: randomUUID(),
       event_seq: events.length,
-      action: 'task.create',
-      task_id: 'T-9999',
-      actor: 'tech-lead',
+      action: 'period.opened',
+      task_id: '2027-09',
+      actor: TEST_USER_ID,
       ts: new Date().toISOString(),
       schema_version: '0.4.0',
       tenant_id: TEST_SCOPE.tenantId,
       cnpj: TEST_SCOPE.cnpj,
-      payload: {
-        kind: 'impl',
-        description: 'Task gravada por um escritor concorrente',
-        assigned_agent: 'coder',
-        parent_run: 'run-001',
-      },
+      payload: { period: '2027-09' },
+      period: '2027-09',
     };
 
     return [...events, intruder];
@@ -78,7 +74,7 @@ class RaceInjectingStore implements IEventStoreRepository {
   }
 }
 
-describe('ESAAOrchestratorService — integridade (INV-006)', () => {
+describe('FiscalOrchestratorService — integridade (INV-006)', () => {
   let tempDir: string;
   let inner: JsonlEventStoreRepository;
   let contractLoader: ContractLoaderService;
@@ -96,18 +92,18 @@ describe('ESAAOrchestratorService — integridade (INV-006)', () => {
     await rm(tempDir, { recursive: true });
   });
 
-  const runStart = {
-    action: 'run.start' as const,
-    task_id: 'run-001',
-    actor: 'tech-lead',
-    payload: { run_id: 'run-001', phase_name: 'Fechamento', objectives: [] },
+  const enrollClient = {
+    action: 'client.enrolled' as const,
+    task_id: TEST_SCOPE.cnpj,
+    actor: TEST_USER_ID,
+    payload: payloads.clientEnrolled(),
   };
 
   it('aceita a intenção quando o log e a projeção fecham', async () => {
-    const orchestrator = new ESAAOrchestratorService(inner, contractLoader, TEST_SCOPE);
+    const orchestrator = new FiscalOrchestratorService(inner, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
 
-    const result = await orchestrator.processIntention(runStart);
+    const result = await orchestrator.processIntention(enrollClient);
 
     expect(result.accepted).toBe(true);
     await expect(orchestrator.verify()).resolves.toMatchObject({ valid: true });
@@ -117,18 +113,18 @@ describe('ESAAOrchestratorService — integridade (INV-006)', () => {
     // Leituras de processIntention: 1 validação, 2 reprojeção, 3 verificação.
     // Injetar na 3ª faz a verificação ver um log que a projeção não contempla.
     const racing = new RaceInjectingStore(inner, 3);
-    const orchestrator = new ESAAOrchestratorService(racing, contractLoader, TEST_SCOPE);
+    const orchestrator = new FiscalOrchestratorService(racing, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
 
-    await expect(orchestrator.processIntention(runStart)).rejects.toThrow(IntegrityViolationError);
+    await expect(orchestrator.processIntention(enrollClient)).rejects.toThrow(IntegrityViolationError);
   });
 
   it('não engole a divergência: o erro carrega os dois hashes', async () => {
     const racing = new RaceInjectingStore(inner, 3);
-    const orchestrator = new ESAAOrchestratorService(racing, contractLoader, TEST_SCOPE);
+    const orchestrator = new FiscalOrchestratorService(racing, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
 
-    const error = await orchestrator.processIntention(runStart).catch((e: unknown) => e);
+    const error = await orchestrator.processIntention(enrollClient).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(IntegrityViolationError);
     const violation = error as IntegrityViolationError;
@@ -139,9 +135,9 @@ describe('ESAAOrchestratorService — integridade (INV-006)', () => {
   });
 
   it('verify() devolve os campos que o POST /verify do contrato expõe', async () => {
-    const orchestrator = new ESAAOrchestratorService(inner, contractLoader, TEST_SCOPE);
+    const orchestrator = new FiscalOrchestratorService(inner, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
-    await orchestrator.processIntention(runStart);
+    await orchestrator.processIntention(enrollClient);
 
     const report = await orchestrator.verify();
 

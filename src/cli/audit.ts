@@ -146,18 +146,20 @@ async function runVerify(options: BootstrapOptions): Promise<number> {
 
 async function runStatus(options: BootstrapOptions): Promise<number> {
   const { orchestrator, scope } = await bootstrap(options);
-  const roadmap = await orchestrator.getRoadmap();
-  const { stats } = roadmap;
+  const projection = await orchestrator.getProjection();
+  const { stats, client } = projection;
 
   process.stdout.write(
     [
       `escopo            ${scope.toKey()}`,
-      `run               ${roadmap.run ? `${roadmap.run.run_id} (${roadmap.run.status})` : '(nenhum)'}`,
-      `ultimo event_seq  ${roadmap.last_event_seq}`,
-      `tasks             ${stats.total} (todo ${stats.todo} · andamento ${stats.in_progress} · review ${stats.review} · done ${stats.done})`,
+      `cliente           ${client ? `${client.legal_name} (${client.regime})` : '(nao cadastrado)'}`,
+      `ultimo event_seq  ${projection.last_event_seq}`,
+      `competencias      ${stats.periods_total} (aberta ${stats.periods_open} · apurada ${stats.periods_assessed} · conciliada ${stats.periods_reconciled} · confirmada ${stats.periods_confirmed})`,
+      `documentos        ${stats.documents_received}`,
+      `certificado       ${projection.certificate ? `${projection.certificate.serial} (usos: ${projection.certificate.usage_count})` : '(nenhum)'}`,
       `rejeicoes         ${stats.rejected_count}`,
-      `issues abertas    ${roadmap.issues.filter((i) => i.status === 'open').length}`,
-      `hash              ${roadmap.projection_hash_sha256}`,
+      `issues abertas    ${stats.open_issues}`,
+      `hash              ${projection.projection_hash_sha256}`,
       '',
     ].join('\n'),
   );

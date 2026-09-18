@@ -52,6 +52,7 @@ describe.skipIf(!DATABASE_URL)('API HTTP', () => {
       SUPABASE_ANON_KEY: 'chave-anon-de-teste',
       SUPABASE_JWT_SECRET: JWT_SECRET,
       SUPABASE_JWT_AUDIENCE: AUDIENCE,
+      CERTIFICATE_MASTER_KEY: 'chave-mestra-de-teste-com-mais-de-32-caracteres',
       LOG_LEVEL: 'silent',
     } as NodeJS.ProcessEnv);
 
@@ -208,10 +209,10 @@ describe.skipIf(!DATABASE_URL)('API HTTP', () => {
         scopeB,
       );
       await appender.append({
-        action: 'run.start',
-        taskId: 'run-b',
-        actor: 'tech-lead',
-        payload: { run_id: 'run-b', phase_name: 'B', objectives: [] },
+        action: 'client.enrolled',
+        taskId: CNPJ_B,
+        actor: USER_B,
+        payload: { legal_name: 'Cliente do B', regime: 'lucro_presumido' },
       });
 
       // O CNPJ do B nem é visível para o A.
@@ -261,21 +262,16 @@ describe.skipIf(!DATABASE_URL)('API HTTP', () => {
         scope,
       );
       await appender.append({
-        action: 'run.start',
-        taskId: 'run-001',
-        actor: 'tech-lead',
-        payload: { run_id: 'run-001', phase_name: 'Fechamento', objectives: [] },
+        action: 'client.enrolled',
+        taskId: CNPJ_A,
+        actor: USER_A,
+        payload: { legal_name: 'Cliente do A', regime: 'simples_hibrido' },
       });
       await appender.append({
-        action: 'task.create',
-        taskId: 'T-1',
-        actor: 'tech-lead',
-        payload: {
-          kind: 'impl',
-          description: 'Apurar',
-          assigned_agent: 'coder',
-          parent_run: 'run-001',
-        },
+        action: 'period.opened',
+        taskId: '2027-01',
+        actor: USER_A,
+        payload: { period: '2027-01' },
         period: '2027-01',
       });
     };
@@ -295,7 +291,7 @@ describe.skipIf(!DATABASE_URL)('API HTTP', () => {
 
       expect((await authGet(`/v1/clients/${CNPJ_A}/events?after_seq=0`, USER_A)).json()).toHaveLength(1);
       expect(
-        (await authGet(`/v1/clients/${CNPJ_A}/events?action=run.start`, USER_A)).json(),
+        (await authGet(`/v1/clients/${CNPJ_A}/events?action=client.enrolled`, USER_A)).json(),
       ).toHaveLength(1);
     });
 

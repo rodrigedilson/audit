@@ -1,7 +1,7 @@
 import { JsonlEventStoreRepository } from './esaa/core/event-store/jsonl-event-store.repository.js';
 import { EventScope } from './esaa/core/event-store/value-objects/event-scope.vo.js';
 import { ContractLoaderService } from './esaa/core/contracts/contract-loader.service.js';
-import { ESAAOrchestratorService } from './esaa/orchestrator/esaa-orchestrator.service.js';
+import { FiscalOrchestratorService } from './esaa/orchestrator/fiscal-orchestrator.service.js';
 import { loadConfig, type ESAAConfig } from './config/esaa-config.js';
 
 /**
@@ -24,7 +24,7 @@ export interface Runtime {
   scope: EventScope;
   eventStore: JsonlEventStoreRepository;
   contractLoader: ContractLoaderService;
-  orchestrator: ESAAOrchestratorService;
+  orchestrator: FiscalOrchestratorService;
 }
 
 /**
@@ -45,7 +45,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Runtime
   const contractLoader = new ContractLoaderService();
   await contractLoader.loadAgentContract(config.contracts.agentContract);
 
-  const orchestrator = new ESAAOrchestratorService(eventStore, contractLoader, scope);
+  const orchestrator = new FiscalOrchestratorService(eventStore, contractLoader, scope);
   if (config.verification.replayOnStartup) {
     await orchestrator.initialize();
   }

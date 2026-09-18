@@ -21,6 +21,12 @@ export interface Env {
     audience: string;
   };
   logLevel: string;
+  /**
+   * Chave mestra da cifragem do PFX do certificado A1. Fora do banco de
+   * propósito: guardá-la junto do dado que ela protege anularia a cifragem.
+   * Gere com `openssl rand -base64 48`.
+   */
+  certificateMasterKey: string;
 }
 
 export class EnvError extends Error {
@@ -48,6 +54,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const databaseUrl = required('DATABASE_URL');
   const supabaseUrl = required('SUPABASE_URL');
   const anonKey = required('SUPABASE_ANON_KEY');
+  const certificateMasterKey = required('CERTIFICATE_MASTER_KEY');
 
   const jwtSecret = source['SUPABASE_JWT_SECRET']?.trim();
   const jwksUrl = source['SUPABASE_JWKS_URL']?.trim();
@@ -73,6 +80,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       audience: source['SUPABASE_JWT_AUDIENCE'] ?? 'authenticated',
     },
     logLevel: source['LOG_LEVEL'] ?? 'info',
+    certificateMasterKey,
   };
 
   if (jwtSecret) {

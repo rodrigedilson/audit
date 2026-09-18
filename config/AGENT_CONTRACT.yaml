@@ -1,189 +1,99 @@
+# =============================================================================
+# Contrato dos agentes fiscais.
+#
+# Substitui os dez agentes de engenharia de software (tech-lead, coder, tester…)
+# pelos cinco do domínio fiscal. A regra estrutural continua a mesma, e é o que
+# se vende ao escritório: **só o orquestrador escreve no event log**. Agente
+# propõe; a proposta é revisada e confirmada por humano, com trilha.
+#
+# `writable` vazio nega escrita. `forbidden` tem precedência sobre `writable`.
+# Usuários não aparecem aqui: eles agem através da API, que é o orquestrador, e
+# não têm fronteira de arquivo — ver ContractEnforcerService.
+# =============================================================================
+
 agents:
-  tech-lead:
-    task_kind: orchestrator
-    allowed_actions:
-      - run.start
-      - task.create
-      - hotfix.create
-      - verify.start
-      - verify.ok
-      - verify.fail
-    boundaries:
-      readable:
-        - .roadmap/
-        - docs/
-        - src/
-        - tests/
-        - config/
-      writable:
-        - .roadmap/
-        - docs/
-      forbidden: []
-
-  architect:
-    task_kind: spec
-    allowed_actions:
-      - claim
-      - complete
-      - issue.report
-    boundaries:
-      readable:
-        - .roadmap/
-        - docs/
-      writable:
-        - docs/spec/
-      forbidden:
-        - src/
-        - tests/
-
-  docs-writer:
-    task_kind: spec
-    allowed_actions:
-      - claim
-      - complete
-      - issue.report
-    boundaries:
-      readable:
-        - .roadmap/
-        - docs/
-      writable:
-        - docs/spec/
-        - docs/
-      forbidden:
-        - src/
-        - tests/
-
-  coder:
+  # Coleta DF-e, upload manual, SPED e extrato. Faz staging, não apura.
+  collector:
     task_kind: impl
     allowed_actions:
-      - claim
-      - complete
       - issue.report
     boundaries:
       readable:
-        - .roadmap/
+        - data/
         - docs/
-        - src/
-        - tests/
-        - config/
       writable:
-        - src/
-        - tests/
+        - data/staging/
       forbidden:
-        - .roadmap/
+        - data/events/
+        - config/
 
-  devops-engineer:
-    task_kind: impl
+  # Propõe classificação de item. Nunca confirma: confirmar é ato do contador.
+  classifier:
+    task_kind: spec
     allowed_actions:
-      - claim
-      - complete
+      - item.classify
       - issue.report
     boundaries:
       readable:
-        - .roadmap/
+        - data/
         - docs/
-        - src/
-        - tests/
-        - config/
-        - scripts/
       writable:
-        - src/
-        - config/
-        - scripts/
+        - data/catalog/proposals/
       forbidden:
-        - .roadmap/
+        - data/events/
+        - data/catalog/confirmed/
+        - config/
 
-  tester:
+  # Roda as trilhas de auditoria e sinaliza crédito suspeito. Não altera nada.
+  auditor:
     task_kind: qa
     allowed_actions:
-      - claim
-      - complete
-      - review
       - issue.report
+      - credit.flag
     boundaries:
       readable:
-        - .roadmap/
+        - data/
         - docs/
-        - src/
-        - tests/
       writable:
-        - docs/qa/
-        - tests/
+        - data/reports/
       forbidden:
-        - src/
-        - .roadmap/
-
-  security-engineer:
-    task_kind: qa
-    allowed_actions:
-      - claim
-      - complete
-      - review
-      - issue.report
-    boundaries:
-      readable:
-        - .roadmap/
-        - docs/
-        - src/
-        - tests/
+        - data/events/
+        - data/catalog/
         - config/
-      writable:
-        - docs/qa/
-        - tests/
-      forbidden:
-        - src/
-        - .roadmap/
 
-  performance-engineer:
-    task_kind: qa
-    allowed_actions:
-      - claim
-      - complete
-      - issue.report
-    boundaries:
-      readable:
-        - .roadmap/
-        - docs/
-        - src/
-        - tests/
-      writable:
-        - docs/qa/
-        - tests/
-      forbidden:
-        - src/
-        - .roadmap/
-
-  reviewer:
+  # Assistente fiscal (Onda 9). Somente leitura, sem exceção: toda resposta cita
+  # event_seq, e ações recomendadas voltam como sugestão para o usuário executar.
+  reconciler:
     task_kind: review
     allowed_actions:
-      - review
-      - issue.report
+      - assessment.review
     boundaries:
       readable:
-        - .roadmap/
+        - data/
         - docs/
-        - src/
-        - tests/
       writable: []
       forbidden:
-        - src/
-        - tests/
-        - .roadmap/
+        - data/
+        - config/
 
-  debugger:
-    task_kind: hotfix
+  # Orquestrador: o único agente que efetiva estado, e só via orquestrador.
+  closer:
+    task_kind: orchestrator
     allowed_actions:
-      - claim
-      - complete
-      - issue.report
+      - assessment.projected
+      - assessment.adjusted
+      - assessment.confirmed
+      - period.opened
+      - period.closed
+      - rectification.filed
+      - credit.recognized
+      - credit.conditioned
+      - credit.released
+      - output.rejected
     boundaries:
       readable:
-        - .roadmap/
+        - data/
         - docs/
-        - src/
-        - tests/
       writable:
-        - src/
-        - tests/
-      forbidden:
-        - .roadmap/
+        - data/events/
+      forbidden: []

@@ -2,11 +2,11 @@ import type { ESAAEventData } from '../../shared/types/esaa-event.types.js';
 import type { IEventStoreRepository } from './event-store.repository.js';
 import { EventEntry } from './event-entry.entity.js';
 import type { EventScope } from './value-objects/event-scope.vo.js';
-import type { ESAAAction } from '../../shared/types/esaa-vocabulary.js';
+import type { FiscalAction } from '../../../fiscal/shared/fiscal-vocabulary.js';
 import { EventStoreCorruptedError } from '../../shared/types/esaa-errors.js';
 
 export interface AppendInput {
-  action: ESAAAction;
+  action: FiscalAction;
   taskId: string;
   actor: string;
   payload: Record<string, unknown>;

@@ -1,0 +1,149 @@
+# Mapa de telas — painel do escritório
+
+> **Para quem é este documento:** quem constrói o frontend `audit-frontend` no
+> Lovable. Descreve telas, estados e a rota de API que alimenta cada uma.
+>
+> Fonte da verdade do contrato: [`docs/api/openapi.yaml`](../api/openapi.yaml).
+> Identidade visual: [`docs/integration/FRONTEND.md`](FRONTEND.md) e
+> `design-system/lovable/`. Ondas em [`docs/product/BRIEFING-SAAS-FISCAL.md`](../product/BRIEFING-SAAS-FISCAL.md).
+
+## Princípios que valem para todas as telas
+
+1. **O número sempre vem com a sua procedência.** Onde aparece um valor apurado,
+   aparece também o hash da projeção e o link para a memória de cálculo. É o
+   produto: o contador não calcula, ele audita — e precisa poder defender o
+   número.
+2. **Ação de escrita mostra o que foi gravado.** Toda resposta de escrita traz
+   `event_seq` e `projection_hash`; a tela confirma com "registrado no evento
+   #N", não com um toast genérico.
+3. **Rejeição não é erro de sistema.** Um `422` com `layer` e `reason` é
+   informação fiscal: mostre a camada, o motivo em PT-BR e o `suggested_fix`
+   quando houver. "Erro ao salvar" desperdiça o melhor do produto.
+4. **Nada de IA escrevendo sozinha.** Sugestão de agente aparece como proposta,
+   com botão de aceitar e a citação da evidência (`event_seq`). Nunca aplicada
+   automaticamente.
+5. **Light-only, verde `#365D5A` só em CTA/foco, controles 32/36/40px, raio
+   6px.** Ver FRONTEND.md — os arquivos de `design-system/lovable/` substituem
+   `index.css` e `tailwind.config.ts` do template.
+
+## Telas da Onda 2 (API pronta)
+
+### 1. Login
+`POST /v1/auth/login` → `{ access_token, expires_in, tenant }`
+
+Campos e-mail e senha. Erro sempre genérico ("E-mail ou senha inválidos") — a
+API não distingue os casos de propósito, e a tela não deve inventar a distinção.
+Guardar o token e o `tenant` retornado; o painel abre já sabendo o escritório.
+
+### 2. Carteira de CNPJs — tela inicial
+`GET /v1/clients?page&page_size&regime&status`
+
+DataTable, uma linha por CNPJ: razão social, CNPJ formatado, regime (badge),
+estado da competência corrente (badge: aberta / apurada / conciliada /
+confirmada), nº de documentos, issues abertas, crédito em risco, próximo prazo.
+
+- Filtros: regime e estado. Busca por razão social ou CNPJ.
+- Vazio: "Nenhum CNPJ cadastrado" + CTA **Cadastrar empresa** (só para `owner`).
+- Ordenação padrão: razão social. A carteira é o lugar de trabalho diário do
+  escritório — priorize densidade de informação sobre espaço em branco.
+- `open_issues`, `credit_at_risk_brl` e `next_deadline` vêm zerados/nulos até as
+  Ondas 5 a 8. Renderize a coluna, não esconda: o dado chega sem mudar a tela.
+
+### 3. Cadastro de empresa
+`POST /v1/clients` — **somente `owner`**
+
+Campos: `cnpj` (14 dígitos, sem máscara no envio — pode mascarar na tela),
+`legal_name`, `trade_name`, `regime` (select: MEI, Simples integrado, Simples
+híbrido, Lucro Presumido, Lucro Real), `uf`, `municipality_ibge`, `cnae_primary`.
+
+- `403` com "já está cadastrado": mostre que o CNPJ já está na carteira e
+  ofereça abrir o cliente. Cadastrar de novo cobraria duas vezes pelo mesmo CNPJ.
+- `400` de validação: destaque o campo. CNPJ com máscara é recusado pela API.
+- Sucesso: `201` com `event_seq` e `projection_hash`. Vá para o detalhe do
+  cliente.
+
+### 4. Detalhe do cliente
+`GET /v1/clients/{cnpj}` · `GET /v1/clients/{cnpj}/periods` · `GET /v1/clients/{cnpj}/events`
+
+Cabeçalho com razão social, CNPJ, regime e `has_certificate`. Abas:
+
+- **Competências** — lista de `periods` (mais recente primeiro) com estado, hash
+  e quem confirmou. CTA **Abrir competência** (`POST .../periods`, `accountant`
+  ou `owner`). Competência `confirmed` é terminal: sem botão de editar — a saída
+  é retificação, que entra na v0.3 do contrato.
+- **Certificado** — ver tela 5.
+- **Trilha** — `GET .../events`, paginado por `after_seq`, filtrável por
+  `action`. Uma linha por evento: seq, data, ação, actor e payload expansível.
+  Inclua os `output.rejected`: é onde o contador vê o que foi recusado e por quê.
+- **Cadastro** — `PATCH /v1/clients/{cnpj}` (`owner`): nome fantasia, regime com
+  `regime_effective_from` (o regime muda com vigência, não retroativamente) e
+  status ativo/inativo. Deixe claro que inativar afeta a fatura.
+
+### 5. Cofre de certificados A1
+`GET|PUT|DELETE /v1/clients/{cnpj}/certificate` · `GET .../certificate/usage` · `GET /v1/certificates/expiring`
+
+- **Sem certificado:** upload (`PUT`, multipart `pfx` + `password`), **somente
+  `owner`**. Avise que o arquivo é cifrado e que a senha **não** é guardada.
+- **Com certificado:** titular, emissor, serial, validade, `days_to_expiry`
+  (badge de alerta abaixo de 30 dias), quem guardou e quando, último uso e
+  contagem de usos. **A API nunca devolve o PFX** — não existe botão de baixar.
+- **Log de uso:** tabela de `certificate.used` com finalidade, serviço acessado,
+  resultado e IP. É o diferencial sobre o concorrente: trilha de cada uso.
+- **Vencendo:** widget na home com `GET /v1/certificates/expiring?days=60`. Um
+  certificado vencido para a coleta de DF-e sem avisar ninguém.
+
+### 6. Usuários e papéis
+Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
+
+| Papel | Pode |
+|---|---|
+| `owner` | tudo: cadastro de empresa, certificado, cobrança |
+| `accountant` | abrir competência, apurar, confirmar |
+| `viewer` | somente leitura |
+
+A tela deve esconder o que o papel não permite, **e** tratar o `403`: esconder
+botão não é autorização.
+
+## Telas das ondas seguintes
+
+| Onda | Tela | Rota |
+|---|---|---|
+| 3 | Planos, assinatura e calculadora de preço pública | `/plans`, `/subscription` |
+| 4 | Ingestão: upload de XML (207 por arquivo), SPED, extrato, jobs | `/documents`, `/sped`, `/jobs/{id}` |
+| 5 | Saúde do cadastro de itens, com propagação para notas | `/items`, `/items/health` |
+| 6 | Apuração dual velho/novo nota a nota, memória de cálculo | `/assessments/{period}`, `/confirm` |
+| 7 | Trilhas de auditoria e Book de fechamento em PDF | `/audit-trails`, `/books/{period}` |
+| 8 | Contra-apuração contribuinte × Fisco e calendário | `/reconciliation/{period}`, `/deadlines` |
+| 9 | Assistente fiscal com citações de `event_seq` | `/assistant/threads` |
+
+## Componentes que faltam no design system
+
+`design-system/` hoje tem primitivos de outro domínio (ReviewCard, StepPanel,
+Citation, de um assistente de requisitos regulatórios). Para este painel faltam,
+em ordem de necessidade:
+
+1. **AppShell** com sidebar montada (o `.ejr-sidebar-item` existe solto)
+2. **DataTable** com ordenação, paginação, estado vazio e de carregamento
+3. **Barra de filtros** (select + busca + limpar)
+4. **Stat tile / KPI** para a home e o cabeçalho do cliente
+5. **Tabs** para o detalhe do cliente
+6. **Modal / Sheet** para cadastro e upload
+7. **Timeline de eventos** para a trilha (aproveita `.ejr-citation`)
+8. **Badges de estado fiscal** — reaproveite `.ejr-badge` com os estados de
+   competência e de crédito
+
+Os tokens e os seis princípios não mudam.
+
+## Contrato de erro, uma vez para todas as telas
+
+| HTTP | Forma | Como mostrar |
+|---|---|---|
+| 400 | `{ code, message, details }` | erro de campo, destaque inline |
+| 401 | `{ code, message }` | sessão expirada → login |
+| 403 | `{ code, message }` | mensagem da API; ela explica o papel ou a duplicidade |
+| 404 | `{ code, message }` | "não encontrado nesta carteira" |
+| 409 / 422 | `{ rejected, layer, reason, message, details }` | **inconsistência fiscal**: mostre camada + motivo + mensagem |
+| 429 | `{ code, message }` | limite do plano atingido → tela de upgrade |
+
+O `404` é deliberadamente indistinguível entre "CNPJ não existe" e "existe em
+outro escritório" — não tente inferir a diferença na tela.

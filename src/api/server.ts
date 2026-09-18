@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import pg from 'pg';
 import type { Env } from '../config/env.js';
 import { JwtVerifier } from './auth/jwt-verifier.js';
@@ -8,12 +9,24 @@ import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerPortfolioRoutes } from './routes/portfolio.routes.js';
 import { registerEventRoutes } from './routes/events.routes.js';
+import { registerCertificateRoutes } from './routes/certificate.routes.js';
+import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
+import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
+import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
+import type { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
+import { loadConfig } from '../config/esaa-config.js';
 
 export interface ApiDeps {
   env: Env;
   pool: pg.Pool;
   jwtVerifier: JwtVerifier;
   tenantResolver: TenantResolver;
+  /**
+   * Um orquestrador por escopo de requisição. Não é cache: a projeção em memória
+   * é do CNPJ que ele serve, e compartilhá-la entre requisições concorrentes
+   * faria duas apurações trabalharem sobre o mesmo objeto mutável.
+   */
+  orchestratorFor: (scope: EventScope) => Promise<FiscalOrchestratorService>;
 }
 
 declare module 'fastify' {
@@ -38,11 +51,26 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   const { env } = options;
   const pool = options.pool ?? new pg.Pool({ connectionString: env.databaseUrl });
 
+  // O contrato de agentes é carregado uma vez, no start: relê-lo por requisição
+  // seria I/O de disco no caminho quente, e ele não muda em runtime.
+  const config = await loadConfig();
+  const contractLoader = new ContractLoaderService();
+  await contractLoader.loadAgentContract(config.contracts.agentContract);
+
   const deps: ApiDeps = {
     env,
     pool,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
+    orchestratorFor: async (scope) => {
+      const orchestrator = new FiscalOrchestratorService(
+        new PostgresEventStoreRepository(pool, scope),
+        contractLoader,
+        scope,
+      );
+      await orchestrator.initialize();
+      return orchestrator;
+    },
   };
 
   const app = Fastify({
@@ -59,6 +87,11 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   await app.register(cors, {
     origin: env.corsOrigins,
     credentials: true,
+  });
+
+  // Limite no upload do PFX e nos campos: um multipart sem teto é vetor de carga.
+  await app.register(multipart, {
+    limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 4 },
   });
 
   app.get('/v1/health', async () => ({ status: 'ok' }));
@@ -82,6 +115,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerAuthRoutes(instance, deps);
       await registerPortfolioRoutes(instance, deps);
       await registerEventRoutes(instance, deps);
+      await registerCertificateRoutes(instance, deps);
     },
     { prefix: '/v1' },
   );

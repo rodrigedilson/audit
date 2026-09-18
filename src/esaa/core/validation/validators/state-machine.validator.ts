@@ -1,43 +1,61 @@
+import type { ESAAIntention } from '../../../shared/types/esaa-event.types.js';
 import { ValidationError } from '../../../shared/types/esaa-errors.js';
-import type { ESAAIntention, MaterializedRoadmap } from '../../../shared/types/esaa-event.types.js';
-import { StateTransitionService } from '../../task-machine/state-transition.service.js';
-import type { ReviewPayload } from '../../../shared/types/esaa-event.types.js';
+import { InvalidTransitionError } from '../../../shared/types/esaa-errors.js';
+import type { FiscalProjection } from '../../../../fiscal/shared/fiscal-projection.types.js';
+import { PeriodTransitionService } from '../../../../fiscal/period/period-transition.service.js';
+import { isValidPeriodId } from '../../../../fiscal/shared/fiscal-vocabulary.js';
 
+/**
+ * Camada 4 — ciclo de vida da competência.
+ *
+ * `open → assessed → reconciled → confirmed`, com volta de `reconciled` para
+ * `assessed` via ajuste. `confirmed` é terminal.
+ */
 export class StateMachineValidator {
-  readonly layer = 4;
-  private readonly transitionService = new StateTransitionService();
+  private readonly transitions = new PeriodTransitionService();
 
-  validate(intention: ESAAIntention, roadmap: MaterializedRoadmap): void {
-    const taskActions = ['claim', 'complete', 'review'] as const;
-    if (!(taskActions as readonly string[]).includes(intention.action)) {
+  validate(intention: ESAAIntention, projection: FiscalProjection): void {
+    const periodId = intention.period;
+    if (periodId === undefined) {
       return;
     }
 
-    const task = roadmap.tasks[intention.task_id];
-    if (!task) {
+    if (!isValidPeriodId(periodId)) {
       throw new ValidationError(
-        this.layer,
+        4,
+        'schema_violation',
+        `Competência '${periodId}' fora do formato YYYY-MM.`,
+      );
+    }
+
+    // `period.opened` cria a competência; as demais exigem que ela exista.
+    if (intention.action === 'period.opened') {
+      if (projection.periods[periodId]) {
+        throw new ValidationError(
+          4,
+          'invalid_transition',
+          `Competência ${periodId} já está aberta.`,
+        );
+      }
+      return;
+    }
+
+    const period = projection.periods[periodId];
+    if (!period) {
+      throw new ValidationError(
+        4,
         'invalid_transition',
-        `Task '${intention.task_id}' not found in roadmap`,
+        `Competência ${periodId} não foi aberta para este CNPJ.`,
       );
     }
 
     try {
-      const verdict = intention.action === 'review'
-        ? (intention.payload as unknown as ReviewPayload).verdict
-        : undefined;
-      this.transitionService.resolveTransition(
-        intention.action,
-        task.state,
-        intention.task_id,
-        verdict,
-      );
-    } catch {
-      throw new ValidationError(
-        this.layer,
-        'invalid_transition',
-        `Cannot perform '${intention.action}' on task '${intention.task_id}' in state '${task.state}'`,
-      );
+      this.transitions.resolve(intention.action, period.state, periodId);
+    } catch (cause) {
+      if (cause instanceof InvalidTransitionError) {
+        throw new ValidationError(4, 'invalid_transition', cause.message);
+      }
+      throw cause;
     }
   }
 }

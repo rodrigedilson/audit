@@ -8,7 +8,7 @@ import {
   DEFAULT_CONFIG_PATH,
 } from '../../src/config/esaa-config.js';
 import { bootstrap } from '../../src/composition-root.js';
-import { TEST_SCOPE } from '../helpers/scope.js';
+import { TEST_SCOPE, TEST_USER_ID } from '../helpers/scope.js';
 
 describe('loadConfig', () => {
   it('lê o config real do projeto e resolve os caminhos como absolutos', async () => {
@@ -108,7 +108,7 @@ describe('bootstrap', () => {
   it('monta o grafo de dependências e projeta um log vazio de forma determinística', async () => {
     const runtime = await bootstrap({ configPath: DEFAULT_CONFIG_PATH, baseDir: dir, scope: TEST_SCOPE });
 
-    const roadmap = await runtime.orchestrator.getRoadmap();
+    const roadmap = await runtime.orchestrator.getProjection();
     expect(roadmap.last_event_seq).toBe(-1);
 
     const report = await runtime.orchestrator.verify();
@@ -120,10 +120,10 @@ describe('bootstrap', () => {
     const runtime = await bootstrap({ configPath: DEFAULT_CONFIG_PATH, baseDir: dir, scope: TEST_SCOPE });
 
     const result = await runtime.orchestrator.processIntention({
-      action: 'run.start',
-      task_id: 'run-001',
-      actor: 'tech-lead',
-      payload: { run_id: 'run-001', phase_name: 'Fechamento', objectives: [] },
+      action: 'client.enrolled',
+      task_id: TEST_SCOPE.cnpj,
+      actor: TEST_USER_ID,
+      payload: { legal_name: 'Cliente de Teste', regime: 'simples_hibrido' },
     });
 
     expect(result.accepted).toBe(true);

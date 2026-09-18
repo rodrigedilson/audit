@@ -5,10 +5,11 @@ import { PostgresEventStoreRepository } from '../../../src/infrastructure/persis
 import { EventScope } from '../../../src/esaa/core/event-store/value-objects/event-scope.vo.js';
 import { EventAppenderService } from '../../../src/esaa/core/event-store/event-appender.service.js';
 import { EventReplayerService } from '../../../src/esaa/core/event-store/event-replayer.service.js';
-import { ProjectorService } from '../../../src/esaa/core/projection/projector.service.js';
-import { HashVerifierService } from '../../../src/esaa/core/projection/hash-verifier.service.js';
+import { FiscalProjectorService } from '../../../src/fiscal/projection/fiscal-projector.service.js';
+import { FiscalHashVerifierService } from '../../../src/fiscal/projection/fiscal-hash-verifier.service.js';
 import type { EventDraft } from '../../../src/esaa/core/event-store/event-store.repository.js';
 import { createClient, createTenant, randomCnpj } from '../../helpers/db.js';
+import { TEST_USER_ID } from '../../helpers/scope.js';
 
 /**
  * Estes testes exigem Postgres. Sem `TEST_DATABASE_URL` a suíte é pulada em vez
@@ -35,12 +36,12 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
       event_id: randomUUID(),
       action: action as EventDraft['action'],
       task_id: taskId,
-      actor: 'tech-lead',
+      actor: TEST_USER_ID,
       ts: new Date().toISOString(),
       schema_version: '0.4.0',
       tenant_id: scope.tenantId,
       cnpj: scope.cnpj,
-      payload: { run_id: 'run-001', phase_name: 'Fechamento', objectives: [] } as never,
+      payload: { legal_name: 'Cliente de Teste', regime: 'simples_hibrido' } as never,
     };
     return period === undefined ? base : { ...base, period };
   };
@@ -78,8 +79,8 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
   it('aloca event_seq a partir de 0 e devolve o evento completo', async () => {
     const repo = new PostgresEventStoreRepository(pool, scopeA1);
 
-    const first = await repo.appendNext(draft('run.start', 'run-001', scopeA1));
-    const second = await repo.appendNext(draft('task.create', 'T-1', scopeA1));
+    const first = await repo.appendNext(draft('client.enrolled', scopeA1.cnpj, scopeA1));
+    const second = await repo.appendNext(draft('doc.received', 'chave-1', scopeA1));
 
     expect(first.event_seq).toBe(0);
     expect(second.event_seq).toBe(1);
@@ -100,9 +101,9 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
     const repo1 = new PostgresEventStoreRepository(pool, scopeA1);
     const repo2 = new PostgresEventStoreRepository(pool, scopeA2);
 
-    await repo1.appendNext(draft('run.start', 'run-001', scopeA1));
-    await repo1.appendNext(draft('task.create', 'T-1', scopeA1));
-    const otherFirst = await repo2.appendNext(draft('run.start', 'run-001', scopeA2));
+    await repo1.appendNext(draft('client.enrolled', scopeA1.cnpj, scopeA1));
+    await repo1.appendNext(draft('doc.received', 'chave-1', scopeA1));
+    const otherFirst = await repo2.appendNext(draft('client.enrolled', scopeA2.cnpj, scopeA2));
 
     expect(otherFirst.event_seq).toBe(0);
     expect(await repo1.count()).toBe(2);
@@ -113,16 +114,16 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
     const repoA = new PostgresEventStoreRepository(pool, scopeA1);
     const repoB = new PostgresEventStoreRepository(pool, scopeB1);
 
-    await repoA.appendNext(draft('run.start', 'run-a', scopeA1));
-    await repoB.appendNext(draft('run.start', 'run-b', scopeB1));
+    await repoA.appendNext(draft('client.enrolled', scopeA1.cnpj, scopeA1));
+    await repoB.appendNext(draft('client.enrolled', scopeB1.cnpj, scopeB1));
 
     const eventsA = await repoA.getAll();
     const eventsB = await repoB.getAll();
 
     expect(eventsA).toHaveLength(1);
     expect(eventsB).toHaveLength(1);
-    expect(eventsA[0]!.task_id).toBe('run-a');
-    expect(eventsB[0]!.task_id).toBe('run-b');
+    expect(eventsA[0]!.task_id).toBe(scopeA1.cnpj);
+    expect(eventsB[0]!.task_id).toBe(scopeB1.cnpj);
     // Ambos começam em 0: a sequência é do par, não de um contador compartilhado.
     expect(eventsA[0]!.event_seq).toBe(0);
     expect(eventsB[0]!.event_seq).toBe(0);
@@ -140,7 +141,7 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
 
     const results = await Promise.all(
       Array.from({ length: total }, (_, i) =>
-        repo.appendNext(draft('task.create', `T-${i}`, scopeA1)),
+        repo.appendNext(draft('doc.received', `chave-${i}`, scopeA1)),
       ),
     );
 
@@ -155,8 +156,8 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
     const repo2 = new PostgresEventStoreRepository(pool, scopeA2);
 
     const results = await Promise.all([
-      ...Array.from({ length: 10 }, (_, i) => repo1.appendNext(draft('task.create', `A-${i}`, scopeA1))),
-      ...Array.from({ length: 10 }, (_, i) => repo2.appendNext(draft('task.create', `B-${i}`, scopeA2))),
+      ...Array.from({ length: 10 }, (_, i) => repo1.appendNext(draft('doc.received', `chave-a-${i}`, scopeA1))),
+      ...Array.from({ length: 10 }, (_, i) => repo2.appendNext(draft('doc.received', `chave-b-${i}`, scopeA2))),
     ]);
 
     expect(results).toHaveLength(20);
@@ -167,14 +168,14 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
   it('rejeita evento de outro escopo em vez de reescrevê-lo para este log', async () => {
     const repo = new PostgresEventStoreRepository(pool, scopeA1);
 
-    await expect(repo.appendNext(draft('run.start', 'run-x', scopeB1))).rejects.toThrow(
+    await expect(repo.appendNext(draft('client.enrolled', scopeB1.cnpj, scopeB1))).rejects.toThrow(
       /fora do escopo/,
     );
   });
 
   it('rejeita event_id duplicado (metade nunca verificada de INV-004)', async () => {
     const repo = new PostgresEventStoreRepository(pool, scopeA1);
-    const first = draft('run.start', 'run-001', scopeA1);
+    const first = draft('client.enrolled', scopeA1.cnpj, scopeA1);
 
     await repo.appendNext(first);
 
@@ -185,7 +186,7 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
 
   it('bloqueia UPDATE e DELETE na tabela de eventos', async () => {
     const repo = new PostgresEventStoreRepository(pool, scopeA1);
-    await repo.appendNext(draft('run.start', 'run-001', scopeA1));
+    await repo.appendNext(draft('client.enrolled', scopeA1.cnpj, scopeA1));
 
     await expect(pool.query("update events set actor = 'fraude'")).rejects.toThrow(/append-only/);
     await expect(pool.query('delete from events')).rejects.toThrow(/append-only/);
@@ -195,8 +196,8 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
     it('preserva a competência quando presente e a omite quando ausente', async () => {
       const repo = new PostgresEventStoreRepository(pool, scopeA1);
 
-      await repo.appendNext(draft('run.start', 'run-001', scopeA1));
-      await repo.appendNext(draft('task.create', 'T-1', scopeA1, '2027-01'));
+      await repo.appendNext(draft('client.enrolled', scopeA1.cnpj, scopeA1));
+      await repo.appendNext(draft('period.opened', '2027-01', scopeA1, '2027-01'));
 
       const [semPeriodo, comPeriodo] = await repo.getAll();
 
@@ -207,7 +208,7 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
     it('devolve event_seq como número, não string do driver', async () => {
       const repo = new PostgresEventStoreRepository(pool, scopeA1);
       for (let i = 0; i < 11; i++) {
-        await repo.appendNext(draft('task.create', `T-${i}`, scopeA1));
+        await repo.appendNext(draft('doc.received', `chave-${i}`, scopeA1));
       }
 
       const events = await repo.getAll();
@@ -219,11 +220,11 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
 
     it('filtra por task_id e por seq dentro do escopo', async () => {
       const repo = new PostgresEventStoreRepository(pool, scopeA1);
-      await repo.appendNext(draft('run.start', 'run-001', scopeA1));
-      await repo.appendNext(draft('task.create', 'T-1', scopeA1));
-      await repo.appendNext(draft('claim', 'T-1', scopeA1));
+      await repo.appendNext(draft('client.enrolled', scopeA1.cnpj, scopeA1));
+      await repo.appendNext(draft('doc.received', 'chave-1', scopeA1));
+      await repo.appendNext(draft('doc.manifested', 'chave-1', scopeA1));
 
-      expect(await repo.getByTaskId('T-1')).toHaveLength(2);
+      expect(await repo.getByTaskId('chave-1')).toHaveLength(2);
       expect(await repo.getAfterSeq(0)).toHaveLength(2);
     });
   });
@@ -238,36 +239,35 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
     const appender = new EventAppenderService(repo, scopeA1);
 
     await appender.append({
-      action: 'run.start',
-      taskId: 'run-001',
-      actor: 'tech-lead',
-      payload: { run_id: 'run-001', phase_name: 'Fechamento', objectives: [] },
+      action: 'client.enrolled',
+      taskId: scopeA1.cnpj,
+      actor: TEST_USER_ID,
+      payload: { legal_name: 'Cliente de Teste', regime: 'simples_hibrido' },
     });
     await appender.append({
-      action: 'task.create',
-      taskId: 'T-1000',
-      actor: 'tech-lead',
-      payload: {
-        kind: 'impl',
-        description: 'Apurar',
-        assigned_agent: 'coder',
-        parent_run: 'run-001',
-      },
+      action: 'period.opened',
+      taskId: '2027-01',
+      actor: TEST_USER_ID,
+      payload: { period: '2027-01' },
       period: '2027-01',
     });
 
     const events = await new EventReplayerService(repo).replayAll();
-    const projector = new ProjectorService();
-    const roadmap = projector.project(events);
+    const projector = new FiscalProjectorService();
+    const projection = projector.project(scopeA1.tenantId, scopeA1.cnpj, events);
 
     expect(events).toHaveLength(2);
-    expect(roadmap.last_event_seq).toBe(1);
+    expect(projection.last_event_seq).toBe(1);
+    expect(projection.client?.legal_name).toBe('Cliente de Teste');
+    expect(projection.periods['2027-01']?.state).toBe('open');
 
-    const verification = new HashVerifierService(projector).verify(events, roadmap);
+    const verification = new FiscalHashVerifierService(projector).verify(events, projection);
     expect(verification.valid).toBe(true);
 
     // Reprojetar a partir de uma segunda leitura do banco tem de dar o mesmo hash.
     const reread = await new EventReplayerService(repo).replayAll();
-    expect(projector.project(reread).projection_hash_sha256).toBe(roadmap.projection_hash_sha256);
+    expect(
+      projector.project(scopeA1.tenantId, scopeA1.cnpj, reread).projection_hash_sha256,
+    ).toBe(projection.projection_hash_sha256);
   });
 });

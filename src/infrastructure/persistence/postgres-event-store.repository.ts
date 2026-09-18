@@ -5,7 +5,7 @@ import type {
   IEventStoreRepository,
 } from '../../esaa/core/event-store/event-store.repository.js';
 import type { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
-import type { ESAAAction } from '../../esaa/shared/types/esaa-vocabulary.js';
+import type { FiscalAction } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { EventStoreCorruptedError } from '../../esaa/shared/types/esaa-errors.js';
 
 interface EventRow extends QueryResultRow {
@@ -160,7 +160,7 @@ export class PostgresEventStoreRepository implements IEventStoreRepository {
       // bigint chega como string no driver; converter evita comparação de
       // '10' < '9' no replay.
       event_seq: Number(row.event_seq),
-      action: row.action as ESAAAction,
+      action: row.action as FiscalAction,
       task_id: row.task_id,
       actor: row.actor,
       ts: row.ts.toISOString(),

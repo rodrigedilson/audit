@@ -1,8 +1,11 @@
-import type { DomainEvent } from './domain-event.js';
-
+/**
+ * Identidade e igualdade por id. A coleta de domain events saiu junto do
+ * `EventBus`: o event sourcing real é feito com o envelope `ESAAEventData`
+ * gravado pelo orquestrador, e as duas noções de "evento" coexistiam sem
+ * nenhuma ligação.
+ */
 export abstract class Entity<T> {
   protected readonly _id: T;
-  private _domainEvents: DomainEvent[] = [];
 
   constructor(id: T) {
     this._id = id;
@@ -12,28 +15,13 @@ export abstract class Entity<T> {
     return this._id;
   }
 
-  public equals(object?: Entity<T>): boolean {
-    if (object == null) {
+  equals(other?: Entity<T>): boolean {
+    if (other == null) {
       return false;
     }
-    if (this === object) {
+    if (this === other) {
       return true;
     }
-    if (!(object instanceof Entity)) {
-      return false;
-    }
-    return this._id === object._id;
-  }
-
-  protected addDomainEvent(domainEvent: DomainEvent): void {
-    this._domainEvents.push(domainEvent);
-  }
-
-  public getUncommittedEvents(): DomainEvent[] {
-    return [...this._domainEvents];
-  }
-
-  public markEventsAsCommitted(): void {
-    this._domainEvents = [];
+    return this._id === other._id;
   }
 }
