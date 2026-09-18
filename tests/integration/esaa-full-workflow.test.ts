@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { JsonlEventStoreRepository } from '../../src/esaa/core/event-store/jsonl-event-store.repository.js';
 import { ContractLoaderService } from '../../src/esaa/core/contracts/contract-loader.service.js';
 import { ESAAOrchestratorService } from '../../src/esaa/orchestrator/esaa-orchestrator.service.js';
-import { QueenOrchestratorAdapter } from '../../src/esaa/bridge/hive-mind/queen-orchestrator.adapter.js';
 import { WorkerAgentAdapter } from '../../src/esaa/bridge/hive-mind/worker-agent.adapter.js';
 import { PhaseToRunMapper } from '../../src/esaa/bridge/gsd/phase-to-run.mapper.js';
+import { TEST_SCOPE } from '../helpers/scope.js';
 
 describe('ESAA Full Workflow E2E', () => {
   let tempDir: string;
@@ -24,7 +24,7 @@ describe('ESAA Full Workflow E2E', () => {
     contractLoader = new ContractLoaderService();
     await contractLoader.loadAgentContract(join(process.cwd(), 'config', 'AGENT_CONTRACT.yaml'));
 
-    orchestrator = new ESAAOrchestratorService(repo, contractLoader);
+    orchestrator = new ESAAOrchestratorService(repo, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
   });
 
@@ -55,7 +55,6 @@ describe('ESAA Full Workflow E2E', () => {
     }
 
     // 3. Architect claims and completes spec
-    const queen = new QueenOrchestratorAdapter(orchestrator);
     const architect = new WorkerAgentAdapter(orchestrator, 'architect');
 
     const claimResult = await architect.claimTask('T-1000');

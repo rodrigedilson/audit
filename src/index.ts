@@ -4,5 +4,11 @@
  * `src/cli/audit.ts` são apenas dois clientes deste barril.
  */
 export * from './esaa/index.js';
-export { bootstrap, type Runtime } from './composition-root.js';
+export {
+  bootstrap,
+  DEV_TENANT_ID,
+  DEV_CNPJ,
+  type Runtime,
+  type BootstrapOptions,
+} from './composition-root.js';
 export { loadConfig, DEFAULT_CONFIG_PATH, ConfigError, type ESAAConfig } from './config/esaa-config.js';

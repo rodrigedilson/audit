@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFIG_PATH,
 } from '../../src/config/esaa-config.js';
 import { bootstrap } from '../../src/composition-root.js';
+import { TEST_SCOPE } from '../helpers/scope.js';
 
 describe('loadConfig', () => {
   it('lê o config real do projeto e resolve os caminhos como absolutos', async () => {
@@ -105,7 +106,7 @@ describe('bootstrap', () => {
   });
 
   it('monta o grafo de dependências e projeta um log vazio de forma determinística', async () => {
-    const runtime = await bootstrap(DEFAULT_CONFIG_PATH, dir);
+    const runtime = await bootstrap({ configPath: DEFAULT_CONFIG_PATH, baseDir: dir, scope: TEST_SCOPE });
 
     const roadmap = await runtime.orchestrator.getRoadmap();
     expect(roadmap.last_event_seq).toBe(-1);
@@ -116,7 +117,7 @@ describe('bootstrap', () => {
   });
 
   it('o orquestrador montado aceita uma intenção válida', async () => {
-    const runtime = await bootstrap(DEFAULT_CONFIG_PATH, dir);
+    const runtime = await bootstrap({ configPath: DEFAULT_CONFIG_PATH, baseDir: dir, scope: TEST_SCOPE });
 
     const result = await runtime.orchestrator.processIntention({
       action: 'run.start',

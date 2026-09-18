@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { bootstrap } from '../composition-root.js';
+import { bootstrap, DEV_TENANT_ID, DEV_CNPJ, type BootstrapOptions } from '../composition-root.js';
+import { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
 
 const EXIT_OK = 0;
@@ -25,6 +26,8 @@ Comandos previstos (ainda não implementados)
 
 Opções
   --config <caminho>              Padrão: config/esaa.config.yaml
+  --tenant <uuid>                 Escritório (tenant). Padrão: escopo de dev
+  --cnpj <14 dígitos>             CNPJ do cliente. Padrão: escopo de dev
 `;
 
 interface PendingCommand {
@@ -57,33 +60,47 @@ async function main(argv: readonly string[]): Promise<number> {
     return command ? EXIT_OK : EXIT_USAGE;
   }
 
-  const configPath = readOption(rest, '--config');
+  const options = readBootstrapOptions(rest);
 
   switch (command) {
     case 'version':
     case '--version':
-      return runVersion(configPath);
+      return runVersion(options);
     case 'verify':
-      return runVerify(configPath);
+      return runVerify(options);
     case 'status':
-      return runStatus(configPath);
+      return runStatus(options);
     default:
       return reportUnavailable(command);
   }
 }
 
-async function runVersion(configPath?: string): Promise<number> {
-  const { config } = await bootstrap(configPath);
+function readBootstrapOptions(args: readonly string[]): BootstrapOptions {
+  const configPath = readOption(args, '--config');
+  const tenant = readOption(args, '--tenant') ?? DEV_TENANT_ID;
+  const cnpj = readOption(args, '--cnpj') ?? DEV_CNPJ;
+
+  const options: BootstrapOptions = { scope: EventScope.create(tenant, cnpj) };
+  if (configPath !== undefined) {
+    options.configPath = configPath;
+  }
+  return options;
+}
+
+async function runVersion(options: BootstrapOptions): Promise<number> {
+  const { config, scope } = await bootstrap(options);
   process.stdout.write(`audit — schema de eventos ${config.version}\n`);
+  process.stdout.write(`escopo: ${scope.toKey()}\n`);
   return EXIT_OK;
 }
 
-async function runVerify(configPath?: string): Promise<number> {
-  const { orchestrator } = await bootstrap(configPath);
+async function runVerify(options: BootstrapOptions): Promise<number> {
+  const { orchestrator, scope } = await bootstrap(options);
   const report = await orchestrator.verify();
 
   process.stdout.write(
     [
+      `escopo            ${scope.toKey()}`,
       `eventos           ${report.eventCount}`,
       `ultimo event_seq  ${report.lastEventSeq}`,
       `hash gravado      ${report.storedHash || '(vazio)'}`,
@@ -110,13 +127,14 @@ async function runVerify(configPath?: string): Promise<number> {
   return EXIT_INTEGRITY;
 }
 
-async function runStatus(configPath?: string): Promise<number> {
-  const { orchestrator } = await bootstrap(configPath);
+async function runStatus(options: BootstrapOptions): Promise<number> {
+  const { orchestrator, scope } = await bootstrap(options);
   const roadmap = await orchestrator.getRoadmap();
   const { stats } = roadmap;
 
   process.stdout.write(
     [
+      `escopo            ${scope.toKey()}`,
       `run               ${roadmap.run ? `${roadmap.run.run_id} (${roadmap.run.status})` : '(nenhum)'}`,
       `ultimo event_seq  ${roadmap.last_event_seq}`,
       `tasks             ${stats.total} (todo ${stats.todo} · andamento ${stats.in_progress} · review ${stats.review} · done ${stats.done})`,

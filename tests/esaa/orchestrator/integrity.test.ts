@@ -9,6 +9,7 @@ import { ContractLoaderService } from '../../../src/esaa/core/contracts/contract
 import { ESAAOrchestratorService } from '../../../src/esaa/orchestrator/esaa-orchestrator.service.js';
 import { IntegrityViolationError } from '../../../src/esaa/shared/types/esaa-errors.js';
 import type { ESAAEventData } from '../../../src/esaa/shared/types/esaa-event.types.js';
+import { TEST_SCOPE } from '../../helpers/scope.js';
 
 /**
  * Um escritor concorrente é a única forma realista de a projeção divergir do log
@@ -44,6 +45,8 @@ class RaceInjectingStore implements IEventStoreRepository {
       actor: 'tech-lead',
       ts: new Date().toISOString(),
       schema_version: '0.4.0',
+      tenant_id: TEST_SCOPE.tenantId,
+      cnpj: TEST_SCOPE.cnpj,
       payload: {
         kind: 'impl',
         description: 'Task gravada por um escritor concorrente',
@@ -98,7 +101,7 @@ describe('ESAAOrchestratorService — integridade (INV-006)', () => {
   };
 
   it('aceita a intenção quando o log e a projeção fecham', async () => {
-    const orchestrator = new ESAAOrchestratorService(inner, contractLoader);
+    const orchestrator = new ESAAOrchestratorService(inner, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
 
     const result = await orchestrator.processIntention(runStart);
@@ -111,7 +114,7 @@ describe('ESAAOrchestratorService — integridade (INV-006)', () => {
     // Leituras de processIntention: 1 validação, 2 reprojeção, 3 verificação.
     // Injetar na 3ª faz a verificação ver um log que a projeção não contempla.
     const racing = new RaceInjectingStore(inner, 3);
-    const orchestrator = new ESAAOrchestratorService(racing, contractLoader);
+    const orchestrator = new ESAAOrchestratorService(racing, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
 
     await expect(orchestrator.processIntention(runStart)).rejects.toThrow(IntegrityViolationError);
@@ -119,7 +122,7 @@ describe('ESAAOrchestratorService — integridade (INV-006)', () => {
 
   it('não engole a divergência: o erro carrega os dois hashes', async () => {
     const racing = new RaceInjectingStore(inner, 3);
-    const orchestrator = new ESAAOrchestratorService(racing, contractLoader);
+    const orchestrator = new ESAAOrchestratorService(racing, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
 
     const error = await orchestrator.processIntention(runStart).catch((e: unknown) => e);
@@ -133,7 +136,7 @@ describe('ESAAOrchestratorService — integridade (INV-006)', () => {
   });
 
   it('verify() devolve os campos que o POST /verify do contrato expõe', async () => {
-    const orchestrator = new ESAAOrchestratorService(inner, contractLoader);
+    const orchestrator = new ESAAOrchestratorService(inner, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
     await orchestrator.processIntention(runStart);
 

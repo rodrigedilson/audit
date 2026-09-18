@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { JsonlEventStoreRepository } from '../../src/esaa/core/event-store/jsonl-event-store.repository.js';
 import { ContractLoaderService } from '../../src/esaa/core/contracts/contract-loader.service.js';
 import { ESAAOrchestratorService } from '../../src/esaa/orchestrator/esaa-orchestrator.service.js';
-import { QueenOrchestratorAdapter } from '../../src/esaa/bridge/hive-mind/queen-orchestrator.adapter.js';
 import { WorkerAgentAdapter } from '../../src/esaa/bridge/hive-mind/worker-agent.adapter.js';
 import { MemoryEventSyncService, type IHiveMindMemory } from '../../src/esaa/bridge/hive-mind/memory-event-sync.service.js';
 import { PhaseToRunMapper } from '../../src/esaa/bridge/gsd/phase-to-run.mapper.js';
+import { TEST_SCOPE } from '../helpers/scope.js';
 import { PARCERProfileService } from '../../src/esaa/bridge/agents/parcer-profile.service.js';
 import { IntentionFormatterService } from '../../src/esaa/bridge/agents/intention-formatter.service.js';
 
@@ -54,7 +54,7 @@ describe('ESAA + Hive Mind + GSD — Demonstração Passo a Passo', () => {
     contractLoader = new ContractLoaderService();
     await contractLoader.loadAgentContract(join(process.cwd(), 'config', 'AGENT_CONTRACT.yaml'));
 
-    orchestrator = new ESAAOrchestratorService(repo, contractLoader);
+    orchestrator = new ESAAOrchestratorService(repo, contractLoader, TEST_SCOPE);
     await orchestrator.initialize();
 
     hiveMindMemory = new MockHiveMindMemory();
@@ -105,7 +105,6 @@ describe('ESAA + Hive Mind + GSD — Demonstração Passo a Passo', () => {
       'Cada intenção passa pelo pipeline de 7 camadas antes de ser aceita.'
     );
 
-    const queen = new QueenOrchestratorAdapter(orchestrator);
 
     for (const intention of intentions) {
       const result = await orchestrator.processIntention(intention);

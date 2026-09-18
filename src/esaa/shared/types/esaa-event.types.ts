@@ -2,12 +2,25 @@ import type { ESAAAction, TaskKind, TaskState, RejectionReason } from './esaa-vo
 
 export interface ESAAEventData {
   event_id: string;
+  /**
+   * Monotônico e sem gaps **dentro** do par (tenant_id, cnpj), não global.
+   * Ver ADR-003.
+   */
   event_seq: number;
   action: ESAAAction;
   task_id: string;
   actor: string;
   ts: string;
   schema_version: string;
+  /** Escritório dono do evento. Campo de primeira classe, não payload (ADR-002). */
+  tenant_id: string;
+  /** CNPJ do cliente, 14 dígitos sem máscara. */
+  cnpj: string;
+  /**
+   * Competência `YYYY-MM`, quando o evento pertence a uma. Opcional de propósito:
+   * `client.enrolled` e `certificate.stored` são do CNPJ, não de um mês.
+   */
+  period?: string;
   payload: ESAAPayload;
 }
 
@@ -102,6 +115,12 @@ export interface ESAAIntention {
   actor: string;
   payload: Record<string, unknown>;
   file_updates?: FileUpdate[];
+  /**
+   * Competência a que a intenção se refere. O tenant e o CNPJ não vêm aqui: são
+   * do escopo do orquestrador, e deixá-los na intenção permitiria a um cliente
+   * pedir escrita no log de outro escritório. Ver ADR-002.
+   */
+  period?: string;
 }
 
 export interface FileUpdate {

@@ -6,6 +6,7 @@ import type {
 } from '../shared/types/esaa-event.types.js';
 import { IntegrityViolationError } from '../shared/types/esaa-errors.js';
 import type { IEventStoreRepository } from '../core/event-store/event-store.repository.js';
+import type { EventScope } from '../core/event-store/value-objects/event-scope.vo.js';
 import { EventAppenderService } from '../core/event-store/event-appender.service.js';
 import { EventReplayerService } from '../core/event-store/event-replayer.service.js';
 import { ProjectorService } from '../core/projection/projector.service.js';
@@ -44,8 +45,9 @@ export class ESAAOrchestratorService {
   constructor(
     eventStore: IEventStoreRepository,
     contractLoader: ContractLoaderService,
+    private readonly scope: EventScope,
   ) {
-    this.appender = new EventAppenderService(eventStore);
+    this.appender = new EventAppenderService(eventStore, scope);
     this.replayer = new EventReplayerService(eventStore);
     this.projector = new ProjectorService();
     this.hashVerifier = new HashVerifierService(this.projector);
@@ -57,7 +59,10 @@ export class ESAAOrchestratorService {
   async initialize(): Promise<MaterializedRoadmap> {
     const events = await this.replayer.replayAll();
     this.currentRoadmap = this.projector.project(events);
-    this.logger.info('Orchestrator initialized', { eventCount: events.length });
+    this.logger.info('Orchestrator initialized', {
+      scope: this.scope.toKey(),
+      eventCount: events.length,
+    });
     return this.currentRoadmap;
   }
 
@@ -78,6 +83,7 @@ export class ESAAOrchestratorService {
     if (!validation.valid) {
       const error = validation.errors[0];
       this.logger.warn('Intention rejected', {
+        scope: this.scope.toKey(),
         action: intention.action,
         actor: intention.actor,
         task_id: intention.task_id,
@@ -93,12 +99,13 @@ export class ESAAOrchestratorService {
         validation_layer: error.layer,
       };
 
-      const rejectionEvent = await this.appender.append(
-        'output.rejected',
-        intention.task_id,
-        'tech-lead',
-        rejectionPayload as unknown as Record<string, unknown>,
-      );
+      const rejectionEvent = await this.appender.append({
+        action: 'output.rejected',
+        taskId: intention.task_id,
+        actor: 'tech-lead',
+        payload: rejectionPayload as unknown as Record<string, unknown>,
+        period: intention.period,
+      });
 
       await this.reproject();
 
@@ -111,12 +118,13 @@ export class ESAAOrchestratorService {
     }
 
     // 2. Append event to store
-    const event = await this.appender.append(
-      intention.action,
-      intention.task_id,
-      intention.actor,
-      intention.payload,
-    );
+    const event = await this.appender.append({
+      action: intention.action,
+      taskId: intention.task_id,
+      actor: intention.actor,
+      payload: intention.payload,
+      period: intention.period,
+    });
 
     // 3. Re-project materialized view
     await this.reproject();
@@ -134,6 +142,7 @@ export class ESAAOrchestratorService {
 
     if (!verification.valid) {
       this.logger.error('Integrity violation after projection', {
+        scope: this.scope.toKey(),
         storedHash: verification.storedHash,
         replayHash: verification.replayHash,
         contentHash: verification.contentHash,
@@ -149,6 +158,7 @@ export class ESAAOrchestratorService {
     }
 
     this.logger.info('Intention accepted', {
+      scope: this.scope.toKey(),
       action: intention.action,
       actor: intention.actor,
       task_id: intention.task_id,

@@ -2,19 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { ProjectorService, EMPTY_PROJECTION_TIMESTAMP } from '../../../../src/esaa/core/projection/projector.service.js';
 import { HashVerifierService } from '../../../../src/esaa/core/projection/hash-verifier.service.js';
 import type { ESAAEventData } from '../../../../src/esaa/shared/types/esaa-event.types.js';
+import { makeEvent as createEvent } from '../../../helpers/scope.js';
 
-function createEvent(seq: number, action: string, taskId: string, actor: string, payload: Record<string, unknown>): ESAAEventData {
-  return {
-    event_id: `evt-${seq}`,
-    event_seq: seq,
-    action: action as ESAAEventData['action'],
-    task_id: taskId,
-    actor,
-    ts: new Date().toISOString(),
-    schema_version: '0.4.0',
-    payload: payload as ESAAEventData['payload'],
-  };
-}
 
 describe('ProjectorService', () => {
   const projector = new ProjectorService();
