@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { JsonlEventStoreRepository } from '../../../src/esaa/core/event-store/jsonl-event-store.repository.js';
-import type { IEventStoreRepository } from '../../../src/esaa/core/event-store/event-store.repository.js';
+import type { EventDraft, IEventStoreRepository } from '../../../src/esaa/core/event-store/event-store.repository.js';
 import { ContractLoaderService } from '../../../src/esaa/core/contracts/contract-loader.service.js';
 import { ESAAOrchestratorService } from '../../../src/esaa/orchestrator/esaa-orchestrator.service.js';
 import { IntegrityViolationError } from '../../../src/esaa/shared/types/esaa-errors.js';
@@ -58,6 +58,9 @@ class RaceInjectingStore implements IEventStoreRepository {
     return [...events, intruder];
   }
 
+  appendNext(draft: EventDraft): Promise<ESAAEventData> {
+    return this.inner.appendNext(draft);
+  }
   append(event: ESAAEventData): Promise<void> {
     return this.inner.append(event);
   }

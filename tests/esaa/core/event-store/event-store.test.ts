@@ -150,6 +150,39 @@ describe('Event Store', () => {
       expect('period' in event).toBe(false);
     });
 
+    /**
+     * Documenta, de forma executável, por que o JSONL não serve para produção: a
+     * alocação é um read-modify-write sem lock, então escritas concorrentes
+     * colidem no mesmo `event_seq`. O adapter Postgres resolve isso com advisory
+     * lock por CNPJ (INV-005) e tem teste equivalente provando sequência densa.
+     *
+     * Se algum dia este teste começar a falhar porque não há mais colisão, ou o
+     * JSONL ganhou atomicidade — e o comentário acima precisa mudar — ou o teste
+     * deixou de exercitar concorrência.
+     */
+    it('NÃO é seguro para escrita concorrente: colide event_seq', async () => {
+      const appender = new EventAppenderService(repo, TEST_SCOPE);
+
+      const results = await Promise.all(
+        Array.from({ length: 20 }, (_, i) =>
+          appender.append({
+            action: 'task.create',
+            taskId: `T-${i}`,
+            actor: 'tech-lead',
+            payload: {
+              kind: 'impl',
+              description: `Task ${i}`,
+              assigned_agent: 'coder',
+              parent_run: 'run-001',
+            },
+          }),
+        ),
+      );
+
+      const distintos = new Set(results.map((e) => e.event_seq)).size;
+      expect(distintos).toBeLessThan(results.length);
+    });
+
     it('deve rejeitar seq fora de ordem no appendRaw', async () => {
       const appender = new EventAppenderService(repo, TEST_SCOPE);
 

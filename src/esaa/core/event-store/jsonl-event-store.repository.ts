@@ -1,10 +1,28 @@
 import { readFile, appendFile, writeFile, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import type { ESAAEventData } from '../../shared/types/esaa-event.types.js';
-import type { IEventStoreRepository } from './event-store.repository.js';
+import type { EventDraft, IEventStoreRepository } from './event-store.repository.js';
 
+/**
+ * Adapter de desenvolvimento e teste. Cada leitura relê e reparseia o arquivo
+ * inteiro, e `appendNext` não é atômico — duas instâncias apontando para o mesmo
+ * arquivo corromperiam a sequência. Produção usa
+ * `PostgresEventStoreRepository`, que serializa a escrita por CNPJ.
+ */
 export class JsonlEventStoreRepository implements IEventStoreRepository {
   constructor(private readonly filePath: string) {}
+
+  /**
+   * Sem atomicidade: entre `getLastSeq()` e `appendFile` existe uma janela de
+   * corrida. Aceitável aqui porque o uso é um processo único (CLI e testes), e é
+   * exatamente a limitação que motiva o adapter Postgres.
+   */
+  async appendNext(draft: EventDraft): Promise<ESAAEventData> {
+    const lastSeq = await this.getLastSeq();
+    const event: ESAAEventData = { ...draft, event_seq: lastSeq + 1 };
+    await this.append(event);
+    return event;
+  }
 
   async append(event: ESAAEventData): Promise<void> {
     const line = JSON.stringify(event) + '\n';

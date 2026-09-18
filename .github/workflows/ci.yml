@@ -14,6 +14,28 @@ jobs:
   build:
     name: Lint, build e testes
     runs-on: ubuntu-latest
+
+    # Os testes do adapter Postgres provam INV-004 e INV-005 (sequência densa sob
+    # escrita concorrente). Sem o serviço eles se pulam sozinhos, e a garantia
+    # deixaria de ser verificada em silêncio — por isso o banco sobe aqui.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit
+          POSTGRES_DB: audit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U audit -d audit_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://audit:audit@localhost:5432/audit_test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +57,11 @@ jobs:
 
       - name: Testes com cobertura
         run: npm run test:coverage
+
+      # Guarda contra o skipIf silencioso: se a suíte de Postgres for pulada, o
+      # CI passaria verde sem ter verificado o lock por CNPJ.
+      - name: Confirma que a suíte de Postgres rodou
+        run: npx vitest run tests/infrastructure --reporter=verbose 2>&1 | grep -q 'serializa escritas concorrentes'
 
       # INV-006: o hash da projeção é a trilha de defesa do produto. Se o replay
       # deixar de ser determinístico, a CI falha aqui com exit code 3.

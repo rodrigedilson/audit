@@ -24,12 +24,16 @@ export class EventAppenderService {
     private readonly scope: EventScope,
   ) {}
 
+  /**
+   * A posição na sequência é atribuída pelo store, não aqui: só o adapter
+   * consegue alocar e gravar atomicamente. O `seq: 0` abaixo é descartado — a
+   * entidade existe para montar e validar o envelope, e `appendNext` sobrescreve
+   * a posição.
+   */
   async append(input: AppendInput): Promise<ESAAEventData> {
-    const lastSeq = await this.eventStore.getLastSeq();
-
     const entry = EventEntry.create({
       scope: this.scope,
-      seq: lastSeq + 1,
+      seq: 0,
       action: input.action,
       taskId: input.taskId,
       actorName: input.actor,
@@ -37,10 +41,9 @@ export class EventAppenderService {
       period: input.period,
     });
 
-    const data = entry.toData();
-    await this.eventStore.append(data);
+    const { event_seq: _discarded, ...draft } = entry.toData();
 
-    return data;
+    return this.eventStore.appendNext(draft);
   }
 
   async appendRaw(event: ESAAEventData): Promise<void> {
