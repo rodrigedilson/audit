@@ -14,13 +14,33 @@ import type {
 import type { TaskState } from '../../shared/types/esaa-vocabulary.js';
 import { hashProjection } from '../../shared/infrastructure/crypto-utils.js';
 
+class ProjectionError extends Error {
+  constructor(action: never, eventSeq: number) {
+    super(
+      `Projeção interrompida: ação desconhecida '${String(action)}' ` +
+        `no evento seq ${eventSeq}`,
+    );
+    this.name = 'ProjectionError';
+  }
+}
+
+/**
+ * `last_updated` de um log sem eventos. Precisa ser uma constante: usar
+ * `new Date()` fazia duas projeções do mesmo log vazio renderem hashes diferentes,
+ * quebrando o replay determinístico (INV-006) justamente no caso de um CNPJ com
+ * período aberto e nenhum documento ingerido. Fica um ISO válido, em vez de string
+ * vazia, para não estourar em quem faça `new Date(last_updated)`; o marcador real
+ * de "nada projetado ainda" é `last_event_seq: -1`.
+ */
+export const EMPTY_PROJECTION_TIMESTAMP = '1970-01-01T00:00:00.000Z';
+
 export class ProjectorService {
   project(events: ESAAEventData[]): MaterializedRoadmap {
     const roadmap: MaterializedRoadmap = {
       schema_version: '0.4.0',
       projection_hash_sha256: '',
       last_event_seq: -1,
-      last_updated: new Date().toISOString(),
+      last_updated: EMPTY_PROJECTION_TIMESTAMP,
       run: null,
       tasks: {},
       issues: [],
@@ -70,6 +90,23 @@ export class ProjectorService {
       case 'phase.complete':
         this.applyPhaseComplete(roadmap, event);
         break;
+
+      // Registradas no log como trilha, sem efeito sobre o estado projetado: a
+      // verificação é sobre a projeção, e a escrita de arquivo é efeito externo.
+      // Ficam explícitas porque antes caíam num fall-through silencioso, que é
+      // indistinguível de um handler esquecido.
+      case 'verify.start':
+      case 'verify.ok':
+      case 'verify.fail':
+      case 'orchestrator.file.write':
+        break;
+
+      default:
+        // Exaustividade verificada em tempo de compilação: uma ação nova no
+        // vocabulário sem handler aqui quebra o build. Em runtime, um log com ação
+        // desconhecida precisa falhar alto — descartá-la em silêncio produziria uma
+        // projeção que omite um evento, e o hash atestaria esse número incompleto.
+        throw new ProjectionError(event.action, event.event_seq);
     }
   }
 

@@ -1,0 +1,1484 @@
+openapi: 3.0.3
+info:
+  title: audit — API fiscal (ESAA-Flow)
+  version: 0.2.0
+  description: |
+    Contrato mínimo para destravar o frontend (Lovable). Toda escrita passa pelo
+    orquestrador single-writer: o cliente envia uma *intenção*; a API valida
+    (7 camadas), grava o evento e re-projeta. Leituras vêm da projeção.
+
+    Convenções:
+    - Identificadores em inglês; mensagens de erro em PT-BR.
+    - `cnpj` sempre com 14 dígitos, sem máscara.
+    - `period` no formato `YYYY-MM` (competência).
+    - Toda resposta de escrita devolve o `event_seq` gravado e o `projection_hash`.
+servers:
+  - url: http://localhost:3000/v1
+    description: desenvolvimento
+  - url: https://api.SEU-DOMINIO.com.br/v1
+    description: produção
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+  - name: portfolio
+    description: Carteira do escritório (CNPJs, regimes, períodos)
+  - name: ingestion
+    description: Entrada de documentos fiscais, SPED e extratos
+  - name: catalog
+    description: Cadastro de itens e saúde de classificação
+  - name: assessment
+    description: Apuração dual (tributos atuais × IBS/CBS)
+  - name: reconciliation
+    description: Contra-apuração, crédito em risco, prazos
+  - name: simulation
+    description: Cenários Integrado × Híbrido × Presumido
+  - name: reporting
+    description: Trilhas de auditoria e Book de fechamento
+  - name: certificates
+    description: Cofre de certificados A1 com log de uso
+  - name: assistant
+    description: Assistente fiscal somente leitura sobre o event log
+  - name: events
+    description: Event log e verificação de projeção
+
+paths:
+  # ---------------------------------------------------------------- auth
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Login do usuário do escritório
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Token JWT
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  expires_in: { type: integer, example: 3600 }
+                  tenant: { $ref: "#/components/schemas/Tenant" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me:
+    get:
+      tags: [auth]
+      summary: Usuário e tenant atuais
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  tenant: { $ref: "#/components/schemas/Tenant" }
+
+  # ----------------------------------------------------------- portfolio
+  /clients:
+    get:
+      tags: [portfolio]
+      summary: Lista CNPJs da carteira
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: regime
+          schema: { $ref: "#/components/schemas/Regime" }
+        - in: query
+          name: status
+          schema: { $ref: "#/components/schemas/PeriodState" }
+          description: Filtra pelo estado do período corrente
+      responses:
+        "200":
+          description: Página de clientes com resumo do período corrente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ClientSummary" }
+                  page: { type: integer }
+                  total: { type: integer }
+    post:
+      tags: [portfolio]
+      summary: Cadastra um CNPJ (emite `client.enrolled`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClientCreate" }
+      responses:
+        "201":
+          description: Criado
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+        "409": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [portfolio]
+      summary: Detalhe do cliente
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Client" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [portfolio]
+      summary: Atualiza regime, certificado ou dados cadastrais
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClientUpdate" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+
+  /clients/{cnpj}/periods:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [portfolio]
+      summary: Períodos (competências) do cliente com estado
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Period" }
+    post:
+      tags: [portfolio]
+      summary: Abre competência (emite `period.opened`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period]
+              properties:
+                period: { $ref: "#/components/schemas/PeriodId" }
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+        "409": { $ref: "#/components/responses/Rejected" }
+
+  # ----------------------------------------------------------- ingestion
+  /clients/{cnpj}/documents:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [ingestion]
+      summary: Lista documentos fiscais do cliente
+      parameters:
+        - $ref: "#/components/parameters/Period"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: direction
+          schema: { type: string, enum: [inbound, outbound] }
+        - in: query
+          name: has_issues
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/DocumentSummary" }
+                  total: { type: integer }
+    post:
+      tags: [ingestion]
+      summary: Upload manual de XML (um ou vários; emite `doc.received` por documento aceito)
+      description: |
+        Cada XML passa pelo pipeline de 7 camadas. Documentos rejeitados não geram
+        `doc.received`; geram `output.rejected` e voltam em `rejected[]`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+      responses:
+        "207":
+          description: Resultado por arquivo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: array
+                    items: { $ref: "#/components/schemas/WriteResult" }
+                  rejected:
+                    type: array
+                    items: { $ref: "#/components/schemas/Rejection" }
+
+  /clients/{cnpj}/documents/{access_key}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - in: path
+        name: access_key
+        required: true
+        description: Chave de acesso (44 dígitos)
+        schema: { type: string, pattern: "^[0-9]{44}$" }
+    get:
+      tags: [ingestion]
+      summary: Documento com itens, tributos atuais e IBS/CBS lado a lado
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /clients/{cnpj}/sync:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [ingestion]
+      summary: Dispara coleta na distribuição DF-e (assíncrono)
+      responses:
+        "202":
+          description: Job aceito
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+
+  /clients/{cnpj}/sped:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [ingestion]
+      summary: Importa arquivo SPED (EFD ICMS/IPI ou EFD-Contribuições)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind]
+              properties:
+                file: { type: string, format: binary }
+                kind: { type: string, enum: [efd_icms_ipi, efd_contribuicoes] }
+      responses:
+        "202":
+          description: Job aceito
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+
+  /clients/{cnpj}/bank-statements:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [ingestion]
+      summary: Importa extrato (OFX/CSV) para conciliação de crédito condicionado
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "202":
+          description: Job aceito
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+
+  /jobs/{job_id}:
+    get:
+      tags: [ingestion]
+      summary: Status de job assíncrono
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+
+  # ------------------------------------------------------------- catalog
+  /clients/{cnpj}/items:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [catalog]
+      summary: Itens do cadastro com saúde de classificação
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: health
+          schema: { type: string, enum: [ok, warning, error] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+                  total: { type: integer }
+
+  /clients/{cnpj}/items/{item_id}/classification:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - in: path
+        name: item_id
+        required: true
+        schema: { type: string }
+    put:
+      tags: [catalog]
+      summary: Confirma classificação (emite `item.classified` / `item.reclassified`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Classification" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+        "422": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/items/health:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [catalog]
+      summary: Resumo da saúde do cadastro e impacto nas notas emitidas
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CatalogHealth" }
+
+  # ---------------------------------------------------------- assessment
+  /clients/{cnpj}/assessments/{period}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [assessment]
+      summary: Apuração dual da competência (projeção + hash)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Assessment" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [assessment]
+      summary: (Re)projeta a apuração (emite `assessment.projected`)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+        "409": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/assessments/{period}/adjustments:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    post:
+      tags: [assessment]
+      summary: Registra ajuste manual justificado (emite `assessment.adjusted`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Adjustment" }
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+        "409": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/assessments/{period}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    post:
+      tags: [assessment]
+      summary: Confirma e fecha o período (emite `assessment.confirmed` + `period.closed`; terminal)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projection_hash]
+              properties:
+                projection_hash:
+                  type: string
+                  description: Hash que o usuário viu na tela; se divergir do atual, a confirmação é rejeitada (`verification_mismatch`)
+                note: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+        "409": { $ref: "#/components/responses/Rejected" }
+
+  # ------------------------------------------------------ reconciliation
+  /clients/{cnpj}/reconciliation/{period}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [reconciliation]
+      summary: Contra-apuração — nossa apuração × proposta do Fisco, nota a nota
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reconciliation" }
+    post:
+      tags: [reconciliation]
+      summary: Envia/atualiza a proposta do Fisco para comparar (emite `assessment.compared`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source: { type: string, enum: [manual_upload, fisco_api] }
+                payload:
+                  type: object
+                  description: Proposta de apuração assistida no formato oficial (quando publicado) ou planilha convertida
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+
+  /clients/{cnpj}/credits/at-risk:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/Period"
+    get:
+      tags: [reconciliation]
+      summary: Crédito condicionado/em risco por fornecedor
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SupplierCreditRisk" }
+
+  /deadlines:
+    get:
+      tags: [reconciliation]
+      summary: Calendário de prazos da carteira (manifestação, confirmação, opção de regime)
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Deadline" }
+
+  # ---------------------------------------------------------- simulation
+  /clients/{cnpj}/simulations:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [simulation]
+      summary: Simula regimes sobre os dados reais do cliente (somente leitura, não grava evento)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SimulationRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimulationResult" }
+
+  # ----------------------------------------------------------- reporting
+  /audit-trails:
+    get:
+      tags: [reporting]
+      summary: Catálogo de trilhas de auditoria disponíveis (nome, camada, severidade padrão)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditTrailDefinition" }
+
+  /clients/{cnpj}/audit-trails/{period}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [reporting]
+      summary: Resultado das trilhas de auditoria da competência (issues agrupadas por trilha)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditTrailResult" }
+
+  /clients/{cnpj}/books/{period}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [reporting]
+      summary: Lista Books de fechamento gerados para a competência
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Book" }
+    post:
+      tags: [reporting]
+      summary: Gera Book de fechamento (emite `book.generated`; assíncrono)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                audience: { type: string, enum: [accountant, business_owner], default: accountant }
+                include_calculation_trace: { type: boolean, default: true }
+                white_label: { type: boolean, default: false }
+                language: { type: string, default: pt-BR }
+      responses:
+        "202":
+          description: Job aceito
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "409": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/books/{period}/{book_id}/download:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+      - in: path
+        name: book_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [reporting]
+      summary: Baixa o PDF do Book (o hash da projeção vai impresso no rodapé)
+      responses:
+        "200":
+          description: PDF
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # -------------------------------------------------------- certificates
+  /clients/{cnpj}/certificate:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [certificates]
+      summary: Metadados do certificado A1 do cliente (nunca retorna o PFX)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CertificateInfo" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [certificates]
+      summary: Armazena ou substitui o certificado (emite `certificate.stored`; PFX cifrado em repouso)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [pfx, password]
+              properties:
+                pfx: { type: string, format: binary }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+        "422": { $ref: "#/components/responses/Rejected" }
+    delete:
+      tags: [certificates]
+      summary: Remove o certificado (emite `certificate.removed`)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WriteResult" }
+
+  /clients/{cnpj}/certificate/usage:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [certificates]
+      summary: Log de uso do certificado (projeção dos eventos `certificate.used`)
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CertificateUsage" }
+                  total: { type: integer }
+
+  /certificates/expiring:
+    get:
+      tags: [certificates]
+      summary: Certificados da carteira que vencem nos próximos N dias
+      parameters:
+        - in: query
+          name: days
+          schema: { type: integer, default: 60, minimum: 1, maximum: 365 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CertificateInfo" }
+
+  # ----------------------------------------------------------- assistant
+  /clients/{cnpj}/assistant/threads:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [assistant]
+      summary: Conversas anteriores com o assistente para este CNPJ
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AssistantThread" }
+    post:
+      tags: [assistant]
+      summary: Abre uma conversa
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                period: { $ref: "#/components/schemas/PeriodId" }
+                title: { type: string }
+      responses:
+        "201":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssistantThread" }
+
+  /clients/{cnpj}/assistant/threads/{thread_id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - in: path
+        name: thread_id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [assistant]
+      summary: Pergunta ao assistente (agente `reconciler`, somente leitura; nunca grava evento fiscal)
+      description: |
+        A resposta é ancorada no event log e na projeção do CNPJ. Toda afirmação
+        factual traz `citations[]` com `event_seq` ou `access_key`. Se o assistente
+        identificar uma ação recomendada, ela vem em `suggested_intentions[]` para o
+        usuário executar — o assistente não a executa.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, maxLength: 4000 }
+      responses:
+        "200":
+          description: Resposta do assistente
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssistantMessage" }
+        "429":
+          description: Limite de perguntas do plano atingido
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # -------------------------------------------------------------- events
+  /clients/{cnpj}/events:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [events]
+      summary: Event log do cliente (paginado por `event_seq`)
+      parameters:
+        - in: query
+          name: after_seq
+          schema: { type: integer, minimum: 0 }
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: action
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Event" }
+
+  /clients/{cnpj}/verify:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [events]
+      summary: Re-executa replay e compara hash da projeção (INV-006)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  stored_hash: { type: string }
+                  replayed_hash: { type: string }
+                  last_event_seq: { type: integer }
+
+# =====================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Cnpj:
+      in: path
+      name: cnpj
+      required: true
+      schema: { type: string, pattern: "^[0-9]{14}$" }
+    Period:
+      in: query
+      name: period
+      schema: { $ref: "#/components/schemas/PeriodId" }
+    PeriodPath:
+      in: path
+      name: period
+      required: true
+      schema: { $ref: "#/components/schemas/PeriodId" }
+    Page:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      in: query
+      name: page_size
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+
+  responses:
+    Unauthorized:
+      description: Token ausente ou inválido
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Rejected:
+      description: Intenção rejeitada pelo pipeline (evento `output.rejected` gravado)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Rejection" }
+
+  schemas:
+    PeriodId:
+      type: string
+      pattern: "^[0-9]{4}-(0[1-9]|1[0-2])$"
+      example: "2027-01"
+
+    Regime:
+      type: string
+      enum: [mei, simples_integrado, simples_hibrido, lucro_presumido, lucro_real]
+
+    PeriodState:
+      type: string
+      enum: [open, assessed, reconciled, confirmed]
+
+    CreditState:
+      type: string
+      enum: [expected, conditioned, released, at_risk, lost]
+
+    RejectionReason:
+      type: string
+      enum:
+        - schema_violation
+        - unknown_code
+        - code_incompatible
+        - regime_violation
+        - closed_period_violation
+        - fisco_mismatch
+        - duplicate_document
+        - sequence_gap
+        - verification_mismatch
+        - boundary_violation
+
+    Tenant:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: "Escritório Exemplo Contabilidade" }
+        plan: { type: string }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [owner, accountant, viewer] }
+
+    ClientCreate:
+      type: object
+      required: [cnpj, legal_name, regime]
+      properties:
+        cnpj: { type: string, pattern: "^[0-9]{14}$" }
+        legal_name: { type: string }
+        trade_name: { type: string }
+        regime: { $ref: "#/components/schemas/Regime" }
+        uf: { type: string, minLength: 2, maxLength: 2 }
+        municipality_ibge: { type: string, pattern: "^[0-9]{7}$" }
+        cnae_primary: { type: string, example: "6201501" }
+
+    ClientUpdate:
+      type: object
+      properties:
+        trade_name: { type: string }
+        regime: { $ref: "#/components/schemas/Regime" }
+        regime_effective_from: { $ref: "#/components/schemas/PeriodId" }
+
+    Client:
+      allOf:
+        - $ref: "#/components/schemas/ClientCreate"
+        - type: object
+          properties:
+            created_at: { type: string, format: date-time }
+            has_certificate: { type: boolean }
+            current_period: { $ref: "#/components/schemas/Period" }
+
+    ClientSummary:
+      type: object
+      properties:
+        cnpj: { type: string }
+        legal_name: { type: string }
+        regime: { $ref: "#/components/schemas/Regime" }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        state: { $ref: "#/components/schemas/PeriodState" }
+        documents: { type: integer }
+        open_issues: { type: integer }
+        credit_at_risk_brl: { type: number }
+        next_deadline: { type: string, format: date, nullable: true }
+
+    Period:
+      type: object
+      properties:
+        period: { $ref: "#/components/schemas/PeriodId" }
+        state: { $ref: "#/components/schemas/PeriodState" }
+        projection_hash: { type: string, nullable: true }
+        confirmed_at: { type: string, format: date-time, nullable: true }
+        confirmed_by: { type: string, nullable: true }
+
+    DocumentSummary:
+      type: object
+      properties:
+        access_key: { type: string }
+        model: { type: string, enum: [nfe, nfce, nfse, cte] }
+        direction: { type: string, enum: [inbound, outbound] }
+        issued_at: { type: string, format: date-time }
+        counterparty_cnpj: { type: string }
+        counterparty_name: { type: string }
+        total_brl: { type: number }
+        issues: { type: integer }
+        credit_state: { $ref: "#/components/schemas/CreditState" }
+
+    Document:
+      allOf:
+        - $ref: "#/components/schemas/DocumentSummary"
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/DocumentItem" }
+            issues:
+              type: array
+              items: { $ref: "#/components/schemas/Issue" }
+            event_seq: { type: integer }
+
+    DocumentItem:
+      type: object
+      description: Um item da nota com tributos atuais e IBS/CBS lado a lado
+      properties:
+        line: { type: integer }
+        item_id: { type: string, description: Vínculo com o cadastro }
+        description: { type: string }
+        ncm: { type: string }
+        nbs: { type: string, nullable: true }
+        cfop: { type: string }
+        quantity: { type: number }
+        unit_price_brl: { type: number }
+        legacy:
+          type: object
+          description: Tributos atuais destacados
+          properties:
+            icms: { $ref: "#/components/schemas/TaxLine" }
+            ipi: { $ref: "#/components/schemas/TaxLine" }
+            pis: { $ref: "#/components/schemas/TaxLine" }
+            cofins: { $ref: "#/components/schemas/TaxLine" }
+            iss: { $ref: "#/components/schemas/TaxLine" }
+        reform:
+          type: object
+          description: Grupo UB (IBS/CBS) destacado
+          properties:
+            cst: { type: string, example: "000" }
+            cclasstrib: { type: string, example: "000001" }
+            ibs_uf: { $ref: "#/components/schemas/TaxLine" }
+            ibs_mun: { $ref: "#/components/schemas/TaxLine" }
+            cbs: { $ref: "#/components/schemas/TaxLine" }
+        expected_reform:
+          type: object
+          description: O que o motor de regras esperava (para exibir divergência)
+          properties:
+            cst: { type: string }
+            cclasstrib: { type: string }
+            cbs_rate: { type: number }
+            ibs_rate: { type: number }
+
+    TaxLine:
+      type: object
+      properties:
+        cst: { type: string, nullable: true }
+        base_brl: { type: number }
+        rate: { type: number }
+        amount_brl: { type: number }
+
+    Issue:
+      type: object
+      properties:
+        id: { type: string }
+        layer:
+          type: integer
+          minimum: 1
+          maximum: 7
+          description: Camada do pipeline que detectou (1 parse … 7 verification-gate)
+        reason: { $ref: "#/components/schemas/RejectionReason" }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        message: { type: string, description: Texto em PT-BR para o contador }
+        line: { type: integer, nullable: true }
+        suggested_fix: { type: string, nullable: true }
+
+    Item:
+      type: object
+      properties:
+        item_id: { type: string }
+        description: { type: string }
+        ncm: { type: string }
+        nbs: { type: string, nullable: true }
+        classification: { $ref: "#/components/schemas/Classification" }
+        health: { type: string, enum: [ok, warning, error] }
+        health_reasons:
+          type: array
+          items: { type: string }
+        documents_affected: { type: integer }
+        last_seen_at: { type: string, format: date-time }
+
+    Classification:
+      type: object
+      required: [effective_from]
+      properties:
+        effective_from: { $ref: "#/components/schemas/PeriodId" }
+        cst_ibs_cbs: { type: string }
+        cclasstrib: { type: string }
+        cst_icms: { type: string, nullable: true }
+        cst_pis_cofins: { type: string, nullable: true }
+        cfop_default: { type: string, nullable: true }
+        justification: { type: string }
+
+    CatalogHealth:
+      type: object
+      properties:
+        items_total: { type: integer }
+        ok: { type: integer }
+        warning: { type: integer }
+        error: { type: integer }
+        outbound_documents_affected: { type: integer }
+        top_reasons:
+          type: array
+          items:
+            type: object
+            properties:
+              reason: { type: string }
+              count: { type: integer }
+
+    Assessment:
+      type: object
+      properties:
+        cnpj: { type: string }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        regime: { $ref: "#/components/schemas/Regime" }
+        state: { $ref: "#/components/schemas/PeriodState" }
+        projection_hash: { type: string }
+        last_event_seq: { type: integer }
+        legacy:
+          type: object
+          description: Apuração dos tributos atuais
+          additionalProperties: { $ref: "#/components/schemas/TaxTotals" }
+          example:
+            icms: { debits_brl: 1000, credits_brl: 400, due_brl: 600 }
+            pis: { debits_brl: 100, credits_brl: 0, due_brl: 100 }
+        reform:
+          type: object
+          properties:
+            cbs: { $ref: "#/components/schemas/TaxTotals" }
+            ibs_uf: { $ref: "#/components/schemas/TaxTotals" }
+            ibs_mun: { $ref: "#/components/schemas/TaxTotals" }
+            credits_by_state:
+              type: object
+              description: Créditos por estado (expected / conditioned / released / at_risk)
+              additionalProperties: { type: number }
+        adjustments:
+          type: array
+          items: { $ref: "#/components/schemas/Adjustment" }
+        open_issues: { type: integer }
+        calculation_trace_url:
+          type: string
+          description: Link para memória de cálculo completa (nota a nota)
+
+    TaxTotals:
+      type: object
+      properties:
+        debits_brl: { type: number }
+        credits_brl: { type: number }
+        due_brl: { type: number }
+        carryover_brl: { type: number, description: Saldo credor a transportar }
+
+    Adjustment:
+      type: object
+      required: [tax, amount_brl, reason]
+      properties:
+        id: { type: string, readOnly: true }
+        tax: { type: string, example: "cbs" }
+        amount_brl: { type: number, description: Positivo aumenta débito; negativo reduz }
+        reason: { type: string }
+        reference_access_key: { type: string, nullable: true }
+        created_by: { type: string, readOnly: true }
+        created_at: { type: string, format: date-time, readOnly: true }
+
+    Reconciliation:
+      type: object
+      properties:
+        period: { $ref: "#/components/schemas/PeriodId" }
+        fisco_source: { type: string, nullable: true }
+        fisco_received_at: { type: string, format: date-time, nullable: true }
+        confirm_deadline: { type: string, format: date, nullable: true }
+        totals:
+          type: object
+          properties:
+            ours_due_brl: { type: number }
+            fisco_due_brl: { type: number }
+            difference_brl: { type: number }
+        divergences:
+          type: array
+          items:
+            type: object
+            properties:
+              access_key: { type: string }
+              line: { type: integer, nullable: true }
+              tax: { type: string }
+              ours_brl: { type: number }
+              fisco_brl: { type: number }
+              difference_brl: { type: number }
+              probable_cause: { type: string }
+
+    SupplierCreditRisk:
+      type: object
+      properties:
+        supplier_cnpj: { type: string }
+        supplier_name: { type: string }
+        documents: { type: integer }
+        credit_expected_brl: { type: number }
+        credit_conditioned_brl: { type: number }
+        credit_at_risk_brl: { type: number }
+        uses_split_payment: { type: boolean, nullable: true }
+        oldest_unpaid_days: { type: integer, nullable: true }
+
+    Deadline:
+      type: object
+      properties:
+        cnpj: { type: string }
+        legal_name: { type: string }
+        kind:
+          type: string
+          enum: [manifestation, confirm_assessment, regime_option_window, payment, other]
+        due_date: { type: string, format: date }
+        description: { type: string }
+        status: { type: string, enum: [pending, done, overdue] }
+
+    SimulationRequest:
+      type: object
+      required: [scenario]
+      properties:
+        scenario: { type: string, enum: [transition_2027_2028, full_2033] }
+        base_period_from: { $ref: "#/components/schemas/PeriodId" }
+        base_period_to: { $ref: "#/components/schemas/PeriodId" }
+        regimes:
+          type: array
+          items: { $ref: "#/components/schemas/Regime" }
+          default: [simples_integrado, simples_hibrido, lucro_presumido]
+        overrides:
+          type: object
+          description: Premissas editáveis (todas opcionais)
+          properties:
+            ibs_cbs_rate: { type: number }
+            b2b_share: { type: number, minimum: 0, maximum: 1 }
+            creditable_goods_share: { type: number }
+            creditable_services_share: { type: number }
+            payroll_monthly_brl: { type: number }
+            split_payment_lag_days: { type: integer }
+
+    SimulationResult:
+      type: object
+      properties:
+        scenario: { type: string }
+        based_on_documents: { type: integer }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              regime: { $ref: "#/components/schemas/Regime" }
+              direct_tax_monthly_brl:
+                type: number
+                description: Custo tributário direto (o que sai do caixa)
+              credit_to_b2b_customers_brl:
+                type: number
+                description: Crédito repassável ao cliente PJ (vantagem competitiva, não reduz a guia)
+              working_capital_exposure_brl: { type: number, nullable: true }
+              breakdown:
+                type: object
+                additionalProperties: { type: number }
+        recommendation:
+          type: object
+          properties:
+            regime: { $ref: "#/components/schemas/Regime" }
+            annual_saving_vs_worst_brl: { type: number }
+            b2b_breakeven_share: { type: number, nullable: true }
+        sensitivity:
+          type: array
+          description: Mapa alíquota × % crédito → regime vencedor
+          items:
+            type: object
+            properties:
+              ibs_cbs_rate: { type: number }
+              creditable_share: { type: number }
+              winner: { $ref: "#/components/schemas/Regime" }
+        timeline_2027_2033:
+          type: array
+          items:
+            type: object
+            properties:
+              year: { type: integer }
+              by_regime:
+                type: object
+                additionalProperties: { type: number }
+        assumptions:
+          type: array
+          items: { type: string }
+        not_modeled:
+          type: array
+          items: { type: string }
+
+    AuditTrailDefinition:
+      type: object
+      properties:
+        trail_id: { type: string, example: "cclasstrib_vs_ncm" }
+        name: { type: string, example: "cClassTrib incompatível com NCM" }
+        description: { type: string }
+        layer: { type: integer, minimum: 1, maximum: 7 }
+        default_severity: { type: string, enum: [low, medium, high, critical] }
+        applies_to_regimes:
+          type: array
+          items: { $ref: "#/components/schemas/Regime" }
+        tax_scope: { type: string, enum: [legacy, reform, both] }
+
+    AuditTrailResult:
+      type: object
+      properties:
+        trail_id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [passed, warning, failed, not_applicable] }
+        issues_count: { type: integer }
+        amount_at_stake_brl: { type: number, nullable: true }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/Issue" }
+
+    Book:
+      type: object
+      properties:
+        book_id: { type: string, format: uuid }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        audience: { type: string, enum: [accountant, business_owner] }
+        projection_hash: { type: string }
+        generated_at: { type: string, format: date-time }
+        generated_by: { type: string }
+        event_seq: { type: integer, description: Seq do `book.generated` }
+        pages: { type: integer }
+        trails_summary:
+          type: object
+          properties:
+            passed: { type: integer }
+            warning: { type: integer }
+            failed: { type: integer }
+
+    CertificateInfo:
+      type: object
+      properties:
+        cnpj: { type: string }
+        subject: { type: string }
+        issuer: { type: string }
+        serial: { type: string }
+        valid_from: { type: string, format: date-time }
+        valid_to: { type: string, format: date-time }
+        days_to_expiry: { type: integer }
+        stored_at: { type: string, format: date-time }
+        stored_by: { type: string }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        usage_count_30d: { type: integer }
+
+    CertificateUsage:
+      type: object
+      description: Projeção de um evento `certificate.used`
+      properties:
+        event_seq: { type: integer }
+        used_at: { type: string, format: date-time }
+        actor:
+          type: object
+          properties:
+            type: { type: string, enum: [user, agent, system] }
+            id: { type: string }
+        purpose:
+          type: string
+          enum: [dfe_distribution, nfse_query, manifestation, sped_transmission, other]
+        target: { type: string, description: Serviço/URL acessado }
+        outcome: { type: string, enum: [success, failure] }
+        ip: { type: string, nullable: true }
+
+    AssistantThread:
+      type: object
+      properties:
+        thread_id: { type: string, format: uuid }
+        cnpj: { type: string }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        title: { type: string }
+        created_at: { type: string, format: date-time }
+        message_count: { type: integer }
+
+    AssistantMessage:
+      type: object
+      properties:
+        message_id: { type: string, format: uuid }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        citations:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [event, document, rule] }
+              event_seq: { type: integer, nullable: true }
+              access_key: { type: string, nullable: true }
+              rule_id: { type: string, nullable: true }
+              excerpt: { type: string }
+        suggested_intentions:
+          type: array
+          description: Ações que o usuário pode executar; o assistente nunca as executa
+          items:
+            type: object
+            properties:
+              action: { type: string, example: "item.reclassified" }
+              endpoint: { type: string, example: "PUT /clients/{cnpj}/items/{item_id}/classification" }
+              payload: { type: object }
+              rationale: { type: string }
+        confidence: { type: string, enum: [high, medium, low] }
+        created_at: { type: string, format: date-time }
+
+    Job:
+      type: object
+      properties:
+        job_id: { type: string, format: uuid }
+        kind: { type: string, enum: [dfe_sync, sped_import, bank_statement_import, book_generation] }
+        status: { type: string, enum: [queued, running, done, failed] }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        accepted: { type: integer }
+        rejected: { type: integer }
+        error: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+
+    Event:
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_seq: { type: integer }
+        occurred_at: { type: string, format: date-time }
+        actor:
+          type: object
+          properties:
+            type: { type: string, enum: [user, agent, orchestrator, system] }
+            id: { type: string }
+        action: { type: string, example: "doc.received" }
+        cnpj: { type: string }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        payload: { type: object }
+
+    WriteResult:
+      type: object
+      properties:
+        event_id: { type: string, format: uuid }
+        event_seq: { type: integer }
+        action: { type: string }
+        projection_hash: { type: string }
+        state: { $ref: "#/components/schemas/PeriodState" }
+
+    Rejection:
+      type: object
+      properties:
+        rejected: { type: boolean, enum: [true] }
+        layer: { type: integer, minimum: 1, maximum: 7 }
+        reason: { $ref: "#/components/schemas/RejectionReason" }
+        message: { type: string }
+        details: { type: object }
+        rejection_event_seq: { type: integer, description: Seq do `output.rejected` gravado }
+
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Lint, build e testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instala dependências
+        run: npm ci
+
+      # Perfil de lint cobre src/ e tests/; o tsconfig de build exclui tests por
+      # causa do rootDir, então sem este perfil os testes nunca seriam checados.
+      - name: Typecheck (src + tests)
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Testes com cobertura
+        run: npm run test:coverage
+
+      # INV-006: o hash da projeção é a trilha de defesa do produto. Se o replay
+      # deixar de ser determinístico, a CI falha aqui com exit code 3.
+      - name: Verifica integridade da projeção
+        run: npm run verify
+
+  contract:
+    name: Contrato OpenAPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Valida docs/api/openapi.yaml
+        run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml

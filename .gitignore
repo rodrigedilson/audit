@@ -58,3 +58,19 @@ out/
 # === Artefatos de migracao de PC (nao versionar) ===
 RESTORE.md
 _venv_requirements/
+.vercel
+.env*
+# Reafirmado depois de `.env*`: em gitignore a ultima regra que casa vence, e o
+# `!.env.example` declarado mais acima estava sendo anulado por esta secao.
+!.env.example
+
+# === Relatorios de cobertura (gerados por `npm run test:coverage`) ===
+coverage/
+*.lcov
+
+# === Event store e projecao (artefatos de runtime, nunca versionados) ===
+# O log e a view materializada sao dados operacionais. O ADR-003 move o store para
+# Postgres por tenant; ate la o JSONL local fica fora do versionamento.
+.roadmap/activity.jsonl
+.roadmap/roadmap.json
+data/

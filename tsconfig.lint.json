@@ -1,0 +1,11 @@
+{
+  // O tsconfig de build tem `exclude: ["tests"]` por causa do `rootDir`/`outDir`, o
+  // que fazia o `npm run lint` não typecheckar uma única linha de teste. Este perfil
+  // existe só para checagem: cobre src e tests, sem emitir nada.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

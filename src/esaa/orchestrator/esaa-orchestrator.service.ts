@@ -4,6 +4,7 @@ import type {
   MaterializedRoadmap,
   OutputRejectedPayload,
 } from '../shared/types/esaa-event.types.js';
+import { IntegrityViolationError } from '../shared/types/esaa-errors.js';
 import type { IEventStoreRepository } from '../core/event-store/event-store.repository.js';
 import { EventAppenderService } from '../core/event-store/event-appender.service.js';
 import { EventReplayerService } from '../core/event-store/event-replayer.service.js';
@@ -13,6 +14,15 @@ import { ValidationPipelineService } from '../core/validation/validation-pipelin
 import { ContractLoaderService } from '../core/contracts/contract-loader.service.js';
 import { ContractEnforcerService } from '../core/contracts/contract-enforcer.service.js';
 import { Logger } from '../shared/infrastructure/logger.js';
+
+export interface VerifyReport {
+  valid: boolean;
+  eventCount: number;
+  storedHash: string;
+  replayedHash: string;
+  contentHash: string;
+  lastEventSeq: number;
+}
 
 export interface ProcessResult {
   accepted: boolean;
@@ -111,7 +121,14 @@ export class ESAAOrchestratorService {
     // 3. Re-project materialized view
     await this.reproject();
 
-    // 4. Verify integrity
+    // 4. Verify integrity.
+    //
+    // A releitura aqui é deliberadamente independente da que a reprojeção fez: é a
+    // única coisa que hoje detecta um segundo escritor tendo acrescentado eventos
+    // entre o append e a projeção. Reusar o array da reprojeção tornaria a
+    // verificação tautológica (o roadmap acabou de sair daqueles mesmos eventos).
+    // O custo de releitura é resolvido por snapshot e Postgres na Onda 1, não
+    // abrindo mão desta checagem. Ver INV-005.
     const allEvents = await this.replayer.replayAll();
     const verification = this.hashVerifier.verify(allEvents, this.currentRoadmap!);
 
@@ -119,7 +136,16 @@ export class ESAAOrchestratorService {
       this.logger.error('Integrity violation after projection', {
         storedHash: verification.storedHash,
         replayHash: verification.replayHash,
+        contentHash: verification.contentHash,
+        seq: event.event_seq,
       });
+
+      // ORCHESTRATOR_CONTRACT: verification_mismatch é severidade crítica, e o nível
+      // de escalação para crítico é halt_pipeline. O evento já está no log
+      // append-only e não pode ser desfeito, mas seguir devolvendo `accepted: true`
+      // com uma projeção que não fecha com o log entregaria ao contador um número
+      // sem trilha — exatamente o que o produto promete impedir.
+      throw new IntegrityViolationError(verification.storedHash, verification.replayHash);
     }
 
     this.logger.info('Intention accepted', {
@@ -143,17 +169,27 @@ export class ESAAOrchestratorService {
     return this.currentRoadmap!;
   }
 
-  async verify(): Promise<{ valid: boolean; eventCount: number }> {
-    const events = await this.replayer.replayAll();
+  /** Alimenta `POST /clients/{cnpj}/verify` do contrato OpenAPI. */
+  async verify(): Promise<VerifyReport> {
     if (!this.currentRoadmap) {
       await this.initialize();
     }
+    const events = await this.replayer.replayAll();
     const result = this.hashVerifier.verify(events, this.currentRoadmap!);
-    return { valid: result.valid, eventCount: result.eventCount };
+
+    return {
+      valid: result.valid,
+      eventCount: result.eventCount,
+      storedHash: result.storedHash,
+      replayedHash: result.replayHash,
+      contentHash: result.contentHash,
+      lastEventSeq: this.currentRoadmap!.last_event_seq,
+    };
   }
 
-  private async reproject(): Promise<void> {
+  private async reproject(): Promise<ESAAEventData[]> {
     const events = await this.replayer.replayAll();
     this.currentRoadmap = this.projector.project(events);
+    return events;
   }
 }
