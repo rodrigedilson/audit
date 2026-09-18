@@ -10,6 +10,8 @@ import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerPortfolioRoutes } from './routes/portfolio.routes.js';
 import { registerEventRoutes } from './routes/events.routes.js';
 import { registerCertificateRoutes } from './routes/certificate.routes.js';
+import { registerBillingRoutes, registerBillingWebhook } from './routes/billing.routes.js';
+import { AsaasClient } from '../billing/asaas-client.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
@@ -27,6 +29,13 @@ export interface ApiDeps {
    * faria duas apurações trabalharem sobre o mesmo objeto mutável.
    */
   orchestratorFor: (scope: EventScope) => Promise<FiscalOrchestratorService>;
+  /**
+   * Ausente quando `ASAAS_API_KEY` não está configurada. A cobrança então roda
+   * em modo "só cálculo": planos, calculadora e prévia de fatura funcionam, e
+   * nada é enviado ao gateway. É o que permite operar as primeiras ondas sem
+   * credencial de pagamento.
+   */
+  asaas?: AsaasClient;
 }
 
 declare module 'fastify' {
@@ -40,7 +49,15 @@ declare module 'fastify' {
 }
 
 /** Rotas sem autenticação. Tudo o mais exige token e associação a um escritório. */
-const PUBLIC_ROUTES = new Set(['/v1/auth/login', '/v1/health']);
+const PUBLIC_ROUTES = new Set([
+  '/v1/auth/login',
+  '/v1/health',
+  // Preço público antes de qualquer contato comercial — ver briefing.
+  '/v1/plans',
+  '/v1/price-calculator',
+  // Autenticado por token do gateway, não por JWT: o Asaas não tem sessão.
+  '/v1/webhooks/asaas',
+]);
 
 export interface BuildServerOptions {
   env: Env;
@@ -62,6 +79,9 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     pool,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
+    ...(env.asaas === undefined
+      ? {}
+      : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
     orchestratorFor: async (scope) => {
       const orchestrator = new FiscalOrchestratorService(
         new PostgresEventStoreRepository(pool, scope),
@@ -116,6 +136,8 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerPortfolioRoutes(instance, deps);
       await registerEventRoutes(instance, deps);
       await registerCertificateRoutes(instance, deps);
+      await registerBillingRoutes(instance, deps);
+      await registerBillingWebhook(instance, deps);
     },
     { prefix: '/v1' },
   );

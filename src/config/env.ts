@@ -27,6 +27,18 @@ export interface Env {
    * Gere com `openssl rand -base64 48`.
    */
   certificateMasterKey: string;
+  /**
+   * Ausente até a cobrança entrar no ar. Sem ela a API sobe e a cobrança roda em
+   * modo "só cálculo": planos, calculadora e prévia de fatura funcionam, nada é
+   * enviado ao gateway. Falhar o start por falta de credencial de pagamento
+   * impediria de operar as primeiras ondas.
+   */
+  asaas?: { apiKey: string; baseUrl: string };
+  /**
+   * Token que o Asaas envia em `asaas-access-token`. Sem ele o webhook responde
+   * 503 em vez de ficar aberto: um POST anônimo poderia marcar fatura como paga.
+   */
+  asaasWebhookToken?: string;
 }
 
 export class EnvError extends Error {
@@ -82,6 +94,19 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     logLevel: source['LOG_LEVEL'] ?? 'info',
     certificateMasterKey,
   };
+
+  const webhookToken = source['ASAAS_WEBHOOK_TOKEN']?.trim();
+  if (webhookToken) {
+    env.asaasWebhookToken = webhookToken;
+  }
+
+  const asaasApiKey = source['ASAAS_API_KEY']?.trim();
+  if (asaasApiKey) {
+    env.asaas = {
+      apiKey: asaasApiKey,
+      baseUrl: source['ASAAS_BASE_URL']?.trim() ?? 'https://api-sandbox.asaas.com/v3',
+    };
+  }
 
   if (jwtSecret) {
     env.supabase.jwtSecret = jwtSecret;
