@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { bootstrap, DEV_TENANT_ID, DEV_CNPJ, type BootstrapOptions } from '../composition-root.js';
 import { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
+import { loadEnv, EnvError } from '../config/env.js';
+import { buildServer } from '../api/server.js';
 import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
 
 const EXIT_OK = 0;
@@ -14,13 +16,13 @@ const USAGE = `audit — motor de conciliação da transição tributária (ESAA
 Uso: audit <comando> [opções]
 
 Comandos disponíveis
+  serve                           Sobe a API HTTP (docs/api/openapi.yaml)
   verify                          Reprojeta o event log e confere o hash (INV-006)
   status                          Resumo da projeção corrente
   help                            Esta ajuda
   version                         Versão do pacote e do schema de eventos
 
 Comandos previstos (ainda não implementados)
-  serve                           Sobe a API de docs/api/openapi.yaml       [Onda 1]
   ingest <cnpj>                   Coleta DF-e e ingere documentos           [Onda 4]
   close <cnpj> <competencia>      Fecha a competência de um CNPJ            [Onda 6]
 
@@ -36,12 +38,6 @@ interface PendingCommand {
 }
 
 const PENDING: Record<string, PendingCommand> = {
-  serve: {
-    wave: 'Onda 1',
-    reason:
-      'a camada HTTP depende do store multi-tenant em Postgres e da autenticação; ' +
-      'o contrato já está em docs/api/openapi.yaml',
-  },
   ingest: {
     wave: 'Onda 4',
     reason: 'depende do bounded context ingestion/ e do cofre de certificados A1 (Onda 2)',
@@ -70,6 +66,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return runVerify(options);
     case 'status':
       return runStatus(options);
+    case 'serve':
+      return runServe();
     default:
       return reportUnavailable(command);
   }
@@ -85,6 +83,25 @@ function readBootstrapOptions(args: readonly string[]): BootstrapOptions {
     options.configPath = configPath;
   }
   return options;
+}
+
+/**
+ * Sobe a API. Não usa `bootstrap`: este monta o adapter JSONL de escopo único, e
+ * a API monta um `PostgresEventStoreRepository` por escopo de requisição.
+ */
+async function runServe(): Promise<number> {
+  const env = loadEnv();
+  const app = await buildServer({ env });
+
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => {
+      void app.close().then(() => process.exit(EXIT_OK));
+    });
+  }
+
+  await app.listen({ port: env.port, host: env.host });
+  // `listen` resolve e o processo segue vivo; o await acima nunca "termina".
+  return EXIT_OK;
 }
 
 async function runVersion(options: BootstrapOptions): Promise<number> {
@@ -177,10 +194,20 @@ function readOption(args: readonly string[], name: string): string | undefined {
 class UsageError extends Error {}
 
 main(process.argv.slice(2))
-  .then((code) => process.exit(code))
+  .then((code) => {
+    // `serve` fica escutando: encerrar o processo aqui mataria o servidor.
+    if (code === EXIT_OK && process.argv[2] === 'serve') {
+      return;
+    }
+    process.exit(code);
+  })
   .catch((error: unknown) => {
     if (error instanceof UsageError) {
       process.stderr.write(`${error.message}\n\n${USAGE}`);
+      process.exit(EXIT_USAGE);
+    }
+    if (error instanceof EnvError) {
+      process.stderr.write(`${error.message}\n`);
       process.exit(EXIT_USAGE);
     }
     if (error instanceof IntegrityViolationError) {

@@ -4,6 +4,10 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['tests/**/*.test.ts'],
+    // Migrations rodam uma vez, antes de qualquer arquivo. Ver o comentário em
+    // tests/setup/global-db.ts: aplicá-las por arquivo causava deadlock de DDL
+    // entre workers paralelos.
+    globalSetup: ['tests/setup/global-db.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
@@ -14,12 +18,12 @@ export default defineConfig({
         // root, que têm teste próprio.
         'src/cli/**',
       ],
-      // Piso fixado no patamar atingido na Onda 0. Não é meta — é trava contra
-      // regressão. Cada onda seguinte sobe o piso junto com o código que entrega.
+      // Piso, não meta: trava contra regressão. Sobe a cada onda junto com o
+      // código entregue. Onda 0: 60/60/70/80. Onda 1: abaixo.
       thresholds: {
-        lines: 60,
-        statements: 60,
-        functions: 70,
+        lines: 68,
+        statements: 68,
+        functions: 73,
         branches: 80,
       },
     },

@@ -32,6 +32,12 @@ export const REJECTION_REASONS = [
   'lock_violation',
   'invalid_transition',
   'verification_mismatch',
+  /**
+   * Tentativa de agir sobre tenant ou CNPJ que não é do chamador. Produzido na
+   * fronteira HTTP pelo `TenantResolver`, não por uma camada do pipeline — ver a
+   * nota de implementação na ADR-002.
+   */
+  'tenant_violation',
 ] as const;
 export type RejectionReason = (typeof REJECTION_REASONS)[number];
 

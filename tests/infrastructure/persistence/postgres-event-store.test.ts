@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import pg from 'pg';
 import { PostgresEventStoreRepository } from '../../../src/infrastructure/persistence/postgres-event-store.repository.js';
 import { EventScope } from '../../../src/esaa/core/event-store/value-objects/event-scope.vo.js';
@@ -10,6 +8,7 @@ import { EventReplayerService } from '../../../src/esaa/core/event-store/event-r
 import { ProjectorService } from '../../../src/esaa/core/projection/projector.service.js';
 import { HashVerifierService } from '../../../src/esaa/core/projection/hash-verifier.service.js';
 import type { EventDraft } from '../../../src/esaa/core/event-store/event-store.repository.js';
+import { createClient, createTenant, randomCnpj } from '../../helpers/db.js';
 
 /**
  * Estes testes exigem Postgres. Sem `TEST_DATABASE_URL` a suíte é pulada em vez
@@ -23,13 +22,10 @@ import type { EventDraft } from '../../../src/esaa/core/event-store/event-store.
  */
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 
-const TENANT_A = '11111111-1111-1111-1111-111111111111';
-const TENANT_B = '22222222-2222-2222-2222-222222222222';
-const CNPJ_1 = '12345678000195';
-const CNPJ_2 = '11222333000181';
-
 describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
   let pool: pg.Pool;
+  let tenantA: string;
+  let tenantB: string;
   let scopeA1: EventScope;
   let scopeA2: EventScope;
   let scopeB1: EventScope;
@@ -52,43 +48,31 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: DATABASE_URL });
 
-    const migration = await readFile(
-      join(process.cwd(), 'supabase/migrations/20260918120000_multi_tenancy.sql'),
-      'utf8',
-    );
-    await pool.query(migration);
-
-    scopeA1 = EventScope.create(TENANT_A, CNPJ_1);
-    scopeA2 = EventScope.create(TENANT_A, CNPJ_2);
-    scopeB1 = EventScope.create(TENANT_B, CNPJ_1);
+    tenantA = await createTenant(pool, 'Escritório A');
+    tenantB = await createTenant(pool, 'Escritório B');
   });
 
   afterAll(async () => {
     await pool?.end();
   });
 
+  /**
+   * Cada teste ganha CNPJs novos, em vez de limpar tabelas compartilhadas: o log
+   * nasce vazio (seq começa em 0) sem `truncate`, que apagaria as fixtures dos
+   * outros arquivos rodando em paralelo. O mesmo CNPJ é cadastrado nos dois
+   * tenants para dar o caso de colisão de CNPJ entre escritórios.
+   */
   beforeEach(async () => {
-    // O trigger append-only bloqueia DELETE, então a limpeza usa TRUNCATE, que
-    // não dispara trigger de linha.
-    await pool.query('truncate table events, periods, clients, memberships, tenants cascade');
+    const cnpj1 = randomCnpj();
+    const cnpj2 = randomCnpj();
 
-    for (const [id, name] of [
-      [TENANT_A, 'Escritório A'],
-      [TENANT_B, 'Escritório B'],
-    ] as const) {
-      await pool.query('insert into tenants (id, name) values ($1, $2)', [id, name]);
-    }
-    for (const [tenant, cnpj] of [
-      [TENANT_A, CNPJ_1],
-      [TENANT_A, CNPJ_2],
-      [TENANT_B, CNPJ_1],
-    ] as const) {
-      await pool.query(
-        `insert into clients (tenant_id, cnpj, legal_name, regime)
-         values ($1, $2, $3, 'simples_hibrido')`,
-        [tenant, cnpj, `Cliente ${cnpj}`],
-      );
-    }
+    await createClient(pool, tenantA, cnpj1);
+    await createClient(pool, tenantA, cnpj2);
+    await createClient(pool, tenantB, cnpj1);
+
+    scopeA1 = EventScope.create(tenantA, cnpj1);
+    scopeA2 = EventScope.create(tenantA, cnpj2);
+    scopeB1 = EventScope.create(tenantB, cnpj1);
   });
 
   it('aloca event_seq a partir de 0 e devolve o evento completo', async () => {
@@ -99,8 +83,8 @@ describe.skipIf(!DATABASE_URL)('PostgresEventStoreRepository', () => {
 
     expect(first.event_seq).toBe(0);
     expect(second.event_seq).toBe(1);
-    expect(first.tenant_id).toBe(TENANT_A);
-    expect(first.cnpj).toBe(CNPJ_1);
+    expect(first.tenant_id).toBe(scopeA1.tenantId);
+    expect(first.cnpj).toBe(scopeA1.cnpj);
     expect(await repo.getLastSeq()).toBe(1);
   });
 

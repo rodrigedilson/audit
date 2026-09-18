@@ -42,3 +42,36 @@ de outro tenant.
 - O schema do evento (`.roadmap/schemas/event.schema.json`) tem
   `additionalProperties: false`, então os três campos novos precisam entrar em
   `required` no mesmo commit, senão todo evento passa a ser inválido.
+
+## Revisão na implementação (2026-09-18)
+
+**A "camada 0" do pipeline não foi criada, e o motivo é estrutural.** Esta ADR
+previa uma camada de isolamento antes do parse, respondendo "o actor pertence a
+este tenant? o CNPJ pertence a este tenant?".
+
+Ao implementar ficou claro que uma camada do pipeline não consegue responder
+isso melhor do que quem a chama. A `ESAAIntention` deliberadamente **não** carrega
+tenant nem CNPJ — se carregasse, um cliente poderia pedir escrita no log de outro
+escritório. O escopo vem do orquestrador, montado pela API. Uma camada de
+validação dentro do pipeline receberia exatamente o mesmo escopo, possivelmente
+errado, e o confirmaria contra si mesmo: uma tautologia, não uma verificação.
+
+O isolamento passou a ser garantido em quatro pontos reais, todos com teste:
+
+1. **`TenantResolver` na fronteira HTTP** — resolve o escritório em `memberships`
+   (nunca de um claim do token, que fica velho quando o usuário sai) e prova que
+   o CNPJ da rota pertence àquele tenant antes de montar o `EventScope`.
+2. **`EventScope` + repositório escopado** — a instância do store *é* o par
+   (tenant, CNPJ); não existe consulta sem escopo para esquecer de filtrar.
+3. **`assertInScope` no appender e no adapter Postgres** — evento de escopo alheio
+   é rejeitado em vez de silenciosamente reescrito para o log atual.
+4. **RLS** como segunda tranca.
+
+O motivo de rejeição `tenant_violation` foi adicionado ao vocabulário e é
+produzido na fronteira HTTP.
+
+**Detalhe de resposta que vale registrar:** um CNPJ que existe em *outro*
+escritório responde **404, não 403**. Um 403 confirmaria ao chamador que aquele
+CNPJ está cadastrado na plataforma, e a carteira de um escritório é informação
+comercial sensível diante de um concorrente. Há teste exigindo que as respostas
+de "não existe" e "existe, mas não é seu" sejam indistinguíveis.
