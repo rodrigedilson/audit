@@ -11,6 +11,7 @@ import { registerPortfolioRoutes } from './routes/portfolio.routes.js';
 import { registerEventRoutes } from './routes/events.routes.js';
 import { registerCertificateRoutes } from './routes/certificate.routes.js';
 import { registerBillingRoutes, registerBillingWebhook } from './routes/billing.routes.js';
+import { registerIngestionRoutes } from './routes/ingestion.routes.js';
 import { AsaasClient } from '../billing/asaas-client.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
@@ -109,9 +110,11 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     credentials: true,
   });
 
-  // Limite no upload do PFX e nos campos: um multipart sem teto é vetor de carga.
+  // Teto no multipart: sem ele o upload é vetor de carga. 5 MB por arquivo
+  // cobre um A1 e um XML de NF-e com folga; 200 arquivos é o lote máximo de
+  // ingestão, e acima disso o caminho previsto é o job assíncrono.
   await app.register(multipart, {
-    limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 4 },
+    limits: { fileSize: 5 * 1024 * 1024, files: 200, fields: 8 },
   });
 
   app.get('/v1/health', async () => ({ status: 'ok' }));
@@ -138,6 +141,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerCertificateRoutes(instance, deps);
       await registerBillingRoutes(instance, deps);
       await registerBillingWebhook(instance, deps);
+      await registerIngestionRoutes(instance, deps);
     },
     { prefix: '/v1' },
   );

@@ -92,7 +92,54 @@ Cabeçalho com razão social, CNPJ, regime e `has_certificate`. Abas:
 - **Vencendo:** widget na home com `GET /v1/certificates/expiring?days=60`. Um
   certificado vencido para a coleta de DF-e sem avisar ninguém.
 
-### 6. Usuários e papéis
+### 6. Ingestão de documentos (Onda 4)
+`POST /v1/clients/{cnpj}/documents` (multipart, campo `files`, até 200 por vez)
+
+Responde **207 Multi-Status** sempre — inclusive quando tudo passou, para o
+cliente ter um só caminho de parsing. O corpo traz `accepted[]` e `rejected[]`.
+
+- **Arraste o mês inteiro.** Um arquivo com problema não interrompe o lote: 198
+  notas entram e 2 aparecem em `rejected[]`.
+- **Mostre a rejeição como informação fiscal**, não como falha de upload: cada
+  item de `rejected[]` traz `filename`, `layer`, `reason` e `message` em PT-BR.
+  As rejeições também ficam no event log, então a tela de trilha as lista.
+- **Competência precisa estar aberta antes.** Documento de mês não aberto é
+  recusado na camada 4 com "não foi aberta". Ofereça abrir a competência ali
+  mesmo, em vez de mandar o usuário a outra tela.
+- **Duplicata** (`duplicate_document`) é esperada quando o escritório sobe o
+  mesmo arquivo duas vezes; trate como aviso, não como erro.
+
+`GET /v1/clients/{cnpj}/documents?period&direction&has_reform_group`
+
+DataTable com chave de acesso, modelo, direção (entrada/saída), emissão,
+contraparte, total e um indicador de grupo UB. O filtro `has_reform_group=false`
+é o **indicador de prontidão para a reforma**: são as notas que o fornecedor
+ainda emite sem IBS/CBS.
+
+`GET /v1/clients/{cnpj}/documents/{access_key}`
+
+Documento item a item, com `legacy_taxes` (ICMS, IPI, PIS, COFINS) e
+`reform_taxes` (CST-IBS/CBS, cClassTrib, IBS-UF, IBS-Mun, CBS) **lado a lado**.
+Esta é a tela que materializa o diferencial: os dois sistemas no mesmo item.
+Valores vêm em centavos inteiros — divida por 100 na apresentação, nunca antes.
+
+`POST /sync`, `/sped`, `/bank-statements` respondem **501** por enquanto e
+apontam o upload manual: enfileirar sem consumidor deixaria o escritório
+esperando um job que nunca sai de `queued`.
+
+### 7. Planos e assinatura (Onda 3)
+`GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
+vai no site, antes de qualquer contato comercial.
+
+- Mostre `subtotal_cents`, `minimum_adjustment_cents` e `total_cents`
+  separados. O ajuste de mínimo existe para ser explicado, não escondido atrás
+  de um total.
+- `GET /v1/subscription` traz status, fim do trial e a cotação do mês corrente.
+- `POST /v1/subscription/cancel` (`owner`): **um clique, sem diálogo de
+  retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
+  trilha continuam acessíveis.
+
+### 8. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -108,8 +155,6 @@ botão não é autorização.
 
 | Onda | Tela | Rota |
 |---|---|---|
-| 3 | Planos, assinatura e calculadora de preço pública | `/plans`, `/subscription` |
-| 4 | Ingestão: upload de XML (207 por arquivo), SPED, extrato, jobs | `/documents`, `/sped`, `/jobs/{id}` |
 | 5 | Saúde do cadastro de itens, com propagação para notas | `/items`, `/items/health` |
 | 6 | Apuração dual velho/novo nota a nota, memória de cálculo | `/assessments/{period}`, `/confirm` |
 | 7 | Trilhas de auditoria e Book de fechamento em PDF | `/audit-trails`, `/books/{period}` |
