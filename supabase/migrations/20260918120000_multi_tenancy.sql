@@ -10,7 +10,9 @@
 -- anon vazar.
 -- =============================================================================
 
-create extension if not exists pgcrypto;
+-- `gen_random_uuid()` é do core desde o PostgreSQL 13, então não precisamos da
+-- extensão pgcrypto. Evitar o `create extension` também evita conflito com a
+-- cópia que o Supabase já instala no schema `extensions`.
 
 -- ------------------------------------------------------------------ tenants
 create table if not exists public.tenants (
@@ -213,12 +215,30 @@ end $$;
 -- =============================================================================
 -- RLS — segunda tranca
 -- =============================================================================
+/**
+ * Id do usuário autenticado.
+ *
+ * No Supabase a resposta é `auth.uid()`. Num Postgres puro (CI, desenvolvimento
+ * local, testes) o schema `auth` não existe, e aí caímos na GUC que o PostgREST
+ * define. O `exception` cobre os dois casos sem exigir duas versões da
+ * migration — e sem exigir que alguém lembre de editar o arquivo antes de colar
+ * no editor do Supabase.
+ */
+create or replace function public.current_user_id() returns uuid
+  language plpgsql stable as $$
+begin
+  return (select auth.uid());
+exception
+  when undefined_function or invalid_schema_name or undefined_table then
+    return nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+end $$;
+
 create or replace function public.is_member_of(p_tenant_id uuid) returns boolean
   language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from public.memberships
      where tenant_id = p_tenant_id
-       and user_id = nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+       and user_id = public.current_user_id()
   );
 $$;
 
