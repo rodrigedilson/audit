@@ -1,7 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Gera `scripts/sql/setup-completo.sql`: um único arquivo para colar no SQL
- * Editor do Supabase, com todas as migrations mais o bootstrap do escritório.
+ * Gera o SQL pronto para colar no SQL Editor do Supabase, em dois formatos:
+ *
+ *   scripts/sql/setup-completo.sql      tudo de uma vez
+ *   scripts/sql/migracoes/NN-nome.sql   um passo por arquivo
+ *
+ * Os dois saem das mesmas migrations. O formato numerado existe porque um erro
+ * no meio de 700 linhas coladas de uma vez é difícil de localizar no editor;
+ * passo a passo, a mensagem do Postgres aponta o arquivo.
  *
  * É gerado, e não escrito à mão, porque uma cópia manual das migrations
  * divergiria na primeira alteração — e a divergência só apareceria quando o
@@ -9,11 +15,35 @@
  *
  *   npm run sql:bundle
  */
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase/migrations');
-const SAIDA = join(process.cwd(), 'scripts/sql/setup-completo.sql');
+const SAIDA_BUNDLE = join(process.cwd(), 'scripts/sql/setup-completo.sql');
+const SAIDA_PASSOS = join(process.cwd(), 'scripts/sql/migracoes');
+
+/** Nome legível de cada migration, para o arquivo numerado. */
+const TITULOS: Record<string, string> = {
+  '20260918120000_multi_tenancy.sql': 'multi-tenancy',
+  '20260918130000_certificate_vault.sql': 'cofre-certificados',
+  '20260918140000_billing.sql': 'cobranca',
+  '20260918150000_ingestion.sql': 'ingestao',
+};
+
+const DESCRICOES: Record<string, string> = {
+  '20260918120000_multi_tenancy.sql':
+    'Escritórios, usuários, CNPJs, competências e o event log.\n' +
+    '-- Cria append_event(), que serializa a escrita por CNPJ, e o trigger que\n' +
+    '-- torna a tabela de eventos append-only.',
+  '20260918130000_certificate_vault.sql':
+    'Cofre dos certificados A1. O PFX entra cifrado pela aplicação; o banco\n' +
+    '-- nunca vê a chave nem a senha.',
+  '20260918140000_billing.sql':
+    'Planos, assinatura e faturas. Popula os 5 planos por regime e o mínimo\n' +
+    '-- de R$ 150. Cria billable_clients(), que define "CNPJ ativo".',
+  '20260918150000_ingestion.sql':
+    'Documentos fiscais e seus itens, com tributos atuais e IBS/CBS lado a lado.',
+};
 
 const CABECALHO = `-- =============================================================================
 -- audit — setup completo do Supabase
@@ -150,12 +180,73 @@ async function main(): Promise<void> {
   partes.push(BOOTSTRAP);
 
   const conteudo = partes.join('');
-  await writeFile(SAIDA, conteudo, 'utf8');
+  await writeFile(SAIDA_BUNDLE, conteudo, 'utf8');
 
-  console.log(`gerado: scripts/sql/setup-completo.sql`);
-  console.log(`  migrations: ${arquivos.length}`);
-  console.log(`  linhas:     ${conteudo.split('\n').length}`);
-  console.log(`  tamanho:    ${(Buffer.byteLength(conteudo) / 1024).toFixed(1)} KB`);
+  console.log('gerado: scripts/sql/setup-completo.sql');
+  console.log(`  ${conteudo.split('\n').length} linhas, ${kb(conteudo)}`);
+  console.log('');
+
+  // Recria o diretório do zero: uma migration renomeada deixaria o arquivo
+  // antigo para trás, e alguém acabaria rodando um passo que não existe mais.
+  await rm(SAIDA_PASSOS, { recursive: true, force: true });
+  await mkdir(SAIDA_PASSOS, { recursive: true });
+
+  console.log('gerado: scripts/sql/migracoes/');
+  let passo = 1;
+
+  for (const arquivo of arquivos) {
+    const titulo = TITULOS[arquivo] ?? arquivo.replace(/^\d+_|\.sql$/g, '');
+    const nome = `${String(passo).padStart(2, '0')}-${titulo}.sql`;
+    const corpo =
+      cabecalhoPasso(passo, arquivos.length + 1, titulo, DESCRICOES[arquivo], arquivo) +
+      (await readFile(join(MIGRATIONS_DIR, arquivo), 'utf8'));
+
+    await writeFile(join(SAIDA_PASSOS, nome), corpo, 'utf8');
+    console.log(`  ${nome}`);
+    passo += 1;
+  }
+
+  const nomeBootstrap = `${String(passo).padStart(2, '0')}-bootstrap-escritorio.sql`;
+  await writeFile(
+    join(SAIDA_PASSOS, nomeBootstrap),
+    cabecalhoPasso(
+      passo,
+      arquivos.length + 1,
+      'bootstrap do escritório',
+      'Vincula seu usuário do Supabase Auth a um escritório, como owner.\n' +
+        '-- EDITE as duas linhas marcadas com CONFIGURE antes de executar.',
+      null,
+    ) + BOOTSTRAP.replace(/^\n+/, ''),
+    'utf8',
+  );
+  console.log(`  ${nomeBootstrap}`);
+}
+
+function cabecalhoPasso(
+  passo: number,
+  total: number,
+  titulo: string,
+  descricao: string | undefined,
+  origem: string | null,
+): string {
+  return (
+    `-- =============================================================================\n` +
+    `-- audit — passo ${passo} de ${total}: ${titulo}\n` +
+    `--\n` +
+    (descricao ? `-- ${descricao}\n--\n` : '') +
+    `-- ARQUIVO GERADO por \`npm run sql:bundle\`.` +
+    (origem ? ` Origem: supabase/migrations/${origem}` : '') +
+    `\n` +
+    `-- Não edite aqui${origem ? ': altere a migration de origem' : ''}.\n` +
+    `--\n` +
+    `-- Execute os passos NA ORDEM: cada um depende das tabelas do anterior.\n` +
+    `-- Pode rodar de novo sem duplicar nada.\n` +
+    `-- =============================================================================\n\n`
+  );
+}
+
+function kb(conteudo: string): string {
+  return `${(Buffer.byteLength(conteudo) / 1024).toFixed(1)} KB`;
 }
 
 main().catch((error: unknown) => {
