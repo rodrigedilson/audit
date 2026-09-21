@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: audit — API fiscal (ESAA-Flow)
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Contrato mínimo para destravar o frontend (Lovable). Toda escrita passa pelo
     orquestrador single-writer: o cliente envia uma *intenção*; a API valida
@@ -578,15 +578,30 @@ paths:
   /audit-trails:
     get:
       tags: [reporting]
-      summary: Catálogo de trilhas de auditoria disponíveis (nome, camada, severidade padrão)
+      operationId: listAuditTrails
+      summary: Catálogo das trilhas que este sistema executa (nome, camada, severidade)
+      description: >
+        Público dentro do tenant e independente de competência. A lista é o que o
+        produto confere de fato — não uma lista de verificações da RFB.
+      parameters:
+        - in: query
+          name: regime
+          required: false
+          schema: { $ref: "#/components/schemas/Regime" }
+          description: Filtra as trilhas aplicáveis ao regime.
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/AuditTrailDefinition" }
+                type: object
+                required: [trails, total]
+                properties:
+                  trails:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditTrailDefinition" }
+                  total: { type: integer }
 
   /clients/{cnpj}/audit-trails/{period}:
     parameters:
@@ -594,15 +609,16 @@ paths:
       - $ref: "#/components/parameters/PeriodPath"
     get:
       tags: [reporting]
-      summary: Resultado das trilhas de auditoria da competência (issues agrupadas por trilha)
+      operationId: getAuditTrailResults
+      summary: Resultado das trilhas da competência, agrupado por trilha
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/AuditTrailResult" }
+              schema: { $ref: "#/components/schemas/AuditTrailReport" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Rejected" }
 
   /clients/{cnpj}/books/{period}:
     parameters:
@@ -610,35 +626,60 @@ paths:
       - $ref: "#/components/parameters/PeriodPath"
     get:
       tags: [reporting]
-      summary: Lista Books de fechamento gerados para a competência
+      operationId: listBooks
+      summary: Books de fechamento gerados para a competência, do mais recente ao mais antigo
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/Book" }
+                type: object
+                required: [books, total]
+                properties:
+                  books:
+                    type: array
+                    items: { $ref: "#/components/schemas/Book" }
+                  total: { type: integer }
     post:
       tags: [reporting]
-      summary: Gera Book de fechamento (emite `book.generated`; assíncrono)
+      operationId: generateBook
+      summary: Gera o Book de fechamento (emite `book.generated`)
+      description: >
+        Síncrono: responde `201` com os metadados do Book já renderizado. Os bytes
+        do PDF ficam guardados e o download não os regera — o hash impresso no
+        rodapé tem de continuar valendo depois que uma regra mudar.
+        Exige a competência apurada; uma competência apenas aberta é recusada com
+        `422`. Gerar o Book de uma competência **confirmada** é permitido: é o caso
+        de uso previsto, e a camada 6 não o trata como mutação.
       requestBody:
+        required: false
         content:
           application/json:
             schema:
               type: object
               properties:
-                audience: { type: string, enum: [accountant, business_owner], default: accountant }
-                include_calculation_trace: { type: boolean, default: true }
-                white_label: { type: boolean, default: false }
-                language: { type: string, default: pt-BR }
+                audience:
+                  type: string
+                  enum: [accountant, business_owner]
+                  default: accountant
+                include_trace:
+                  type: boolean
+                  description: >
+                    Memória de cálculo em anexo. Por omissão sai `true`, exceto
+                    quando `audience` é `business_owner`.
+                white_label:
+                  type: boolean
+                  default: false
+                  description: Omite a marca do produto; disponível de Lucro Presumido para cima.
       responses:
-        "202":
-          description: Job aceito
+        "201":
+          description: Book gerado
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Job" }
-        "409": { $ref: "#/components/responses/Rejected" }
+              schema: { $ref: "#/components/schemas/Book" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Rejected" }
 
   /clients/{cnpj}/books/{period}/{book_id}/download:
     parameters:
@@ -650,10 +691,17 @@ paths:
         schema: { type: string, format: uuid }
     get:
       tags: [reporting]
-      summary: Baixa o PDF do Book (o hash da projeção vai impresso no rodapé)
+      operationId: downloadBook
+      summary: Baixa os bytes guardados do PDF (hash da projeção no rodapé de toda página)
       responses:
         "200":
           description: PDF
+          headers:
+            X-Book-SHA256:
+              description: >
+                SHA-256 do próprio arquivo, para o destinatário conferir o PDF que
+                recebeu sem precisar abri-lo.
+              schema: { type: string, pattern: "^[0-9a-f]{64}$" }
           content:
             application/pdf:
               schema: { type: string, format: binary }
@@ -1316,46 +1364,124 @@ components:
 
     AuditTrailDefinition:
       type: object
+      required: [trailId, name, description, layer, defaultSeverity, taxScope, source, matches]
       properties:
-        trail_id: { type: string, example: "cclasstrib_vs_ncm" }
-        name: { type: string, example: "cClassTrib incompatível com NCM" }
+        trailId: { type: string, example: "cclasstrib_vs_cst" }
+        name: { type: string, example: "cClassTrib incompatível com CST-IBS/CBS" }
         description: { type: string }
-        layer: { type: integer, minimum: 1, maximum: 7 }
-        default_severity: { type: string, enum: [low, medium, high, critical] }
-        applies_to_regimes:
+        layer:
+          type: integer
+          minimum: 1
+          maximum: 7
+          nullable: true
+          description: Camada do pipeline que detecta a trilha; `null` quando não vem de uma camada.
+        defaultSeverity: { type: string, enum: [low, medium, high, critical] }
+        taxScope:
+          type: string
+          enum: [legacy, reform, both, none]
+          description: Sistema tributário a que a trilha se refere.
+        source:
+          type: string
+          enum: [output_rejected, item_classification, assessment, period_state]
+          description: Onde a trilha busca as inconsistências que agrupa.
+        matches:
           type: array
-          items: { $ref: "#/components/schemas/Regime" }
-        tax_scope: { type: string, enum: [legacy, reform, both] }
+          items: { type: string }
+          description: Motivos (ou estados de competência) que a trilha reconhece.
+
+    AuditTrailIssue:
+      type: object
+      required: [subject, message, severity]
+      properties:
+        subject:
+          type: string
+          description: Chave de acesso, id de item, tributo ou nome de arquivo.
+        message: { type: string }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        layer: { type: integer, minimum: 1, maximum: 7 }
+        documentsAffected: { type: integer }
+        amountAtStakeCents: { type: integer }
 
     AuditTrailResult:
       type: object
+      required:
+        [trailId, name, description, layer, severity, taxScope, status,
+         issuesCount, amountAtStakeCents, documentsAffected, issues]
       properties:
-        trail_id: { type: string }
+        trailId: { type: string }
         name: { type: string }
-        status: { type: string, enum: [passed, warning, failed, not_applicable] }
-        issues_count: { type: integer }
-        amount_at_stake_brl: { type: number, nullable: true }
+        description: { type: string }
+        layer: { type: integer, nullable: true }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        taxScope: { type: string, enum: [legacy, reform, both, none] }
+        status:
+          type: string
+          enum: [passed, warning, failed, not_applicable]
+          description: >
+            `not_applicable` significa **não conferido** — a tabela oficial de
+            códigos não estava carregada. Não é equivalente a `passed`.
+        issuesCount:
+          type: integer
+          description: Total exato de ocorrências, mesmo quando `issues` vem amostrado.
+        amountAtStakeCents: { type: integer }
+        documentsAffected: { type: integer }
         issues:
           type: array
-          items: { $ref: "#/components/schemas/Issue" }
+          maxItems: 25
+          items: { $ref: "#/components/schemas/AuditTrailIssue" }
+          description: Amostra de até 25 ocorrências; o total está em `issuesCount`.
+
+    AuditTrailsSummary:
+      type: object
+      required: [passed, warning, failed, not_applicable, amountAtStakeCents]
+      properties:
+        passed: { type: integer }
+        warning: { type: integer }
+        failed: { type: integer }
+        not_applicable: { type: integer }
+        amountAtStakeCents: { type: integer }
+
+    AuditTrailReport:
+      type: object
+      required:
+        [period, period_state, projection_hash, reference_tables_loaded, trails, summary]
+      properties:
+        period: { $ref: "#/components/schemas/PeriodId" }
+        period_state: { type: string, enum: [open, assessed, reconciled, confirmed] }
+        projection_hash: { type: string }
+        reference_tables_loaded:
+          type: boolean
+          description: >
+            `false` significa que as trilhas de código não conferiram nada, e as
+            que dependem delas vêm como `not_applicable`.
+        trails:
+          type: array
+          items: { $ref: "#/components/schemas/AuditTrailResult" }
+        summary: { $ref: "#/components/schemas/AuditTrailsSummary" }
 
     Book:
       type: object
+      required:
+        [id, period, audience, white_label, include_trace, projection_hash,
+         trails_summary, pages, pdf_bytes, pdf_sha256, event_seq, generated_at]
       properties:
-        book_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
         period: { $ref: "#/components/schemas/PeriodId" }
         audience: { type: string, enum: [accountant, business_owner] }
-        projection_hash: { type: string }
-        generated_at: { type: string, format: date-time }
-        generated_by: { type: string }
-        event_seq: { type: integer, description: Seq do `book.generated` }
+        white_label: { type: boolean }
+        include_trace: { type: boolean }
+        projection_hash:
+          type: string
+          description: Hash da projeção no instante da geração; impresso no rodapé de toda página.
+        trails_summary: { $ref: "#/components/schemas/AuditTrailsSummary" }
         pages: { type: integer }
-        trails_summary:
-          type: object
-          properties:
-            passed: { type: integer }
-            warning: { type: integer }
-            failed: { type: integer }
+        pdf_bytes: { type: integer }
+        pdf_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 do arquivo, devolvido também no cabeçalho `X-Book-SHA256`.
+        event_seq: { type: integer, description: Seq do `book.generated` no log. }
+        generated_at: { type: string, format: date-time }
 
     CertificateInfo:
       type: object

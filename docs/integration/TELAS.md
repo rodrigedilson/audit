@@ -178,7 +178,44 @@ emitida com ele. A tela tem de deixar essa relação óbvia.
   a apuração e faça o usuário revisar. Reenviar sozinho anularia a proteção.
 - **Confirmada é terminal.** Sem botão de editar; a correção é retificação.
 
-### 9. Planos e assinatura (Onda 3)
+### 9. Trilhas de auditoria e Book de fechamento (Onda 7)
+`GET /v1/audit-trails` · `GET /audit-trails/{period}` · `POST|GET /books/{period}` · `GET /books/{period}/{book_id}/download`
+
+É o diferencial #3 e o primeiro entregável que sai do escritório para o cliente
+final.
+
+- **`GET /v1/audit-trails` é o catálogo e não depende de competência.** Use-o na
+  página de metodologia e no material de venda. A lista é o que o produto
+  confere de fato — não repita a expressão "as verificações que a RFB faz", que
+  é do concorrente e não descreve esta lista.
+- **`not_applicable` não é `passed`, e a diferença é o produto.** Significa *não
+  conferido*: a tabela oficial de códigos não estava carregada. Renderize em cor
+  de aviso, com o texto "não verificado", nunca em verde e nunca junto com os
+  aprovados. Quando `reference_tables_loaded` vem `false`, mostre um banner fixo
+  no topo do relatório.
+- **`issuesCount` é o total; `issues` é uma amostra de até 25.** Mostre o número
+  de `issuesCount` no cabeçalho da trilha e leve ao drill-down — nunca conte o
+  tamanho do array.
+- **`amountAtStakeCents` é o número que vende.** Vem por trilha e somado em
+  `summary`. É o valor das notas já emitidas que carregam o erro, não uma multa
+  estimada: não rotule como "multa" nem como "risco fiscal em reais".
+- **`POST /books/{period}` é síncrono e devolve `201`** com os metadados. Exige a
+  competência apurada; competência apenas aberta vem `422` com camada 4. Gerar o
+  Book de uma competência **confirmada** é permitido — é o caso de uso.
+- **O download não regera o PDF.** Os bytes ficam guardados, e é isso que
+  permite ao contador mostrar depois o arquivo exato que enviou, mesmo que uma
+  regra mude. Não ofereça "atualizar este Book": gere outro, e a lista mantém os
+  dois.
+- **Confira o `X-Book-SHA256`.** O cabeçalho traz o SHA-256 do arquivo; vale
+  exibi-lo na tela ao lado do botão de download, para o escritório poder repassar
+  ao cliente.
+- **`audience: business_owner` muda o texto e tira a memória de cálculo.** Deixe
+  os dois botões explícitos ("versão do contador" / "versão do cliente"), porque
+  são documentos diferentes com o mesmo hash.
+- **`white_label` é entitlement de plano** (Lucro Presumido para cima).
+  Desabilite o controle nos planos abaixo e diga por quê, em vez de esconder.
+
+### 10. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -190,7 +227,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 10. Usuários e papéis
+### 11. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -207,7 +244,6 @@ botão não é autorização.
 | Onda | Tela | Rota |
 |---|---|---|
 | 6 | Apuração dual velho/novo nota a nota, memória de cálculo | `/assessments/{period}`, `/confirm` |
-| 7 | Trilhas de auditoria e Book de fechamento em PDF | `/audit-trails`, `/books/{period}` |
 | 8 | Contra-apuração contribuinte × Fisco e calendário | `/reconciliation/{period}`, `/deadlines` |
 | 9 | Assistente fiscal com citações de `event_seq` | `/assistant/threads` |
 
@@ -226,6 +262,9 @@ em ordem de necessidade:
 7. **Timeline de eventos** para a trilha (aproveita `.ejr-citation`)
 8. **Badges de estado fiscal** — reaproveite `.ejr-badge` com os estados de
    competência e de crédito
+9. **Badge de trilha em quatro estados** — `passed`, `warning`, `failed` e
+   `not_applicable`. O quarto **não pode** cair no mesmo visual do primeiro: é a
+   diferença entre "conferido e correto" e "não conferido" 
 
 Os tokens e os seis princípios não mudam.
 

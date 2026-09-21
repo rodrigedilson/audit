@@ -52,6 +52,8 @@ const TABELAS = [
   'assessments',
   'assessment_lines',
   'assessment_adjustments',
+  'audit_trails',
+  'books',
 ] as const;
 
 const FUNCOES = [
@@ -91,6 +93,8 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   assessments: '06-apuracao-dual.sql',
   assessment_lines: '06-apuracao-dual.sql',
   assessment_adjustments: '06-apuracao-dual.sql',
+  audit_trails: '07-reporting.sql',
+  books: '07-reporting.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
@@ -152,6 +156,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     }
 
     checagens.push(await checarCargaInicial(pool));
+    checagens.push(await checarTrilhas(pool));
     checagens.push(await checarVisibilidadePublica(pool));
     checagens.push(await checarTabelasOficiais(pool));
     checagens.push(await checarRegrasPublicadas(pool));
@@ -337,6 +342,35 @@ async function checarCargaInicial(pool: pg.Pool): Promise<Checagem> {
       'Os INSERT de carga não entraram. Reaplique\n' +
       '  scripts/sql/migracoes/03-cobranca.sql — é idempotente,\n' +
       '  os `on conflict do nothing` evitam duplicar.',
+  };
+}
+
+/**
+ * Catálogo de trilhas de auditoria.
+ *
+ * Um `audit_trails` vazio não falha nada em runtime: o relatório volta com zero
+ * trilhas e o Book sai com a seção em branco. O escritório concluiria que está
+ * tudo certo com o cliente, quando nada foi conferido — é a pior forma de erro
+ * que este produto pode ter.
+ */
+export async function checarTrilhas(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ total: string }>(
+    'select count(*)::text as total from audit_trails where active',
+  );
+
+  const total = Number(rows[0]!.total);
+
+  if (total >= 12) {
+    return { nome: 'trilhas de auditoria', estado: 'ok', detalhe: `${total} trilhas ativas` };
+  }
+
+  return {
+    nome: 'trilhas de auditoria',
+    estado: 'falha',
+    detalhe: `${total} trilhas ativas (esperado 12 ou mais)`,
+    acao:
+      'Sem catálogo, o Book sai sem nenhuma verificação nomeada e parece aprovado.\n' +
+      '  Reaplique scripts/sql/migracoes/07-reporting.sql — é idempotente.',
   };
 }
 

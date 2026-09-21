@@ -140,10 +140,17 @@ export class IngestionService {
 
     const accessKey = tryReadAccessKey(failure.message);
 
+    // A competência vem da chave de acesso (posições 3-6, AAMM), porque é o
+    // único lugar onde ela sobrevive a um documento que não pôde ser lido. Sem
+    // isso a rejeição fica sem competência e nunca aparece no Book de nenhum
+    // mês — a inconsistência existiria no log e não seria reportada a ninguém.
+    const period = accessKey === undefined ? undefined : periodFromAccessKey(accessKey);
+
     await this.orchestrator.processIntention({
       action: 'output.rejected',
       task_id: accessKey ?? file.filename,
       actor,
+      ...(period === undefined ? {} : { period }),
       payload: {
         reason: failure.reason,
         details: failure.message,
@@ -255,4 +262,19 @@ function describe(error: unknown): string {
 /** Recupera a chave da mensagem de erro, quando a rejeição a menciona. */
 function tryReadAccessKey(message: string): string | undefined {
   return /\b([0-9]{44})\b/.exec(message)?.[1];
+}
+
+/**
+ * Competência codificada na chave de acesso: cUF(2) + AAMM(4) + ...
+ *
+ * Difere de propósito do caminho do documento aceito, que usa a `dhEmi`: num
+ * documento recusado a `dhEmi` pode ser justamente o campo inválido, enquanto o
+ * AAMM da chave já passou pelo dígito verificador.
+ */
+export function periodFromAccessKey(accessKey: string): string | undefined {
+  const aamm = /^[0-9]{2}([0-9]{2})(0[1-9]|1[0-2])/.exec(accessKey);
+  if (!aamm) {
+    return undefined;
+  }
+  return `20${aamm[1]}-${aamm[2]}`;
 }

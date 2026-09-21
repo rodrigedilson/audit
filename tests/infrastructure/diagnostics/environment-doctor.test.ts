@@ -3,6 +3,7 @@ import pg from 'pg';
 import {
   diagnosticar,
   classificarFalhaDeConexao,
+  checarTrilhas,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
 
@@ -238,6 +239,16 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
       }
     });
 
+    it('reconhece o catálogo de trilhas semeado pela migration', async () => {
+      const trilhas = checagem(
+        await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),
+        'trilhas de auditoria',
+      );
+
+      expect(trilhas?.estado).toBe('ok');
+      expect(trilhas?.detalhe).toMatch(/1[2-9]|[2-9]\d/);
+    });
+
     it('acusa a falta de escritório, que faria a API responder 403 em tudo', async () => {
       const escritorio = checagem(
         await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),
@@ -361,5 +372,45 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
       expect(resultado.checagens.every((c) => c.estado === 'ok')).toBe(true);
       expect(resultado.checagens.every((c) => c.acao === undefined)).toBe(true);
     });
+  });
+});
+
+/**
+ * Catálogo de trilhas vazio, testado sem banco.
+ *
+ * Desligar as trilhas no Postgres seria mais realista, mas `audit_trails` é
+ * dado normativo global: o arquivo de teste da API de reporting lê a mesma
+ * tabela, e os arquivos rodam em paralelo. Um teste que apaga catálogo
+ * compartilhado quebra o vizinho de forma intermitente.
+ */
+describe('checarTrilhas — catálogo vazio', () => {
+  const poolFalso = (total: number): pg.Pool =>
+    ({
+      query: async () => ({ rows: [{ total: String(total) }] }),
+    }) as unknown as pg.Pool;
+
+  it('aprova com o catálogo completo', async () => {
+    const r = await checarTrilhas(poolFalso(12));
+
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toContain('12 trilhas ativas');
+  });
+
+  /**
+   * Catálogo vazio não quebra nada em runtime: o relatório volta com zero
+   * trilhas e o Book sai com a seção em branco. O escritório lê isso como
+   * "nada de errado com o cliente" — falso negativo silencioso é o pior erro
+   * que este produto pode cometer.
+   */
+  it('reprova catálogo vazio, que faria o Book parecer aprovado', async () => {
+    const r = await checarTrilhas(poolFalso(0));
+
+    expect(r.estado).toBe('falha');
+    expect(r.detalhe).toContain('0 trilhas ativas');
+    expect(r.acao).toContain('07-reporting.sql');
+  });
+
+  it('reprova catálogo parcial, não só o vazio', async () => {
+    expect((await checarTrilhas(poolFalso(11))).estado).toBe('falha');
   });
 });

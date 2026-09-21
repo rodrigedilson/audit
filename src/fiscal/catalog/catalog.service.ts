@@ -119,7 +119,7 @@ export class CatalogService {
       `insert into item_classifications (
          tenant_id, cnpj, item_id, effective_from, ncm, nbs, cst_ibs_cbs, cclasstrib,
          cst_icms, cst_pis_cofins, cfop_default, justification,
-         health, health_reasons, event_seq, classified_by
+         health, health_issues, event_seq, classified_by
        ) values ($1::uuid, $2::char(14), $3, $4::char(7), $5, $6, $7, $8,
                  $9, $10, $11, $12, $13, $14::jsonb, $15, $16::uuid)
        on conflict (tenant_id, cnpj, item_id, effective_from) do update set
@@ -132,7 +132,7 @@ export class CatalogService {
          cfop_default = excluded.cfop_default,
          justification = excluded.justification,
          health = excluded.health,
-         health_reasons = excluded.health_reasons,
+         health_issues = excluded.health_issues,
          event_seq = excluded.event_seq,
          classified_by = excluded.classified_by,
          classified_at = now()`,
@@ -150,7 +150,10 @@ export class CatalogService {
         classification.cfopDefault ?? null,
         classification.justification ?? null,
         outcome.health,
-        JSON.stringify(outcome.issues.map((i) => i.message)),
+        // A inconsistência inteira, não só a mensagem: as trilhas de auditoria
+        // agrupam por `reason`, e casar por trecho de texto quebraria em
+        // silêncio quando uma mensagem mudasse.
+        JSON.stringify(outcome.issues),
         eventSeq,
         userId,
       ],
@@ -183,7 +186,7 @@ export class CatalogService {
            from item_propagation($1::uuid, $2::char(14))
        )
        select i.item_id, i.description, i.last_seen_at,
-              v.ncm, v.nbs, v.health, v.health_reasons, v.effective_from,
+              v.ncm, v.nbs, v.health, v.health_issues, v.effective_from,
               coalesce(p.documentos, 0) as documents_affected,
               count(*) over () as total
          from items i
@@ -214,9 +217,10 @@ export class CatalogService {
         ncm: trimOrNull(row['ncm']),
         nbs: trimOrNull(row['nbs']),
         health: (row['health'] as Health | null) ?? 'warning',
-        health_reasons: (row['health_reasons'] as string[] | null) ?? [
-          'Item nunca classificado.',
-        ],
+        // A lista mostra mensagens; a estrutura fica no banco para as trilhas.
+        health_reasons: (row['health_issues'] as { message: string }[] | null)?.map(
+          (i) => i.message,
+        ) ?? ['Item nunca classificado.'],
         effective_from: trimOrNull(row['effective_from']),
         documents_affected: Number(row['documents_affected']),
         last_seen_at: row['last_seen_at'] ? String(row['last_seen_at']) : null,
@@ -261,14 +265,14 @@ export class CatalogService {
       ),
       this.pool.query<{ reason: string; total: string }>(
         `with vigente as (
-           select distinct on (c.item_id) c.item_id, c.health_reasons
+           select distinct on (c.item_id) c.item_id, c.health_issues
              from item_classifications c
             where c.tenant_id = $1::uuid and c.cnpj = $2::char(14)
             order by c.item_id, c.effective_from desc
          )
-         select motivo as reason, count(*)::text as total
-           from vigente, jsonb_array_elements_text(vigente.health_reasons) as motivo
-          group by motivo
+         select issue->>'message' as reason, count(*)::text as total
+           from vigente, jsonb_array_elements(vigente.health_issues) as issue
+          group by issue->>'message'
           order by count(*) desc
           limit 5`,
         [scope.tenantId, scope.cnpj],

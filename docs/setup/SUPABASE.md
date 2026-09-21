@@ -40,14 +40,20 @@ ordem**. Cada um depende das tabelas do anterior.
 | 4 | `04-ingestao.sql` | documentos fiscais e seus itens |
 | 5 | `05-catalogo-de-itens.sql` | catálogo com classificação por vigência, tabelas de códigos oficiais, `item_propagation()` |
 | 6 | `06-apuracao-dual.sql` | motor de regras com vigência, apuração dual e memória de cálculo |
-| 7 | `07-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 7 | `07-reporting.sql` | catálogo das trilhas de auditoria (12 trilhas) e a tabela do Book de fechamento |
+| 8 | `08-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
 > **Os arquivos são renumerados quando uma onda nova entra.** Se você já aplicou
 > uma versão anterior, rode os que faltam e ignore o bootstrap — ele é
 > idempotente e avisa que o usuário já pertence a um escritório. `npm run doctor`
 > diz exatamente quais tabelas faltam e de qual arquivo elas vêm.
 
-Antes de executar o passo 7, edite as duas linhas marcadas:
+> **Já aplicou até o `07-bootstrap-escritorio.sql` de antes?** Ele agora é o
+> `08`, e o número 7 passou a ser o `07-reporting.sql`. Rode só o
+> `07-reporting.sql`: o bootstrap você já executou, e reexecutá-lo não faria
+> diferença — é idempotente.
+
+Antes de executar o passo 8, edite as duas linhas marcadas:
 
 ```sql
   -- ┌──────────────────────────── CONFIGURE ────────────────────────────┐
@@ -56,7 +62,7 @@ Antes de executar o passo 7, edite as duas linhas marcadas:
   -- └───────────────────────────────────────────────────────────────────┘
 ```
 
-O passo 7 termina com uma consulta de conferência. Deve devolver **uma linha**
+O passo 8 termina com uma consulta de conferência. Deve devolver **uma linha**
 com o seu e-mail e o papel `owner`:
 
 ```
