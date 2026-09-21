@@ -1,0 +1,21 @@
+# Só o que a imagem precisa. Sem isto, o contexto de build sobe 115 MB de
+# node_modules para o daemon e o `npm ci` do Dockerfile é jogado fora.
+node_modules
+dist
+coverage
+.git
+.github
+.env
+.env.*
+*.log
+
+# Nada disto roda em produção.
+tests
+scripts
+docs
+design-system
+supabase
+checkpoint
+.claude
+vitest.config.ts
+tsconfig.lint.json

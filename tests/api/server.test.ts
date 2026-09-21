@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { SignJWT } from 'jose';
 import type { FastifyInstance } from 'fastify';
-import { buildServer } from '../../src/api/server.js';
+import { buildServer, PUBLIC_ROUTES } from '../../src/api/server.js';
 import { loadEnv } from '../../src/config/env.js';
 import { PostgresEventStoreRepository } from '../../src/infrastructure/persistence/postgres-event-store.repository.js';
 import { EventAppenderService } from '../../src/esaa/core/event-store/event-appender.service.js';
@@ -167,6 +167,48 @@ describe.skipIf(!DATABASE_URL)('API HTTP', () => {
     it('o papel vem da associação, não do token', async () => {
       expect((await authGet('/v1/me', USER_B)).json().tenant.id).toBe(TENANT_B);
       expect((await authGet('/v1/me', USER_B)).json().user.role).toBe('accountant');
+    });
+  });
+
+  /**
+   * A autenticação é por hook global: rota nova nasce protegida, e `PUBLIC_ROUTES`
+   * é o que abre. O efeito colateral é silencioso — esquecer de listar uma rota
+   * que deveria ser pública a deixa respondendo `401` sem erro em log nenhum.
+   *
+   * Foi o que aconteceu com as duas páginas de metodologia: existem para ser
+   * lidas ANTES de contratar, e só quem já era cliente conseguia lê-las. O
+   * defeito apareceu ao exercitar o contrato do cliente de API contra o
+   * servidor, não pelos testes — daí este.
+   */
+  describe('rotas públicas', () => {
+    const SEM_TOKEN = ['/v1/health', '/v1/plans', '/v1/simulations/methodology', '/v1/assistant/capabilities'];
+
+    it.each(SEM_TOKEN)('%s responde sem Authorization', async (url) => {
+      const response = await app.inject({ method: 'GET', url });
+
+      expect(response.statusCode).toBe(200);
+    });
+
+    it('toda rota de PUBLIC_ROUTES está declarada com o prefixo /v1', () => {
+      for (const rota of PUBLIC_ROUTES) {
+        expect(rota.startsWith('/v1/')).toBe(true);
+      }
+    });
+
+    /**
+     * A contrapartida: o que não está na lista tem de exigir token. Sem esta
+     * metade, abrir uma rota por engano passaria tão silencioso quanto fechar.
+     */
+    it.each([
+      '/v1/me',
+      '/v1/clients',
+      '/v1/deadlines',
+      '/v1/audit-trails',
+      '/v1/certificates/expiring',
+    ])('%s exige Authorization', async (url) => {
+      const response = await app.inject({ method: 'GET', url });
+
+      expect(response.statusCode).toBe(401);
     });
   });
 

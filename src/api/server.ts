@@ -58,12 +58,24 @@ declare module 'fastify' {
 }
 
 /** Rotas sem autenticação. Tudo o mais exige token e associação a um escritório. */
-const PUBLIC_ROUTES = new Set([
+export const PUBLIC_ROUTES = new Set([
   '/v1/auth/login',
   '/v1/health',
   // Preço público antes de qualquer contato comercial — ver briefing.
   '/v1/plans',
   '/v1/price-calculator',
+  /**
+   * Páginas de metodologia. Nenhuma das duas lê `request.tenant`, e as duas
+   * existem para ser lidas ANTES de contratar: a do simulador diz o que ele não
+   * modela, e a do assistente diz o que ele sabe responder e que não há modelo
+   * de linguagem configurado.
+   *
+   * Estavam atrás de autenticação por omissão — o hook global protege por
+   * padrão, e a lista é o que abre. O efeito era uma página de venda que só
+   * quem já é cliente conseguia ler.
+   */
+  '/v1/simulations/methodology',
+  '/v1/assistant/capabilities',
   // Autenticado por token do gateway, não por JWT: o Asaas não tem sessão.
   '/v1/webhooks/asaas',
 ]);

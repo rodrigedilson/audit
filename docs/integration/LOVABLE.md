@@ -45,21 +45,43 @@ partir de `sped-genius-hub.vercel.app`, e esse navegador precisa alcançar a API
 `localhost` não serve. E o repositório do backend **não tem configuração de
 deploy** — só CI.
 
-O mínimo:
+### O que já está pronto
 
-```dockerfile
-# Dockerfile, no repo do audit
-FROM node:22-slim
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-ENV API_HOST=0.0.0.0
-CMD ["node", "dist/cli/audit.js", "serve"]
+O [`Dockerfile`](../../Dockerfile) e o [`.dockerignore`](../../.dockerignore)
+existem e estão verificados. Imagem multi-stage, **389 MB**, usuário sem
+privilégio, `dumb-init` como PID 1 e healthcheck em `/v1/health`.
+
+Verificado rodando o contêiner de fato, não só buildando:
+
+| Checagem | Resultado |
+|---|---|
+| `GET /v1/health` | `{"status":"ok"}` |
+| `GET /v1/plans` (toca o banco) | devolve os 5 planos semeados |
+| `GET /v1/clients` sem token | `401` |
+| Healthcheck do Docker | `healthy` |
+| CORS com a origem da Vercel | `access-control-allow-origin` devolvido |
+| CORS com origem não listada | **sem** o header — o navegador bloqueia |
+| `docker stop` | exit `0` em 0,08s, com `app.close()` |
+
+O [job `image` do CI](../../.github/workflows/ci.yml) repete isso a cada PR:
+sobe o contêiner contra um Postgres e exige resposta em `/v1/health`. Existe
+porque o `tsc` não vê leitura de disco — uma dependência de runtime fora de
+`src/` passa por lint, build e 930 testes e só quebra no deploy. Foi o que
+aconteceu ao escrever este passo: o servidor carrega `config/esaa.config.yaml`
+no start para montar o `AGENT_CONTRACT` da camada 5, e a primeira versão da
+imagem não copiava `config/`.
+
+Para rodar local:
+
+```bash
+docker build -t audit-api .
+docker run -p 3000:3000 --env-file .env audit-api
 ```
 
-Variáveis no serviço de deploy:
+### O que falta
+
+Escolher o provedor e subir. Qualquer um que aceite `Dockerfile` serve (Fly,
+Render, Railway, Cloud Run). Variáveis no serviço de deploy:
 
 ```bash
 DATABASE_URL=postgresql://...        # pooler do Supabase (npm run pooler descobre o host)
@@ -84,89 +106,109 @@ Três coisas que vão morder se passarem batido:
    produção deve dar 34 tabelas e 10 funções. É o que prova que as 13 migrações
    chegaram inteiras.
 
-**Esforço: 8–12h.**
+**Esforço restante: 2–4h** (era 8–12h; o `Dockerfile`, o `.dockerignore` e a
+verificação no CI já estão feitos).
 
 ---
 
-## Passo 2 — Resolver os dois Supabase
+## Passo 2 — Migrar o dado fiscal do front para o event log
 
-Hoje o `sped-genius-hub` tem uma inconsistência:
+**Existe um só projeto Supabase** (`uflputiyytswvagrrzzn`), e os dois schemas já
+estão nele — verificado: 69 tabelas no `public`, as 34 do `audit` e as 22 do
+front, sem colisão de nome. O `rzzohjzfgfefuceardxe` que aparece no `.env` local
+do front é resíduo; o `client.ts` já tem fallback para o projeto certo.
 
-```
-supabase/config.toml  → project_id = "uflputiyytswvagrrzzn"   ← projeto do audit
-.env                  → rzzohjzfgfefuceardxe.supabase.co      ← onde o app roda
-```
+Então **não há migração entre projetos**. O que há é dado do front que a API do
+`audit` não conhece:
 
-Você decidiu: **o front liga no Supabase atual**, `uflputiyytswvagrrzzn`. Isso
-significa que o `config.toml` já está certo e o `.env` é que muda. Mas tem
-consequência, e ela é a parte mais delicada da migração:
+| Tabela | Linhas | O que é |
+|---|---|---|
+| `xml_documents` | 193 | NF-e, **com o XML original em `raw_xml`** |
+| `xml_document_items` | 613 | itens dessas notas |
+| `sped_parsed_records` | 1.499 | linhas de SPED parseadas |
+| `cfops` | 238 | tabela de CFOP com carga oficial |
+| `profiles` | 3 | usuários |
+| `documents`, `events`, `clients` (audit) | **0** | o `audit` está vazio de dado fiscal |
 
-### 2.1 Os usuários não são os mesmos
+Os XMLs originais estão em dois lugares: a coluna `raw_xml` e o bucket
+`xml-uploads` (193 objetos). Os arquivos SPED estão no bucket `sped-files` (2).
 
-`auth.users` de `rzzohjzfgfefuceardxe` não existe em `uflputiyytswvagrrzzn`. O
-`teste@exemplo.com / Senha@123` do checkpoint **não vai logar**. Quem loga é o
-usuário que o `13-bootstrap-escritorio.sql` vinculou ao escritório.
+### Por que não é `INSERT ... SELECT`
 
-Confira com:
+O `audit` guarda **evento**, não linha de tabela. Copiar `xml_documents` para
+`documents` daria o número sem a trilha que o defende — e a trilha é o produto.
+A migração é **reingestão**: cada XML passa pelas 7 camadas e produz event log
+com hash verificável.
 
-```bash
-cd ~/projects/audit && npm run doctor    # a checagem "escritório e usuário"
-```
+### O script
 
-### 2.2 Os dados da FASE 1 ficam para trás
-
-As 22 tabelas do `sped-genius-hub` têm dados em produção no projeto antigo.
-Apontar o front para o projeto do `audit` **não leva os dados**. Duas saídas:
-
-| Saída | Quando faz sentido |
-|---|---|
-| **Começar limpo** | Se os dados da FASE 1 eram de teste. É o caminho simples. |
-| **Migrar por `pg_dump`** | Se houver dado de cliente real ali. Tabela por tabela, e os `user_id` precisam ser remapeados para os `auth.users` do projeto novo. |
-
-**Decida isto antes do passo 3.** Migrar dado depois de o front já estar
-apontado é bem mais difícil.
-
-### 2.3 As features que ficam precisam do schema delas
-
-Três features do `sped-genius-hub` não têm equivalente no `audit` e vão
-continuar existindo. Elas dependem de tabelas que hoje só existem no projeto
-antigo, e precisam ser aplicadas no atual:
+[`scripts/migrar-do-front.ts`](../../scripts/migrar-do-front.ts). **Simula por
+padrão**, porque o event log é append-only e evento gravado não sai.
 
 ```bash
-cd ~/projects/sped-genius-hub
-
-# Extração de entidades
-supabase/migrations/20260210100001_create_entity_tables.sql
-supabase/migrations/20260210100002_create_entity_indexes.sql
-supabase/migrations/20260210100003_create_extraction_jobs.sql
-supabase/migrations/20260210100004_create_extraction_function.sql
-
-# CFOP (tabela de referência própria + carga oficial)
-supabase/migrations/20260216300001_create_cfop_tables.sql
-supabase/migrations/20260216300002_seed_cfop_official_data.sql
+npx tsx scripts/migrar-do-front.ts --regime <regime>              # simula
+npx tsx scripts/migrar-do-front.ts --regime <regime> --executar   # grava
 ```
 
-**Conferi que não há colisão de nome** com as 40 tabelas do `audit` — os dois
-schemas convivem no mesmo Postgres sem se pisarem.
+A simulação já rodou contra o dado real:
 
-As edge functions correspondentes (`extract-entities`, `graph-*`) precisam ser
-deployadas no projeto novo:
+```
+193 documento(s) com XML original em xml_documents.
+CNPJ do cliente: 04552217000165
+  parseiam:  192
+  recusados: 1
+  entradas:  150   saídas: 42
+  competências: 2025-07
+  1x camada 1: XML malformado na linha 1
+```
+
+**O documento recusado é genuinamente inválido:** a chave
+`35250704552217000165550010000094341004838774` tem **35 aberturas de `<ICMS00>`
+e 34 fechamentos**. A camada 1 está certa — e o front **aceitou** esse
+documento, gravando em `xml_documents` totais de ICMS derivados de um XML
+quebrado. É o exemplo concreto do que a migração compra.
+
+### O que a execução exige
+
+A ingestão vai **pela API**, não pelo banco: escrever direto puliria o
+orquestrador, o advisory lock por CNPJ e as 7 camadas, produzindo event log sem
+as garantias que ele existe para dar. Então:
 
 ```bash
-supabase link --project-ref uflputiyytswvagrrzzn
-supabase functions deploy extract-entities graph-init graph-populate graph-query
+MIGRACAO_API_URL=http://localhost:3000 \
+MIGRACAO_TOKEN=<access_token de um owner> \
+npx tsx scripts/migrar-do-front.ts --regime lucro_presumido --executar
 ```
 
-> **Não deployar** `sped-parser`, `parse-xml`, `import-xml-batch`,
-> `cross-reference`, `upload-file`, `list-files`, `delete-file`. Essas quatro
-> primeiras fazem o que o `audit` faz com 7 camadas de validação e event log; as
-> três últimas viram chamadas à API. Deployá-las criaria um segundo caminho de
-> escrita no mesmo banco, sem orquestrador — exatamente o que a arquitetura do
-> `audit` existe para impedir.
+O token sai de `POST /v1/auth/login`. O script cria o cliente, abre a
+competência 2025-07 e ingere os 192 documentos um a um, relatando camada e
+motivo de cada recusa. Ao fim, confira:
 
-**Esforço: 3–5h (começando limpo) ou 10–16h (migrando dados).**
+```bash
+npx tsx src/cli/audit.ts verify --cnpj 04552217000165
+```
 
----
+> **O `--regime` não tem padrão, de propósito.** O regime decide alíquota, anexo
+> e a apuração inteira; assumir um faria a migração gravar número errado em
+> silêncio. O script recusa rodar sem ele.
+
+### O SPED
+
+Dos dois arquivos no bucket, um é **EFD ICMS/IPI** — que o `audit` não importa,
+porque a Onda 12 cobre EFD-Contribuições. O outro é EFD-Contribuições, mas o
+front não detectou CNPJ nem período dele. O parser do `audit` lê o registro
+`0000` corretamente, então vale tentar por `POST /v1/clients/{cnpj}/sped`.
+
+### Dívida encontrada no caminho
+
+Sete tabelas em produção **sem migração no versionamento** e sem nenhuma
+referência no código: `analysis_groups` e `interop_*` (6). Todas com **zero
+linhas**. Foram criadas direto no painel do Supabase por alguma sessão que não
+commitou a migração. Como estão vazias e órfãs, o certo é derrubá-las — ou, se
+houver intenção por trás delas, escrever a migração. Schema em produção que
+ninguém consegue recriar é dívida, mesmo quando está vazio.
+
+**Esforço: 2–4h** (a simulação está feita; falta subir a API e executar).
 
 ## Passo 3 — Cliente de API, ao lado do cliente Supabase
 
@@ -212,6 +254,27 @@ npx openapi-typescript ../audit/docs/api/openapi.yaml -o src/integrations/audit/
 >
 > Não altere nenhuma tela nem nenhum hook existente neste prompt.
 
+### O que já está pronto
+
+O cliente existe: `src/integrations/audit/client.ts` no branch
+`feat/cliente-api-audit` do `sped-genius-hub`, com `schema.d.ts` gerado do
+contrato (3.130 linhas). Cobre as 14 áreas da API, com `AuditRejection`
+carregando `layer` e `reason`, `AuditQuotaError` com o uso, renovação de token
+pelo Supabase no `401` e **sem retry em `POST`**.
+
+Verificado: `tsc` limpo no arquivo novo, `npm run build` do front passa, e o
+contrato foi exercitado contra o contêiner da API — `/me`, `/clients`,
+`/deadlines` e as quatro rotas públicas respondem.
+
+> **Um defeito do backend que apareceu nessa verificação.** `/simulations/methodology`
+> e `/assistant/capabilities` estavam **atrás de autenticação**. As duas existem
+> para ser lidas *antes* de contratar — a primeira diz o que o simulador não
+> modela, a segunda diz o que o assistente sabe responder — e só quem já era
+> cliente conseguia lê-las. A autenticação é por hook global (rota nova nasce
+> protegida, e `PUBLIC_ROUTES` é o que abre), então o esquecimento é silencioso.
+> Corrigido, com teste nos dois sentidos: o que é público responde sem token, e o
+> que não é exige token.
+
 `.env` do `sped-genius-hub`:
 
 ```bash
@@ -222,7 +285,8 @@ VITE_AUDIT_API_URL=https://<api-do-audit>
 
 As mesmas três variáveis no painel da Vercel.
 
-**Esforço: 4–6h.**
+**Esforço restante: 1–2h** (era 4–6h; o cliente e os tipos estão feitos, falta
+configurar as variáveis na Vercel).
 
 ---
 
@@ -402,15 +466,15 @@ event log.
 
 | Passo | Entrega | Esforço |
 |---|---|---|
-| **1** | Deploy da API do `audit` — **bloqueio duro** | **8–12h** |
-| **2** | Resolver os dois Supabase (começando limpo) | **3–5h** |
-| **2** | *alternativa:* migrando os dados da FASE 1 | *10–16h* |
-| **3** | Cliente de API, ao lado do Supabase | **4–6h** |
+| **1** | Deploy da API — `Dockerfile` e CI **feitos**; falta escolher provedor e subir | **2–4h** |
+| **2** | Migrar o dado fiscal — simulação **feita**; falta executar | **2–4h** |
+
+| **3** | Cliente de API — **feito**; falta configurar a Vercel | **1–2h** |
 | **4** | Migrar as 4 features acopladas | **26–37h** |
 | **5** | As 13 telas que faltam | **55–77h** |
 | **6** | Auditoria das cinco regras — 2h × 6 rodadas | **12h** |
 | **7** | Verificação e roteiro funcional | **4–6h** |
-| | **Total** | **~112–155h** |
+| | **Total** | **~102–141h** |
 
 Para uma pessoa em tempo integral: **3 a 4 semanas**. Em meio período, dobre.
 
