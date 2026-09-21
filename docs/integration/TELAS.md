@@ -215,7 +215,62 @@ final.
 - **`white_label` é entitlement de plano** (Lucro Presumido para cima).
   Desabilite o controle nos planos abaixo e diga por quê, em vez de esconder.
 
-### 10. Planos e assinatura (Onda 3)
+### 10. Contra-apuração e calendário (Onda 8)
+`POST|GET /clients/{cnpj}/fisco-assessments/{period}` · `GET /v1/deadlines`
+
+É o diferencial #5 e o produto central de 2027: na apuração assistida o Fisco
+propõe o número e o silêncio do contribuinte vale como concordância.
+
+- **O upload é CSV com layout nosso, não da RFB.** Mostre o cabeçalho esperado
+  na própria tela de upload, e deixe baixar um modelo. O formato oficial ainda
+  está em piloto; quando sair, o `source` muda e a tela não.
+- **`line_level: false` é o aviso mais importante da tela.** Proposta só com
+  totais não foi comparada nota a nota, e zero divergência de item ali **não**
+  significa que as notas conferem. Banner fixo, não nota de rodapé.
+- **Nunca some exposição com perda de crédito.** São três números distintos e
+  cada um leva a uma ação diferente:
+  - `exposureCents` — débito que o Fisco aponta e não escrituramos. **Será
+    cobrado.**
+  - `creditLossCents` — crédito que o Fisco reconhece e não aproveitamos.
+    **Dinheiro na mesa.**
+  - `creditAtRiskCents` — crédito nosso que o Fisco não reconhece. **Tende a ser
+    glosado.**
+  Um "líquido" deixaria um milhão de cada lado se cancelar na tela, e o
+  escritório concluiria que está tudo certo.
+- **`probableCause` é hipótese, não diagnóstico.** Rotule como *"causa
+  provável"*. O sistema vê duas listas de números; a razão real pode ser erro
+  nosso, erro do Fisco, documento cancelado ou nota ainda não processada por um
+  dos lados. Afirmar como conclusão faria o contador contestar com base errada.
+- **Agrupe por causa, não por valor.** `aliquota_divergente` discute
+  enquadramento; `base_divergente` discute o documento. São conversas diferentes
+  com o cliente, e misturá-las na mesma lista força o contador a reclassificar
+  na cabeça.
+- **`differenceCents` positivo = o Fisco aponta mais.** Deixe o sinal explícito
+  na coluna; um valor absoluto obrigaria a olhar `ourCents` e `fiscoCents` para
+  saber de que lado está o problema.
+- **`divergencesCount` é o total; a lista de itens vem cortada em 500.** Mostre
+  o total no cabeçalho e leve ao drill-down.
+- **Proposta nova substitui a anterior por inteiro.** Diga isso antes de
+  confirmar o upload, e guarde o `reference` (nome do arquivo) visível: é o que
+  permite ao contador dizer depois qual proposta recebeu e quando.
+
+**Calendário (`GET /v1/deadlines`)** — duas listas, e elas **não podem** compartilhar
+o mesmo componente:
+
+- **`deadlines`** tem data. `nature: normativo` traz base legal e perdê-lo tem
+  consequência jurídica; `nature: fato` é data que o sistema conhece (validade
+  do certificado A1) e não tem base legal porque não é prazo de lei. Mostre a
+  base legal ao lado do prazo normativo, sempre.
+- **`pendencies`** sai do estado do sistema e **não tem data de vencimento** —
+  tem `daysOpen`. Renderize como fila de trabalho ordenada por gravidade, não
+  como calendário. `proposta_do_fisco_sem_resposta` é sempre crítica e merece
+  destaque próprio: é o caso que o produto existe para pegar.
+- **`normative_rules_loaded: false` precisa aparecer.** Lista vazia de prazos
+  não é "nada a vencer", é "nada carregado". Sem esse aviso, a tela mais
+  tranquilizadora do produto seria a de um sistema sem nenhum prazo cadastrado.
+- `days_left` negativo é prazo vencido. Não esconda: é o que mais importa.
+
+### 11. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -227,7 +282,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 11. Usuários e papéis
+### 12. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -243,8 +298,6 @@ botão não é autorização.
 
 | Onda | Tela | Rota |
 |---|---|---|
-| 6 | Apuração dual velho/novo nota a nota, memória de cálculo | `/assessments/{period}`, `/confirm` |
-| 8 | Contra-apuração contribuinte × Fisco e calendário | `/reconciliation/{period}`, `/deadlines` |
 | 9 | Assistente fiscal com citações de `event_seq` | `/assistant/threads` |
 
 ## Componentes que faltam no design system
@@ -265,6 +318,8 @@ em ordem de necessidade:
 9. **Badge de trilha em quatro estados** — `passed`, `warning`, `failed` e
    `not_applicable`. O quarto **não pode** cair no mesmo visual do primeiro: é a
    diferença entre "conferido e correto" e "não conferido" 
+10. **Fila de pendências**, distinta do calendário: ordenada por gravidade e com
+    `daysOpen`, nunca com data de vencimento inventada
 
 Os tokens e os seis princípios não mudam.
 

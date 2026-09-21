@@ -30,6 +30,10 @@ const TITULOS: Record<string, string> = {
   '20260918150000_ingestion.sql': 'ingestao',
   '20260921120000_catalog.sql': 'catalogo-de-itens',
   '20260921130000_assessment.sql': 'apuracao-dual',
+  // Mantido em inglês porque é o nome com que este passo já foi aplicado; trocar
+  // agora faria o arquivo divergir do que está rodando nos ambientes.
+  '20260921140000_reporting.sql': 'reporting',
+  '20260921150000_reconciliation.sql': 'contra-apuracao',
 };
 
 const DESCRICOES: Record<string, string> = {
@@ -55,6 +59,18 @@ const DESCRICOES: Record<string, string> = {
     '-- cálculo linha por linha. A tabela `tax_rules` nasce VAZIA de propósito:\n' +
     '-- sem regra publicada o valor devido vem nulo com o motivo, nunca um\n' +
     '-- número assumido.',
+  '20260921140000_reporting.sql':
+    'Catálogo das 12 trilhas de auditoria e a tabela do Book de fechamento.\n' +
+    '-- As trilhas semeadas são exatamente as checagens que ESTE sistema\n' +
+    '-- executa, e não uma lista de verificações da RFB. Os bytes do PDF ficam\n' +
+    '-- guardados: o Book carrega um hash no rodapé e regerá-lo depois de uma\n' +
+    '-- regra mudar produziria outro arquivo com o mesmo número.',
+  '20260921150000_reconciliation.sql':
+    'Proposta do Fisco, divergências nota a nota e o calendário da carteira.\n' +
+    '-- `deadline_rules` nasce VAZIA de propósito: as datas da janela do art.\n' +
+    '-- 40-D e dos prazos da apuração assistida citadas no briefing não foram\n' +
+    '-- conferidas em texto oficial, e alertar na data errada é pior do que não\n' +
+    '-- alertar — o escritório passa a confiar.',
 };
 
 const CABECALHO = `-- =============================================================================

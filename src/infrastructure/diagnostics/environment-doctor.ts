@@ -54,6 +54,11 @@ const TABELAS = [
   'assessment_adjustments',
   'audit_trails',
   'books',
+  'fisco_assessments',
+  'fisco_assessment_lines',
+  'assessment_divergences',
+  'deadline_rules',
+  'deadlines',
 ] as const;
 
 const FUNCOES = [
@@ -65,6 +70,7 @@ const FUNCOES = [
   'effective_classification',
   'item_propagation',
   'effective_rules',
+  'portfolio_deadlines',
 ] as const;
 
 /** Um por migration, para dizer qual arquivo falta rodar. */
@@ -95,6 +101,11 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   assessment_adjustments: '06-apuracao-dual.sql',
   audit_trails: '07-reporting.sql',
   books: '07-reporting.sql',
+  fisco_assessments: '08-contra-apuracao.sql',
+  fisco_assessment_lines: '08-contra-apuracao.sql',
+  assessment_divergences: '08-contra-apuracao.sql',
+  deadline_rules: '08-contra-apuracao.sql',
+  deadlines: '08-contra-apuracao.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
@@ -160,6 +171,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await checarVisibilidadePublica(pool));
     checagens.push(await checarTabelasOficiais(pool));
     checagens.push(await checarRegrasPublicadas(pool));
+    checagens.push(await checarPrazosNormativos(pool));
     checagens.push(await checarEscritorio(pool));
   } finally {
     await pool.end().catch(() => undefined);
@@ -342,6 +354,40 @@ async function checarCargaInicial(pool: pg.Pool): Promise<Checagem> {
       'Os INSERT de carga não entraram. Reaplique\n' +
       '  scripts/sql/migracoes/03-cobranca.sql — é idempotente,\n' +
       '  os `on conflict do nothing` evitam duplicar.',
+  };
+}
+
+/**
+ * Prazos normativos carregados.
+ *
+ * Aviso, não falha: o calendário funciona sem eles e entrega as pendências
+ * derivadas do estado do sistema, que são fatos nossos. O que não sai é prazo de
+ * norma — e a lista vazia de prazos precisa ser lida como "nada carregado", não
+ * como "nada a vencer". É a mesma razão de `tax_rules` nascer vazia.
+ */
+export async function checarPrazosNormativos(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ total: string }>(
+    `select count(*)::text as total
+       from deadline_rules
+      where active and nature = 'normativo'`,
+  );
+
+  const total = Number(rows[0]!.total);
+
+  if (total > 0) {
+    return { nome: 'prazos normativos', estado: 'ok', detalhe: `${total} regra(s) ativa(s)` };
+  }
+
+  return {
+    nome: 'prazos normativos',
+    estado: 'aviso',
+    detalhe: 'nenhum prazo normativo em deadline_rules',
+    acao:
+      'O calendário entrega as pendências derivadas do estado do sistema, mas\n' +
+      '  nenhum prazo de norma. `GET /v1/deadlines` devolve\n' +
+      '  `normative_rules_loaded: false` justamente para a tela não ler a lista\n' +
+      '  vazia como "nada a vencer". Carregue os prazos em deadline_rules com a\n' +
+      '  base legal — a coluna é obrigatória de propósito.',
   };
 }
 

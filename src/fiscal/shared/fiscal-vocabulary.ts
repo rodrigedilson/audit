@@ -94,7 +94,15 @@ export const VALID_PERIOD_TRANSITIONS: Record<PeriodState, readonly PeriodState[
    * uma apuração que ele sabe estar incompleta só para poder corrigi-la.
    */
   assessed: ['assessed', 'reconciled'],
-  reconciled: ['assessed', 'confirmed'],
+  /**
+   * `reconciled -> reconciled` é permitido pelo mesmo motivo que a autotransição
+   * de `assessed`: o Fisco pode enviar proposta corrigida, e o upload pode ser
+   * refeito depois de arrumar um erro de layout. Sem a autotransição, recomparar
+   * exigiria reapurar a competência primeiro — voltando a `assessed` só para
+   * poder aceitar o arquivo novo, o que registraria no log uma reapuração que
+   * não aconteceu.
+   */
+  reconciled: ['assessed', 'reconciled', 'confirmed'],
   /** Terminal (INV-001): a correção é por retificação, em competência vinculada. */
   confirmed: [],
 };

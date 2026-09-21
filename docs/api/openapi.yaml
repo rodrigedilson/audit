@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: audit — API fiscal (ESAA-Flow)
-  version: 0.3.0
+  version: 0.4.0
   description: |
     Contrato mínimo para destravar o frontend (Lovable). Toda escrita passa pelo
     orquestrador single-writer: o cliente envia uma *intenção*; a API valida
@@ -484,40 +484,68 @@ paths:
         "409": { $ref: "#/components/responses/Rejected" }
 
   # ------------------------------------------------------ reconciliation
-  /clients/{cnpj}/reconciliation/{period}:
+  /clients/{cnpj}/fisco-assessments/{period}:
     parameters:
       - $ref: "#/components/parameters/Cnpj"
       - $ref: "#/components/parameters/PeriodPath"
     get:
       tags: [reconciliation]
+      operationId: getFiscoComparison
       summary: Contra-apuração — nossa apuração × proposta do Fisco, nota a nota
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Reconciliation" }
+              schema: { $ref: "#/components/schemas/FiscoComparison" }
+        "404": { $ref: "#/components/responses/NotFound" }
     post:
       tags: [reconciliation]
-      summary: Envia/atualiza a proposta do Fisco para comparar (emite `assessment.compared`)
+      operationId: uploadFiscoAssessment
+      summary: Envia a proposta do Fisco e compara (emite `assessment.compared`)
+      description: >
+        O layout do CSV é **nosso**, não da RFB: o formato oficial de exposição da
+        apuração assistida ainda está em piloto. Duas formas de envio, o corpo cru
+        como `text/csv` e o `multipart/form-data` com um arquivo.
+
+
+        Duas colunas decidem o modo. Com `chave_acesso`, a proposta é nota a nota
+        e a comparação acontece; sem ela, é só totais por tributo, e
+        `line_level: false` diz que a comparação nota a nota **não foi feita** —
+        zero divergência de item ali não significa que as notas conferem.
+
+
+        Cabeçalho nota a nota:
+        `chave_acesso;item;tributo;sentido;base;aliquota;valor`.
+        Cabeçalho só de totais: `tributo;valor`.
+
+
+        Exige a competência apurada: sem a nossa apuração não há o que comparar,
+        e registrar a proposta sozinha daria a impressão de conferência que não
+        aconteceu (`422`, camada 4).
+
+
+        Uma proposta nova substitui a anterior por inteiro, inclusive as
+        divergências — manter as duas daria dois números para a mesma competência
+        e nenhum deles defensável.
       requestBody:
         required: true
         content:
-          application/json:
+          text/csv:
+            schema: { type: string }
+          multipart/form-data:
             schema:
               type: object
-              required: [source]
               properties:
-                source: { type: string, enum: [manual_upload, fisco_api] }
-                payload:
-                  type: object
-                  description: Proposta de apuração assistida no formato oficial (quando publicado) ou planilha convertida
+                file: { type: string, format: binary }
       responses:
-        "200":
-          description: OK
+        "201":
+          description: Proposta registrada e comparada
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/WriteResult" }
+              schema: { $ref: "#/components/schemas/FiscoComparisonOutcome" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Rejected" }
 
   /clients/{cnpj}/credits/at-risk:
     parameters:
@@ -538,22 +566,32 @@ paths:
   /deadlines:
     get:
       tags: [reconciliation]
-      summary: Calendário de prazos da carteira (manifestação, confirmação, opção de regime)
+      operationId: getPortfolioCalendar
+      summary: Calendário da carteira — prazos datados e pendências, em listas separadas
+      description: >
+        As duas listas são separadas de propósito. Um **prazo** tem data e, quando
+        `nature: normativo`, base legal: perdê-lo tem consequência jurídica. Uma
+        **pendência** sai do estado do sistema (competência encerrada e não
+        apurada, proposta do Fisco sem resposta) e não tem data de lei nenhuma.
+        Dar a mesma cara às duas faria o escritório tratar um alvo interno como
+        prazo de norma.
+
+
+        `normative_rules_loaded: false` significa que nenhum prazo normativo está
+        carregado — e portanto que a lista vazia de prazos não é "nada a vencer".
+        A tabela nasce vazia porque as datas citadas por terceiros no briefing não
+        foram conferidas em texto oficial.
       parameters:
         - in: query
-          name: from
-          schema: { type: string, format: date }
-        - in: query
-          name: to
-          schema: { type: string, format: date }
+          name: horizon_days
+          description: Janela em dias. Prazo já vencido aparece com `days_left` negativo.
+          schema: { type: integer, minimum: 1, maximum: 365, default: 30 }
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Deadline" }
+              schema: { $ref: "#/components/schemas/PortfolioCalendar" }
 
   # ---------------------------------------------------------- simulation
   /clients/{cnpj}/simulations:
@@ -1238,32 +1276,6 @@ components:
         created_by: { type: string, readOnly: true }
         created_at: { type: string, format: date-time, readOnly: true }
 
-    Reconciliation:
-      type: object
-      properties:
-        period: { $ref: "#/components/schemas/PeriodId" }
-        fisco_source: { type: string, nullable: true }
-        fisco_received_at: { type: string, format: date-time, nullable: true }
-        confirm_deadline: { type: string, format: date, nullable: true }
-        totals:
-          type: object
-          properties:
-            ours_due_brl: { type: number }
-            fisco_due_brl: { type: number }
-            difference_brl: { type: number }
-        divergences:
-          type: array
-          items:
-            type: object
-            properties:
-              access_key: { type: string }
-              line: { type: integer, nullable: true }
-              tax: { type: string }
-              ours_brl: { type: number }
-              fisco_brl: { type: number }
-              difference_brl: { type: number }
-              probable_cause: { type: string }
-
     SupplierCreditRisk:
       type: object
       properties:
@@ -1278,15 +1290,169 @@ components:
 
     Deadline:
       type: object
+      required: [cnpj, kind, name, due_date, days_left, severity, nature, state]
       properties:
         cnpj: { type: string }
-        legal_name: { type: string }
+        legal_name: { type: string, nullable: true }
+        regime: { $ref: "#/components/schemas/Regime" }
+        period: { type: string, nullable: true }
+        kind: { type: string, example: certificado_a1_vencendo }
+        name: { type: string }
+        due_date: { type: string, format: date }
+        days_left: { type: integer, description: "Negativo quando o prazo já venceu." }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        nature:
+          type: string
+          enum: [normativo, fato]
+          description: >
+            `normativo` é prazo de norma e sempre traz `legal_basis`. `fato` é data
+            que o sistema conhece — a validade de um certificado A1, por exemplo —
+            e não tem base legal porque não é prazo de lei.
+        legal_basis: { type: string, nullable: true }
+        state: { type: string, enum: [pending, met, missed, dismissed] }
+
+    Pendency:
+      type: object
+      required: [kind, cnpj, period, name, message, severity, openSince, daysOpen]
+      properties:
         kind:
           type: string
-          enum: [manifestation, confirm_assessment, regime_option_window, payment, other]
-        due_date: { type: string, format: date }
-        description: { type: string }
-        status: { type: string, enum: [pending, done, overdue] }
+          enum:
+            - competencia_nao_apurada
+            - apuracao_nao_confirmada
+            - proposta_do_fisco_sem_resposta
+            - proposta_do_fisco_sem_detalhe
+        cnpj: { type: string }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        name: { type: string }
+        message: { type: string }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        openSince:
+          type: string
+          format: date-time
+          description: Substitui a data de vencimento, que para uma pendência não existe.
+        daysOpen: { type: integer }
+
+    PortfolioCalendar:
+      type: object
+      required: [horizon_days, normative_rules_loaded, deadlines, pendencies]
+      properties:
+        horizon_days: { type: integer }
+        normative_rules_loaded: { type: boolean }
+        deadlines:
+          type: array
+          items: { $ref: "#/components/schemas/Deadline" }
+        pendencies:
+          type: array
+          items: { $ref: "#/components/schemas/Pendency" }
+
+    Divergence:
+      type: object
+      required:
+        [scope, subject, tax, ourCents, fiscoCents, differenceCents, probableCause, severity]
+      properties:
+        scope: { type: string, enum: [tributo, documento, item] }
+        subject:
+          type: string
+          description: Chave de acesso, `chave#item` ou o nome do tributo.
+        tax: { type: string }
+        direction: { type: string, enum: [inbound, outbound], nullable: true }
+        accessKey: { type: string, nullable: true }
+        line: { type: integer, nullable: true }
+        ourCents: { type: integer }
+        fiscoCents: { type: integer }
+        differenceCents:
+          type: integer
+          description: Fisco menos nosso. Positivo = o Fisco aponta mais do que escrituramos.
+        probableCause:
+          type: string
+          description: >
+            Hipótese, não diagnóstico: o sistema vê duas listas de números, e a
+            razão real pode ser erro nosso, erro do Fisco, documento cancelado ou
+            nota ainda não processada por um dos lados.
+          enum:
+            - aliquota_divergente
+            - base_divergente
+            - base_e_aliquota_divergentes
+            - valor_incoerente_com_base_e_aliquota
+            - debito_nao_escriturado
+            - credito_nao_aproveitado
+            - debito_nao_reconhecido_pelo_fisco
+            - credito_glosado
+            - arredondamento
+            - total_nao_explicado_pelas_linhas
+            - causa_nao_determinada
+        severity: { type: string, enum: [low, medium, high, critical] }
+
+    ComparisonSummary:
+      type: object
+      required:
+        [divergencesCount, exposureCents, creditLossCents, creditAtRiskCents,
+         bySeverity, linesCompared, lineLevel]
+      properties:
+        divergencesCount:
+          type: integer
+          description: Total exato, mesmo quando a lista de itens vem cortada em 500.
+        exposureCents:
+          type: integer
+          description: Débito que o Fisco aponta e não escrituramos. Será cobrado.
+        creditLossCents:
+          type: integer
+          description: Crédito que o Fisco reconhece e não aproveitamos. Dinheiro na mesa.
+        creditAtRiskCents:
+          type: integer
+          description: Crédito nosso que o Fisco não reconhece. Tende a ser glosado.
+        bySeverity:
+          type: object
+          properties:
+            critical: { type: integer }
+            high: { type: integer }
+            medium: { type: integer }
+            low: { type: integer }
+        linesCompared: { type: integer, description: "Zero quando a proposta veio só com totais." }
+        lineLevel: { type: boolean }
+
+    FiscoComparison:
+      type: object
+      required:
+        [period, source, reference, line_level, lines_count, totals,
+         uploaded_at, event_seq, divergences, summary]
+      properties:
+        period: { $ref: "#/components/schemas/PeriodId" }
+        source: { type: string, enum: [manual_upload, official_api] }
+        reference:
+          type: string
+          description: >
+            Nome do arquivo ou protocolo. É o que permite ao contador dizer depois
+            qual proposta recebeu e quando.
+        line_level: { type: boolean }
+        lines_count: { type: integer }
+        totals:
+          type: object
+          additionalProperties: { type: integer }
+        uploaded_at: { type: string, format: date-time }
+        event_seq: { type: integer }
+        divergences:
+          type: array
+          maxItems: 500
+          items: { $ref: "#/components/schemas/Divergence" }
+        summary: { $ref: "#/components/schemas/ComparisonSummary" }
+
+    FiscoComparisonOutcome:
+      allOf:
+        - $ref: "#/components/schemas/FiscoComparison"
+        - type: object
+          properties:
+            projection_hash: { type: string }
+            rejected:
+              type: array
+              description: Linhas do CSV recusadas. Uma linha ruim não derruba as boas.
+              items:
+                type: object
+                properties:
+                  row: { type: integer, description: "Número da linha, contando o cabeçalho como 1." }
+                  reason: { type: string }
+                  content: { type: string }
 
     SimulationRequest:
       type: object
