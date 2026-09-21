@@ -58,6 +58,8 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
         period: string | null;
         state: string | null;
         documents: string;
+        open_issues: string;
+        next_deadline: string | null;
         total: string;
       }>(
         `with carteira as (
@@ -65,13 +67,27 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
                   p.period, p.state,
                   (select count(*) from events e
                     where e.tenant_id = c.tenant_id and e.cnpj = c.cnpj
-                      and e.action = 'doc.received') as documents
+                      and e.action = 'doc.received') as documents,
+                  -- Itens com a classificação vigente fora de 'ok'. É o número
+                  -- que a tela de saúde do cadastro detalha.
+                  (select count(*) from (
+                     select distinct on (ic.item_id) ic.health
+                       from item_classifications ic
+                      where ic.tenant_id = c.tenant_id and ic.cnpj = c.cnpj
+                      order by ic.item_id, ic.effective_from desc
+                   ) vigente where vigente.health <> 'ok') as open_issues,
+                  d.due_date as next_deadline
              from clients c
              left join lateral (
                select period, state from periods
                 where tenant_id = c.tenant_id and cnpj = c.cnpj
                 order by period desc limit 1
              ) p on true
+             left join lateral (
+               select due_date from deadlines
+                where tenant_id = c.tenant_id and cnpj = c.cnpj and state = 'pending'
+                order by due_date limit 1
+             ) d on true
             where c.tenant_id = $1::uuid
               and ($2::text is null or c.regime::text = $2::text)
               and ($3::text is null or c.status = $3::text)
@@ -91,11 +107,21 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
           period: row.period,
           state: row.state,
           documents: Number(row.documents),
-          // Zerados enquanto os contexts que os produzem não existem. Ficam no
-          // payload porque o contrato os declara e o frontend já os consome.
-          open_issues: 0,
-          credit_at_risk_brl: 0,
-          next_deadline: null,
+          open_issues: Number(row.open_issues),
+          /**
+           * `null`, e não `0`.
+           *
+           * O estado do crédito é derivado na leitura (ver `credit-risk.ts`), e
+           * derivá-lo para cada cliente da página custaria uma classificação por
+           * linha. Repetir a regra em SQL só para esta listagem daria dois
+           * números para a mesma pergunta, que divergiriam no primeiro ajuste.
+           *
+           * `0` diria "este cliente não tem crédito em risco", que é uma
+           * afirmação. `null` diz "não calculado aqui" — e o número existe em
+           * `GET /clients/{cnpj}/credits/at-risk`.
+           */
+          credit_at_risk_brl: null,
+          next_deadline: row.next_deadline === null ? null : String(row.next_deadline).slice(0, 10),
         })),
         page,
         total: Number(rows[0]?.total ?? 0),

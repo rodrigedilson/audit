@@ -383,8 +383,12 @@ describe.skipIf(!DATABASE_URL)('API — ingestão de documentos', () => {
      * Enfileirar sem consumidor seria pior do que dizer que não está pronto: o
      * escritório ficaria esperando um job que nunca sai de `queued`.
      */
-    it('sync, sped e extrato respondem 501 apontando o caminho disponível', async () => {
-      for (const path of ['sync', 'sped', 'bank-statements']) {
+    /**
+     * O extrato saiu desta lista na Onda 10: deixou de ser `501` e passou a ser
+     * upload de OFX ou CSV na rota de crédito.
+     */
+    it('sync e sped respondem 501 apontando o caminho disponível', async () => {
+      for (const path of ['sync', 'sped']) {
         const response = await app.inject({
           method: 'POST',
           url: `/v1/clients/${cnpj}/${path}`,

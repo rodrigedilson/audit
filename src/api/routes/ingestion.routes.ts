@@ -208,19 +208,20 @@ export async function registerIngestionRoutes(
   );
 
   /**
-   * Coleta na distribuição DF-e, importação de SPED e de extrato. As três
-   * dependem de fonte externa (certificado A1 contra o webservice da SEFAZ, e
-   * open finance ou upload no caso do extrato), então a rota enfileira e
-   * responde 202 com o job — o formato que o contrato já define.
-   *
-   * O worker que consome a fila entra junto da coleta real; enfileirar sem
+   * Coleta na distribuição DF-e e importação de SPED. As duas dependem de fonte
+   * externa — certificado A1 contra o webservice da SEFAZ, e o arquivo do SPED —
+   * e o worker que consome a fila entra junto da coleta real. Enfileirar sem
    * consumidor seria pior do que dizer que ainda não está pronto, porque o
    * escritório ficaria esperando um job que nunca sai de `queued`.
+   *
+   * O extrato bancário saiu desta lista na Onda 10: deixou de ser `501` e passou
+   * a ser upload de OFX ou CSV em `POST /clients/{cnpj}/bank-statements`, na
+   * rota de crédito. O caminho de open finance continua sendo o desejável, e
+   * quando existir entra como outra origem do mesmo módulo.
    */
   for (const [path, kind] of [
     ['sync', 'dfe_sync'],
     ['sped', 'sped_import'],
-    ['bank-statements', 'bank_statement_import'],
   ] as const) {
     app.post<{ Params: CnpjParams }>(
       `/clients/:cnpj/${path}`,

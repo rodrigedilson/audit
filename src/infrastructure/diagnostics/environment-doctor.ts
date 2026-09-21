@@ -61,6 +61,9 @@ const TABELAS = [
   'deadlines',
   'assistant_threads',
   'assistant_messages',
+  'bank_statements',
+  'bank_statement_lines',
+  'payment_matches',
 ] as const;
 
 const FUNCOES = [
@@ -111,6 +114,9 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   deadlines: '08-contra-apuracao.sql',
   assistant_threads: '09-assistente-fiscal.sql',
   assistant_messages: '09-assistente-fiscal.sql',
+  bank_statements: '10-credito-por-fornecedor.sql',
+  bank_statement_lines: '10-credito-por-fornecedor.sql',
+  payment_matches: '10-credito-por-fornecedor.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {

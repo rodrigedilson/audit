@@ -309,7 +309,57 @@ genérico sem ancoragem nos dados do CNPJ compete com o ChatGPT e perde.
 - **A pergunta consome cota mesmo com resposta não respondível.** Diga isso na
   interface, para o "não sei" não parecer cobrança indevida.
 
-### 12. Planos e assinatura (Onda 3)
+### 12. Crédito em risco por fornecedor (Onda 10)
+`POST /clients/{cnpj}/bank-statements` · `POST .../payment-matches` · `GET .../credits/at-risk`
+
+É o diferencial #7, e o briefing resume o vão: "players fiscais não olham o
+banco". O crédito de IBS/CBS é condicionado à extinção do tributo da etapa
+anterior, e sob split payment isso acontece na liquidação — então o extrato
+bancário é informação fiscal.
+
+- **Diga na tela por que o extrato é pedido.** O contador vai estranhar um
+  produto fiscal querendo o extrato dele; a frase acima é a justificativa, e sem
+  ela o upload parece intrusão.
+- **`statements_imported: false` é o aviso mais importante.** Sem extrato, todo
+  crédito da reforma aparece condicionado por falta de pagamento identificado —
+  o que é indistinguível de "o cliente não pagou ninguém". Banner fixo até o
+  primeiro extrato entrar.
+- **`releasedCents` em zero é o estado normal, não um bug.** O sistema não sabe
+  se o fornecedor recolheu o tributo dele: essa informação é do Fisco e não tem
+  fonte hoje. Explique isso onde o número aparece, senão a tela parece quebrada.
+  E **não** rotule `conditioned` como "crédito garantido".
+- **`state` tem cinco valores e cada um leva a uma ação diferente:**
+  - `expected` — não depende de liquidação (tributo do sistema antigo, ou
+    documento sem grupo UB). Não alarme.
+  - `conditioned` — o estado natural do IBS/CBS. Informativo.
+  - `at_risk` — condicionado **e** sem pagamento identificado há tempo. É a fila
+    de trabalho: ou pagar o fornecedor, ou não aproveitar o crédito ainda.
+  - `released` — só com evidência de extinção.
+  - `lost` — **nunca vem do sistema.** Declarar crédito perdido é decisão do
+    contador, com consequência contábil. Se a tela oferecer o botão, ele grava
+    uma decisão humana, não um cálculo.
+- **`reason` nunca é vazio: mostre sempre.** Um estado sem motivo é opaco, e o
+  contador não tem como contestar nem confiar.
+- **`confidence` do casamento precisa estar visível.** Todo casamento é
+  hipótese: valor e data iguais não provam que aquele pagamento é daquela nota.
+  `exact` é o único em que alguém já disse de qual nota se trata.
+- **`ambiguous` é uma pendência, não um resultado.** O sistema **recusa**
+  escolher entre dois documentos de igual valor, e devolve `candidates`. Essa é a
+  tela em que o humano decide — e é a mais valiosa da onda, porque é onde o
+  produto admite o que não sabe em vez de errar em silêncio.
+- **`lines_duplicated` explica o reenvio.** Reimportar o mesmo extrato é normal
+  e não dobra nada; sem mostrar esse número, `lines_imported: 0` pareceria falha.
+- **`oldestUnpaidDays` é a coluna de ordenação natural** da lista de
+  fornecedores, junto com `creditAtRiskCents`.
+- **`emitsReformGroup` não diz que o fornecedor usa split payment.** Diz que
+  algum documento dele traz o grupo IBS/CBS. Rotule como *"emite com grupo
+  IBS/CBS"*; o outro texto afirmaria algo sobre a operação de terceiro.
+
+Na **carteira** (tela 2), `credit_at_risk_brl` vem `null`, e não `0`: a listagem
+não deriva o estado do crédito por cliente. Mostre um traço com link para esta
+tela, nunca um zero — zero é uma afirmação.
+
+### 13. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -321,7 +371,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 13. Usuários e papéis
+### 14. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -360,6 +410,8 @@ em ordem de necessidade:
     `daysOpen`, nunca com data de vencimento inventada
 11. **Chip de citação** clicável, que abre o evento ou o documento citado — é o
     componente que sustenta a promessa do assistente
+12. **Resolvedor de ambiguidade**: dois ou mais candidatos lado a lado para o
+    humano escolher, com o motivo de cada um
 
 Os tokens e os seis princípios não mudam.
 

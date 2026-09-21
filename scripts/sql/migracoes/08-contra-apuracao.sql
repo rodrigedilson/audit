@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 8 de 10: contra-apuracao
+-- audit — passo 8 de 11: contra-apuracao
 --
 -- Proposta do Fisco, divergências nota a nota e o calendário da carteira.
 -- `deadline_rules` nasce VAZIA de propósito: as datas da janela do art.
