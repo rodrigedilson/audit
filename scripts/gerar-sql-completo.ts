@@ -35,6 +35,7 @@ const TITULOS: Record<string, string> = {
   '20260921140000_reporting.sql': 'reporting',
   '20260921150000_reconciliation.sql': 'contra-apuracao',
   '20260921160000_assistant.sql': 'assistente-fiscal',
+  '20260921170000_supplier_credit.sql': 'credito-por-fornecedor',
 };
 
 const DESCRICOES: Record<string, string> = {
@@ -66,6 +67,11 @@ const DESCRICOES: Record<string, string> = {
     '-- executa, e não uma lista de verificações da RFB. Os bytes do PDF ficam\n' +
     '-- guardados: o Book carrega um hash no rodapé e regerá-lo depois de uma\n' +
     '-- regra mudar produziria outro arquivo com o mesmo número.',
+  '20260921170000_supplier_credit.sql':
+    'Extrato bancário, casamento pagamento × documento e o crédito em risco por\n' +
+    '-- fornecedor. Não há tabela de posição de crédito de propósito: o estado é\n' +
+    '-- DERIVADO na leitura, porque gravá-lo congelaria o crédito condicionado que\n' +
+    '-- envelhece sem pagamento — justamente o achado que a onda existe para mostrar.',
   '20260921160000_assistant.sql':
     'Conversas do assistente fiscal e a cota mensal por CNPJ, tirada do plano\n' +
     '-- do regime. O assistente é somente leitura: não escreve no log fiscal, e\n' +

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: audit — API fiscal (ESAA-Flow)
-  version: 0.5.0
+  version: 0.6.0
   description: |
     Contrato mínimo para destravar o frontend (Lovable). Toda escrita passa pelo
     orquestrador single-writer: o cliente envia uma *intenção*; a API valida
@@ -31,6 +31,8 @@ tags:
     description: Cadastro de itens e saúde de classificação
   - name: assessment
     description: Apuração dual (tributos atuais × IBS/CBS)
+  - name: credit
+    description: Crédito em risco por fornecedor, extrato bancário e casamento de pagamento
   - name: reconciliation
     description: Contra-apuração, crédito em risco, prazos
   - name: simulation
@@ -314,23 +316,87 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Cnpj"
     post:
-      tags: [ingestion]
-      summary: Importa extrato (OFX/CSV) para conciliação de crédito condicionado
+      tags: [credit]
+      operationId: importBankStatement
+      summary: Importa extrato (OFX ou CSV) e refaz o casamento com os documentos de entrada
+      description: >
+        O extrato é informação **fiscal** nesta rota, e não financeira: o crédito
+        de IBS/CBS é condicionado à extinção do tributo da etapa anterior, e sob
+        split payment a extinção acontece na liquidação. Sem saber se o
+        fornecedor foi pago, não há como dizer nada sobre o crédito.
+
+
+        Síncrono, e `201` em vez de `202` com job: o parse e o casamento são
+        rápidos, e enfileirar sem consumidor deixaria o escritório esperando um
+        job que nunca sai de `queued`. O caminho de open finance continua sendo o
+        desejável, e quando existir entra como outra origem do mesmo módulo.
+
+
+        A importação é **idempotente pelo `FITID`** do OFX (ou pela coluna `id` do
+        CSV): o mesmo extrato enviado duas vezes não dobra o pagamento, e
+        `lines_duplicated` diz quantas linhas já existiam — para o usuário não
+        concluir que o arquivo não entrou.
+
+
+        Depois de gravar, o casamento pagamento × documento é refeito por
+        inteiro. Ver `POST /payment-matches`.
       requestBody:
         required: true
         content:
+          text/csv:
+            schema: { type: string }
+          text/plain:
+            schema: { type: string, description: "OFX, que é SGML e não XML." }
           multipart/form-data:
             schema:
               type: object
-              required: [file]
               properties:
                 file: { type: string, format: binary }
       responses:
-        "202":
-          description: Job aceito
+        "201":
+          description: Extrato importado e casamento refeito
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Job" }
+              schema: { $ref: "#/components/schemas/StatementImportOutcome" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/payment-matches:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [credit]
+      operationId: rematchPayments
+      summary: Refaz o casamento pagamento × documento, sem importar nada
+      description: >
+        Útil depois de ingerir documentos novos: um lançamento que não tinha
+        candidato passa a ter, e uma ambiguidade pode se resolver.
+
+
+        Refeito por inteiro, e não incremental: um lançamento novo pode desfazer
+        uma ambiguidade anterior, e um casamento incremental manteria a hipótese
+        velha ao lado da nova.
+
+
+        **Não grava evento fiscal**: casamento é conclusão sobre dados já no log,
+        não fato novo.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [matches, total, ambiguous]
+                properties:
+                  matches:
+                    type: array
+                    items: { $ref: "#/components/schemas/PaymentMatch" }
+                  total: { type: integer }
+                  ambiguous:
+                    type: integer
+                    description: Casamentos que o sistema recusou resolver. Precisam de decisão humana.
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /jobs/{job_id}:
     get:
@@ -552,16 +618,36 @@ paths:
       - $ref: "#/components/parameters/Cnpj"
       - $ref: "#/components/parameters/Period"
     get:
-      tags: [reconciliation]
-      summary: Crédito condicionado/em risco por fornecedor
+      tags: [credit]
+      operationId: getCreditRisk
+      summary: Crédito por fornecedor e estado, derivado na leitura
+      description: |
+        O diferencial #7: "players fiscais não olham o banco".
+
+        **O que o sistema não sabe, e não finge saber:** se o fornecedor recolheu
+        o tributo dele. Essa informação é do Fisco e não há fonte para ela hoje.
+        Por isso `released` exige evidência explícita e vai ficar em zero
+        enquanto a fonte não existir — o que é a verdade, e a tela tem de dizer
+        em vez de esconder.
+
+        **O que ele sabe, e basta para um achado defensável:** se *nós* pagamos o
+        fornecedor. Sem liquidação não há split payment; sem split payment o
+        crédito não se extingue. O não-pagamento é o sinal de risco observável.
+
+        O estado **não é gravado**: é derivado a cada leitura. Gravá-lo
+        congelaria o estado na data do cálculo, e o crédito condicionado que
+        envelhece sem pagamento é justamente o achado.
+
+        `statements_imported: false` significa que nenhum extrato foi importado —
+        e nesse caso todo crédito da reforma aparece condicionado por falta de
+        pagamento identificado, o que é indistinguível de "o cliente não pagou
+        ninguém". A tela precisa da diferença.
       responses:
         "200":
           description: OK
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/SupplierCreditRisk" }
+              schema: { $ref: "#/components/schemas/CreditRiskReport" }
 
   /deadlines:
     get:
@@ -1108,6 +1194,12 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Papel sem permissão, ou recurso não incluído no plano
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
     NotFound:
       description: Recurso não encontrado
       content:
@@ -1400,17 +1492,126 @@ components:
         created_by: { type: string, readOnly: true }
         created_at: { type: string, format: date-time, readOnly: true }
 
+    PaymentMatch:
+      type: object
+      required: [accessKey, fitid, confidence, rationale]
+      description: >
+        Todo casamento é HIPÓTESE. Valor e data iguais não provam que aquele
+        pagamento é daquela nota, e casar errado reportaria crédito liberado que
+        não está.
+      properties:
+        accessKey: { type: string }
+        fitid: { type: string, description: "Identificador do lançamento no extrato." }
+        confidence:
+          type: string
+          enum: [exact, amount_and_date, amount_only, ambiguous]
+          description: >
+            `exact` = a chave ou o número da nota aparece no histórico do
+            lançamento. `amount_and_date` = hipótese forte. `amount_only` =
+            hipótese fraca, data fora da janela. `ambiguous` = mais de um
+            candidato, e o sistema **não escolhe**.
+        rationale: { type: string, description: "Por que o casamento foi feito. É o que o contador confere." }
+        candidates:
+          type: array
+          items: { type: string }
+          description: Só no ambíguo — as chaves candidatas, para a decisão humana.
+
+    StatementImportOutcome:
+      type: object
+      required:
+        [statement_id, source, reference, lines_imported, lines_duplicated,
+         rejected, matches, ambiguous, event_seq, projection_hash]
+      properties:
+        statement_id: { type: string, format: uuid }
+        source: { type: string, enum: [ofx, csv] }
+        reference: { type: string }
+        account: { type: string, nullable: true }
+        period_from: { type: string, format: date, nullable: true }
+        period_to: { type: string, format: date, nullable: true }
+        lines_imported: { type: integer }
+        lines_duplicated:
+          type: integer
+          description: "Linhas que já existiam pelo FITID. Reimportar não dobra o pagamento."
+        rejected:
+          type: array
+          items:
+            type: object
+            properties:
+              reason: { type: string }
+              content: { type: string }
+        matches:
+          type: array
+          items: { $ref: "#/components/schemas/PaymentMatch" }
+        ambiguous: { type: integer }
+        event_seq: { type: integer }
+        projection_hash: { type: string }
+
+    CreditPosition:
+      type: object
+      required: [accessKey, period, tax, supplierCnpj, amountCents, state, reason, hasReformGroup]
+      properties:
+        accessKey: { type: string }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        tax: { type: string }
+        supplierCnpj: { type: string }
+        supplierName: { type: string, nullable: true }
+        amountCents: { type: integer }
+        hasReformGroup: { type: boolean }
+        state:
+          type: string
+          enum: [expected, conditioned, released, at_risk, lost]
+          description: >
+            `expected` = não depende de liquidação (tributo do sistema antigo, ou
+            documento sem grupo UB). `conditioned` = depende da extinção da etapa
+            anterior. `at_risk` = condicionado e sem pagamento identificado há
+            tempo. `released` exige evidência de extinção, que não tem fonte hoje.
+            `lost` **nunca** é derivado: declarar crédito perdido é decisão do
+            contador, com consequência contábil.
+        reason: { type: string, description: "Por que está neste estado. Nunca vazio." }
+        unpaidDays: { type: integer, nullable: true }
+
     SupplierCreditRisk:
       type: object
+      required:
+        [supplierCnpj, documents, creditExpectedCents, creditConditionedCents,
+         creditReleasedCents, creditAtRiskCents, emitsReformGroup]
       properties:
-        supplier_cnpj: { type: string }
-        supplier_name: { type: string }
+        supplierCnpj: { type: string }
+        supplierName: { type: string, nullable: true }
         documents: { type: integer }
-        credit_expected_brl: { type: number }
-        credit_conditioned_brl: { type: number }
-        credit_at_risk_brl: { type: number }
-        uses_split_payment: { type: boolean, nullable: true }
-        oldest_unpaid_days: { type: integer, nullable: true }
+        creditExpectedCents: { type: integer }
+        creditConditionedCents: { type: integer }
+        creditReleasedCents: { type: integer }
+        creditAtRiskCents: { type: integer }
+        oldestUnpaidDays: { type: integer, nullable: true }
+        emitsReformGroup:
+          type: boolean
+          description: >
+            Se ALGUM documento deste fornecedor traz o grupo IBS/CBS. Não se chama
+            `uses_split_payment`, embora seja esse o nome no briefing: o sistema
+            observa o que está no XML, não se o fornecedor usa split payment.
+
+    CreditRiskReport:
+      type: object
+      required: [statements_imported, suppliers, positions, totals]
+      properties:
+        period: { type: string, nullable: true }
+        statements_imported:
+          type: boolean
+          description: "`false` = nenhum extrato importado; todo crédito aparece condicionado."
+        suppliers:
+          type: array
+          items: { $ref: "#/components/schemas/SupplierCreditRisk" }
+        positions:
+          type: array
+          items: { $ref: "#/components/schemas/CreditPosition" }
+        totals:
+          type: object
+          properties:
+            expectedCents: { type: integer }
+            conditionedCents: { type: integer }
+            releasedCents: { type: integer }
+            atRiskCents: { type: integer }
 
     Deadline:
       type: object
