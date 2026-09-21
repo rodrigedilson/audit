@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: audit — API fiscal (ESAA-Flow)
-  version: 0.6.0
+  version: 0.7.0
   description: |
     Contrato mínimo para destravar o frontend (Lovable). Toda escrita passa pelo
     orquestrador single-writer: o cliente envia uma *intenção*; a API valida
@@ -680,23 +680,104 @@ paths:
               schema: { $ref: "#/components/schemas/PortfolioCalendar" }
 
   # ---------------------------------------------------------- simulation
+  /simulations/methodology:
+    get:
+      tags: [simulation]
+      operationId: getSimulationMethodology
+      summary: O que o simulador compara, o que não modela e por quê
+      description: >
+        Independe de CNPJ e serve à página pública. A lista `not_modeled` existe
+        porque um simulador sem ela induz o contador a tratar a saída como
+        cálculo: cada item é uma razão concreta para não decidir só por este
+        número.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [compares, excluded, not_modeled, reads_only, writes_fiscal_event, explains]
+                properties:
+                  compares:
+                    type: array
+                    items: { $ref: "#/components/schemas/Regime" }
+                  excluded:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        regime: { $ref: "#/components/schemas/Regime" }
+                        reason: { type: string }
+                  not_modeled:
+                    type: array
+                    items: { type: string }
+                  reads_only: { type: boolean }
+                  writes_fiscal_event: { type: boolean }
+                  explains:
+                    type: array
+                    items: { type: string }
+
   /clients/{cnpj}/simulations:
     parameters:
       - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [simulation]
+      operationId: listSimulations
+      summary: Simulações registradas para o cliente, da mais recente para a mais antiga
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [simulations, total]
+                properties:
+                  simulations:
+                    type: array
+                    items: { $ref: "#/components/schemas/StoredSimulation" }
+                  total: { type: integer }
     post:
       tags: [simulation]
-      summary: Simula regimes sobre os dados reais do cliente (somente leitura, não grava evento)
+      operationId: runSimulation
+      summary: Simula regimes sobre os dados reais do cliente (somente leitura)
+      description: |
+        **Não grava evento fiscal.** O serviço não recebe o orquestrador, então
+        não existe caminho de código até o log. A simulação fica registrada em
+        tabela própria, porque a recomendação orienta a escolha de regime para
+        toda a transição e o escritório precisa poder mostrar depois com que
+        premissas aconselhou.
+
+        A base é **medida nos documentos**, não perguntada: receita, compras e a
+        fração da receita faturada contra PJ saem das notas do período. Essa
+        última é o número que decide se a perda do crédito repassável dói, e é
+        justamente o que o cliente não sabe responder de cabeça.
+
+        Sem documento no período, a simulação é recusada com `422`: qualquer
+        número seria inventado.
+
+        Todo `override` entra no relatório como premissa `provided`, com a nota
+        do que ela depende. A alíquota de referência só sai como `published`
+        quando IBS-UF, IBS-Mun e CBS estiverem **todas** publicadas em
+        `tax_rules` — somar duas daria um número menor com cara de completo.
+
+        MEI e Lucro Real recebem `403` com o motivo: o primeiro tem limite de
+        receita e regra própria, o segundo depende de apuração de resultado que
+        este simulador não faz.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/SimulationRequest" }
       responses:
-        "200":
-          description: OK
+        "201":
+          description: Simulação executada e registrada
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/SimulationResult" }
+              schema: { $ref: "#/components/schemas/StoredSimulation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Rejected" }
 
   # ----------------------------------------------------------- reporting
   /audit-trails:
@@ -1781,77 +1862,145 @@ components:
 
     SimulationRequest:
       type: object
-      required: [scenario]
+      required: [scenario, base_from, base_to]
       properties:
         scenario: { type: string, enum: [transition_2027_2028, full_2033] }
-        base_period_from: { $ref: "#/components/schemas/PeriodId" }
-        base_period_to: { $ref: "#/components/schemas/PeriodId" }
-        regimes:
-          type: array
-          items: { $ref: "#/components/schemas/Regime" }
-          default: [simples_integrado, simples_hibrido, lucro_presumido]
+        base_from: { $ref: "#/components/schemas/PeriodId" }
+        base_to: { $ref: "#/components/schemas/PeriodId" }
         overrides:
           type: object
-          description: Premissas editáveis (todas opcionais)
+          description: >
+            Premissas editáveis. Cada uma informada aqui aparece no relatório com
+            `origin: provided` — inclusive `b2b_share`, que por omissão é medida
+            nas notas.
           properties:
-            ibs_cbs_rate: { type: number }
+            ibs_cbs_rate: { type: number, minimum: 0, maximum: 100 }
+            simples_effective_rate: { type: number, minimum: 0, maximum: 100 }
+            creditable_share: { type: number, minimum: 0, maximum: 1 }
+            presumed_profit_rate: { type: number, minimum: 0, maximum: 100 }
+            tax_lag_days_current: { type: integer, minimum: 0, maximum: 365 }
             b2b_share: { type: number, minimum: 0, maximum: 1 }
-            creditable_goods_share: { type: number }
-            creditable_services_share: { type: number }
-            payroll_monthly_brl: { type: number }
-            split_payment_lag_days: { type: integer }
+
+    SimulationAssumption:
+      type: object
+      required: [key, label, value, unit, origin, source]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        value: { type: number }
+        unit: { type: string, enum: [percent, brl, days, ratio] }
+        origin:
+          type: string
+          enum: [published, measured, provided]
+          description: >
+            `published` = regra em `tax_rules`, com a fonte normativa.
+            `measured` = medido nos documentos do cliente. `provided` = premissa
+            de quem simulou. É o campo que separa cálculo de estimativa.
+        source: { type: string, description: "Nunca vazio." }
+
+    SimulationOutcome:
+      type: object
+      required:
+        [regime, directTaxMonthlyCents, creditToB2BCustomersCents,
+         economicCostMonthlyCents, workingCapitalExposureCents, breakdown]
+      properties:
+        regime: { $ref: "#/components/schemas/Regime" }
+        directTaxMonthlyCents:
+          type: integer
+          description: O que sai do caixa por mês — a guia.
+        creditToB2BCustomersCents:
+          type: integer
+          description: >
+            Crédito que o cliente PJ pode aproveitar. **Não reduz a guia**: é
+            vantagem competitiva, e sem ele o cliente PJ exige desconto
+            equivalente.
+        economicCostMonthlyCents:
+          type: integer
+          description: >
+            Guia mais o desconto que o cliente PJ vai exigir por não ter
+            crédito. É o número que compara regimes de verdade.
+        workingCapitalExposureCents:
+          type: integer
+          description: >
+            Capital de giro exigido pelo adiantamento do tributo. Sob split
+            payment o tributo sai na liquidação, e não no vencimento da guia — a
+            carga anual pode ser igual e o caixa, não.
+        breakdown:
+          type: object
+          additionalProperties: { type: integer }
 
     SimulationResult:
       type: object
+      required:
+        [scenario, base, outcomes, winner, robustness, annualSavingVsWorstCents,
+         sensitivity, assumptions, notModeled]
       properties:
         scenario: { type: string }
-        based_on_documents: { type: integer }
-        results:
-          type: array
-          items:
-            type: object
-            properties:
-              regime: { $ref: "#/components/schemas/Regime" }
-              direct_tax_monthly_brl:
-                type: number
-                description: Custo tributário direto (o que sai do caixa)
-              credit_to_b2b_customers_brl:
-                type: number
-                description: Crédito repassável ao cliente PJ (vantagem competitiva, não reduz a guia)
-              working_capital_exposure_brl: { type: number, nullable: true }
-              breakdown:
-                type: object
-                additionalProperties: { type: number }
-        recommendation:
+        base:
           type: object
+          description: Medido nos documentos; devolvido junto para conferência.
           properties:
-            regime: { $ref: "#/components/schemas/Regime" }
-            annual_saving_vs_worst_brl: { type: number }
-            b2b_breakeven_share: { type: number, nullable: true }
+            monthlyRevenueCents: { type: integer }
+            monthlyInputsCents: { type: integer }
+            b2bShare: { type: number }
+            documentsConsidered: { type: integer }
+            monthsConsidered: { type: integer }
+        outcomes:
+          type: array
+          items: { $ref: "#/components/schemas/SimulationOutcome" }
+        winner:
+          type: string
+          nullable: true
+          # Só os regimes comparáveis: MEI e Lucro Real não entram na simulação.
+          enum: [simples_integrado, simples_hibrido, lucro_presumido]
+          description: >
+            `null` quando o vencedor muda dentro da faixa de alíquotas explorada.
+            `null` aqui é resposta, e não ausência de resposta: apontar um
+            vencedor que depende de alíquota não publicada seria dar recomendação
+            com cara de cálculo.
+        robustness:
+          type: string
+          enum: [robust, sensitive]
+          description: "`sensitive` anda sempre junto de `winner: null`."
+        annualSavingVsWorstCents: { type: integer }
+        b2bBreakevenShare:
+          type: number
+          nullable: true
+          description: >
+            Fração de receita contra PJ em que o vencedor troca. É o número que o
+            contador leva para a conversa. `null` quando o mesmo regime vence de
+            0 a 100%.
         sensitivity:
           type: array
-          description: Mapa alíquota × % crédito → regime vencedor
+          description: Mapa alíquota × fração de crédito → regime vencedor.
           items:
             type: object
             properties:
-              ibs_cbs_rate: { type: number }
-              creditable_share: { type: number }
+              ibsCbsRate: { type: number }
+              creditableShare: { type: number }
               winner: { $ref: "#/components/schemas/Regime" }
-        timeline_2027_2033:
-          type: array
-          items:
-            type: object
-            properties:
-              year: { type: integer }
-              by_regime:
-                type: object
-                additionalProperties: { type: number }
         assumptions:
           type: array
-          items: { type: string }
-        not_modeled:
+          items: { $ref: "#/components/schemas/SimulationAssumption" }
+        notModeled:
           type: array
           items: { type: string }
+
+    StoredSimulation:
+      type: object
+      required: [id, scenario, base_from, base_to, winner, robustness, simulated_at, result]
+      properties:
+        id: { type: string, format: uuid }
+        scenario: { type: string }
+        base_from: { $ref: "#/components/schemas/PeriodId" }
+        base_to: { $ref: "#/components/schemas/PeriodId" }
+        winner:
+          type: string
+          nullable: true
+          enum: [simples_integrado, simples_hibrido, lucro_presumido]
+        robustness: { type: string, enum: [robust, sensitive] }
+        simulated_at: { type: string, format: date-time }
+        result: { $ref: "#/components/schemas/SimulationResult" }
 
     AuditTrailDefinition:
       type: object

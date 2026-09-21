@@ -44,19 +44,20 @@ ordem**. Cada um depende das tabelas do anterior.
 | 8 | `08-contra-apuracao.sql` | proposta do Fisco, divergências nota a nota e o calendário da carteira |
 | 9 | `09-assistente-fiscal.sql` | conversas do assistente e a cota mensal por CNPJ, tirada do plano |
 | 10 | `10-credito-por-fornecedor.sql` | extrato bancário, casamento pagamento × documento e o crédito em risco |
-| 11 | `11-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 11 | `11-simulador-de-regime.sql` | registro das simulações de regime, com as premissas usadas |
+| 12 | `12-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
 > **Os arquivos são renumerados quando uma onda nova entra.** Se você já aplicou
 > uma versão anterior, rode os que faltam e ignore o bootstrap — ele é
 > idempotente e avisa que o usuário já pertence a um escritório. `npm run doctor`
 > diz exatamente quais tabelas faltam e de qual arquivo elas vêm.
 
-> **Já aplicou até o `09-assistente-fiscal.sql`?** Rode só o
-> `10-credito-por-fornecedor.sql`. O bootstrap mudou de número de novo (era
-> `10`, agora é `11`) e você já o executou; reexecutá-lo não faria diferença —
-> é idempotente.
+> **Já aplicou até o `09-assistente-fiscal.sql`?** Rode o
+> `10-credito-por-fornecedor.sql` e o `11-simulador-de-regime.sql`. O bootstrap
+> mudou de número de novo (agora é `12`) e você já o executou; reexecutá-lo não
+> faria diferença — é idempotente.
 
-Antes de executar o passo 11, edite as duas linhas marcadas:
+Antes de executar o passo 12, edite as duas linhas marcadas:
 
 ```sql
   -- ┌──────────────────────────── CONFIGURE ────────────────────────────┐
@@ -65,7 +66,7 @@ Antes de executar o passo 11, edite as duas linhas marcadas:
   -- └───────────────────────────────────────────────────────────────────┘
 ```
 
-O passo 11 termina com uma consulta de conferência. Deve devolver **uma linha**
+O passo 12 termina com uma consulta de conferência. Deve devolver **uma linha**
 com o seu e-mail e o papel `owner`:
 
 ```
