@@ -260,9 +260,36 @@ ip -6 route show default                  # vazio = esta máquina não tem rota 
 ip -4 addr show eth0                      # 172.x.x.x no WSL = modo NAT
 ```
 
-Há três saídas. Escolha pela que combina com a sua operação:
+#### A saída normal: usar o pooler (IPv4, nada a mexer na máquina)
 
-#### 1. Habilitar IPv6 no WSL (mantém a conexão direta)
+O hostname do pooler **não é previsível**: o prefixo varia entre `aws-0` e
+`aws-1`, e a região não aparece em nenhum lugar público. Descubra o seu:
+
+```bash
+npm run pooler -- SEU-REF
+```
+
+A ferramenta não precisa da senha. Ela sonda os hostnames e usa a diferença nas
+mensagens de erro do pooler para identificar o certo:
+
+| Mensagem | Significado |
+|---|---|
+| `Tenant or user not found` | hostname errado |
+| `password authentication failed` | hostname **certo**, só a senha é inválida |
+
+Essa distinção importa porque as duas situações são indistinguíveis a olho nu —
+sondar só o prefixo `aws-0` levou à conclusão errada de que o projeto não tinha
+pooler.
+
+O resultado já vem no formato do `DATABASE_URL`. Repare que o usuário passa a
+ser `postgres.<project-ref>`, não `postgres`.
+
+#### Alternativas, se a conexão direta for requisito
+
+As duas abaixo só fazem sentido se alguma ferramenta do seu fluxo exigir
+`db.SEU-REF.supabase.co`.
+
+#### 1. Habilitar IPv6 no WSL
 
 O WSL em modo **NAT** — o padrão, reconhecível pelo IP `172.x.x.x` — não
 repassa IPv6, mesmo quando o Windows tem. O modo **mirrored** dá ao WSL a pilha
@@ -290,12 +317,7 @@ ip -6 route show default   # agora deve mostrar uma rota
 npm run doctor
 ```
 
-#### 2. Usar o pooler (IPv4, sem mexer na máquina)
-
-Painel → **Connect** → **Session pooler**. O usuário passa a ser
-`postgres.<project-ref>`.
-
-#### 3. Add-on de IPv4 do Supabase
+#### 2. Add-on de IPv4 do Supabase
 
 Dá um endereço IPv4 ao host direto. É pago e mensal; só vale se a conexão direta
 for requisito de outras ferramentas do seu fluxo.

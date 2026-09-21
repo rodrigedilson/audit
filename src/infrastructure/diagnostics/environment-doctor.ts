@@ -196,8 +196,10 @@ export function classificarFalhaDeConexao(causa: string): Checagem {
         'O host não é alcançável desta máquina. O host de conexão direta do Supabase\n' +
         '  (db.<ref>.supabase.co) só tem endereço IPv6; confirme com\n' +
         '  `getent ahostsv4 db.<ref>.supabase.co` e `ip -6 route show default`.\n' +
-        '  Saídas: usar um host do pooler (IPv4), habilitar IPv6 na máquina,\n' +
-        '  contratar o add-on de IPv4, ou rodar a API onde haja IPv6.',
+        '\n' +
+        '  Use o pooler, que atende em IPv4. O hostname não é previsível — o\n' +
+        '  prefixo varia entre aws-0 e aws-1 — então descubra o seu com:\n' +
+        '    npm run pooler -- SEU-PROJECT-REF',
     };
   }
 

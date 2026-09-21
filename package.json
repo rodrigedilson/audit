@@ -13,7 +13,8 @@
     "lint": "tsc --noEmit -p tsconfig.lint.json",
     "verify": "tsx src/cli/audit.ts verify",
     "sql:bundle": "tsx scripts/gerar-sql-completo.ts",
-    "doctor": "tsx src/cli/audit.ts doctor"
+    "doctor": "tsx src/cli/audit.ts doctor",
+    "pooler": "tsx scripts/descobrir-pooler.ts"
   },
   "keywords": [
     "reforma-tributaria",

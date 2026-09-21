@@ -68,7 +68,8 @@ describe('classificarFalhaDeConexao', () => {
 
     expect(c.estado).toBe('falha');
     expect(c.acao).toMatch(/IPv6/);
-    expect(c.acao).toMatch(/pooler/);
+    // Aponta a ferramenta de descoberta: o hostname do pooler não é adivinhável.
+    expect(c.acao).toMatch(/npm run pooler/);
   });
 
   it('ENOTFOUND aponta erro de nome, não de rede', () => {
