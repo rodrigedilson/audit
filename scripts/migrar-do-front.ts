@@ -33,6 +33,12 @@ interface LinhaDoFront {
   cnpj_destinatario: string | null;
 }
 
+interface Cadastro {
+  cnpj: string;
+  legalName: string;
+  uf: string | undefined;
+}
+
 interface Recusa {
   chave: string;
   camada: number;
@@ -64,8 +70,11 @@ async function main(): Promise<void> {
     console.log(`${rows.length} documento(s) com XML original em xml_documents.\n`);
 
     const cnpjCliente = inferirCliente(rows);
-    console.log(`CNPJ do cliente: ${cnpjCliente}`);
-    console.log(`Regime assumido: ${REGIME}\n`);
+    const cadastro = await lerCadastro(pool, cnpjCliente);
+
+    console.log(`Cliente: ${cadastro.legalName}`);
+    console.log(`CNPJ:    ${cadastro.cnpj}${cadastro.uf === undefined ? '' : `  UF ${cadastro.uf}`}`);
+    console.log(`Regime:  ${REGIME}\n`);
 
     const { aceitos, recusados, competencias, entradas, saidas } = simular(rows, cnpjCliente);
 
@@ -95,7 +104,7 @@ async function main(): Promise<void> {
       console.log(`  npx tsx scripts/migrar-do-front.ts --regime ${REGIME} --executar`);
       console.log();
       console.log('O que a execução faz, em ordem:');
-      console.log(`  1. cria o cliente ${cnpjCliente} (${REGIME}) na carteira do escritório`);
+      console.log(`  1. cria "${cadastro.legalName}" (${cadastro.cnpj}, ${REGIME}) na carteira`);
       console.log(`  2. abre a(s) competência(s) ${[...competencias].sort().join(', ')}`);
       console.log(`  3. ingere os ${aceitos.length} documentos pela API, um por um`);
       console.log();
@@ -104,7 +113,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    await executar(pool, cnpjCliente, competencias);
+    await executar(pool, cadastro, competencias);
   } finally {
     await pool.end();
   }
@@ -201,9 +210,33 @@ function simular(
  * as 7 camadas — e produziria event log sem as garantias que o log existe para
  * dar. O script então exige a API no ar e usa as mesmas rotas que o painel usa.
  */
+/**
+ * Razão social e UF vêm das notas que o próprio cliente emitiu.
+ *
+ * O dado está ali e é o que ele declarou ao Fisco; cadastrar "Cliente
+ * 04552217000165" quando a nota diz o nome seria descartar informação boa por
+ * preguiça, e o nome aparece no Book que vai para o cliente final.
+ */
+async function lerCadastro(pool: pg.Pool, cnpj: string): Promise<Cadastro> {
+  const { rows } = await pool.query<{ nome: string | null; uf: string | null }>(
+    `select razao_social_emitente as nome, uf_emitente as uf
+       from xml_documents
+      where cnpj_emitente = $1 and razao_social_emitente is not null
+      group by 1, 2 order by count(*) desc limit 1`,
+    [cnpj],
+  );
+
+  const linha = rows[0];
+  return {
+    cnpj,
+    legalName: linha?.nome ?? `Cliente ${cnpj}`,
+    uf: linha?.uf ?? undefined,
+  };
+}
+
 async function executar(
   pool: pg.Pool,
-  cnpjCliente: string,
+  cadastro: Cadastro,
   competencias: ReadonlySet<string>,
 ): Promise<void> {
   const api = process.env['MIGRACAO_API_URL'];
@@ -230,14 +263,15 @@ async function executar(
     });
 
   const cliente = await chamar('/clients', {
-    cnpj: cnpjCliente,
-    legal_name: `Cliente ${cnpjCliente}`,
+    cnpj: cadastro.cnpj,
+    legal_name: cadastro.legalName,
     regime: REGIME,
+    ...(cadastro.uf === undefined ? {} : { uf: cadastro.uf }),
   });
-  console.log(`  cliente: HTTP ${cliente.status}`);
+  console.log(`  cliente "${cadastro.legalName}": HTTP ${cliente.status}`);
 
   for (const period of [...competencias].sort()) {
-    const r = await chamar(`/clients/${cnpjCliente}/periods`, { period });
+    const r = await chamar(`/clients/${cadastro.cnpj}/periods`, { period });
     console.log(`  competência ${period}: HTTP ${r.status}`);
   }
 
@@ -257,7 +291,7 @@ async function executar(
       `${linha.chave_acesso ?? `doc-${i}`}.xml`,
     );
 
-    const r = await fetch(`${api.replace(/\/$/, '')}/v1/clients/${cnpjCliente}/documents`, {
+    const r = await fetch(`${api.replace(/\/$/, '')}/v1/clients/${cadastro.cnpj}/documents`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: form,
@@ -293,7 +327,7 @@ async function executar(
   }
 
   console.log('\nConfira a integridade do log:');
-  console.log(`  npx tsx src/cli/audit.ts verify --cnpj ${cnpjCliente}`);
+  console.log(`  npx tsx src/cli/audit.ts verify --cnpj ${cadastro.cnpj}`);
 }
 
 function lerRegime(): Regime {
