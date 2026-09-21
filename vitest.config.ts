@@ -20,11 +20,11 @@ export default defineConfig({
       ],
       // Piso, não meta: trava contra regressão. Sobe a cada onda junto com o
       // código entregue. Onda 0: 60/60/70/80 · Onda 1: 68/68/73/80 · Onda 2: 82/82/76/80
-      // · Onda 3: 83/83/78/80 · Onda 4: 85/85/80/80 · setup: abaixo.
+      // · Onda 3: 83/83/78/80 · Onda 4: 85/85/80/80 · setup: 86/86/81/80 · Onda 5: abaixo.
       thresholds: {
-        lines: 86,
-        statements: 86,
-        functions: 81,
+        lines: 87,
+        statements: 87,
+        functions: 82,
         branches: 80,
       },
     },

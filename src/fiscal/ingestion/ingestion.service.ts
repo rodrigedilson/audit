@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import type { FiscalOrchestratorService } from '../../esaa/orchestrator/fiscal-orchestrator.service.js';
 import type { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { DocumentParseError, parseNfe, type ParsedDocument } from './nfe-parser.js';
+import { CatalogService } from '../catalog/catalog.service.js';
 
 export interface AcceptedDocument {
   access_key: string;
@@ -105,6 +106,11 @@ export class IngestionService {
     }
 
     await this.saveReadModel(parsed, direction, outcome.event!.event_seq);
+
+    // Registra os itens vistos, para a saúde do cadastro priorizar o que está
+    // em uso: item que não aparece num documento há meses não merece a mesma
+    // atenção de um que está em toda nota.
+    await new CatalogService(this.pool).touchItems(this.scope, parsed.items);
 
     return {
       access_key: parsed.accessKey,

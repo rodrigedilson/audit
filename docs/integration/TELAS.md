@@ -127,7 +127,33 @@ Valores vêm em centavos inteiros — divida por 100 na apresentação, nunca an
 apontam o upload manual: enfileirar sem consumidor deixaria o escritório
 esperando um job que nunca sai de `queued`.
 
-### 7. Planos e assinatura (Onda 3)
+### 7. Saúde do cadastro de itens (Onda 5)
+`GET /v1/clients/{cnpj}/items?health` · `PUT .../items/{item_id}/classification` · `GET .../items/health`
+
+É o diferencial #1: o erro nasce no cadastro do item e contamina toda nota
+emitida com ele. A tela tem de deixar essa relação óbvia.
+
+- **A lista já vem na ordem de trabalho:** pior saúde primeiro e, dentro dela, o
+  que contamina mais notas. Não reordene por nome por padrão.
+- **`documents_affected` é a coluna que justifica o produto.** Um item com
+  `health: error` e 340 notas afetadas é uma prioridade diferente de um com 2.
+- **`health_reasons` vem em PT-BR, pronto para exibir.** Cada `issue` da resposta
+  de classificação traz `reason`, `severity`, `field`, `message` e
+  `suggestedFix` — mostre o `suggestedFix`, é a ação concreta.
+- **Classificação incompatível é registrada, não bloqueada.** O contador pode
+  precisar classificar exatamente como está no documento do fornecedor; a tela
+  mostra o erro e deixa salvar. Bloquear faria o escritório resolver fora do
+  sistema, sem trilha.
+- **`effective_from` é vigência, não competência de trabalho.** Reclassificar não
+  reescreve o passado: cria uma vigência nova. Deixe claro na tela que a
+  classificação antiga continua valendo para os meses anteriores.
+- **Vigência em competência confirmada é recusada** com `422` e camada 6 —
+  mudaria uma apuração fechada. Ofereça a vigência do mês seguinte.
+- **`reference_tables_loaded: false`** → mostre o `notice` da resposta com
+  destaque. Sem as tabelas oficiais, "nenhum erro" não quer dizer "correto", e
+  esconder isso daria falsa segurança ao escritório.
+
+### 8. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -139,7 +165,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 8. Usuários e papéis
+### 9. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -155,7 +181,6 @@ botão não é autorização.
 
 | Onda | Tela | Rota |
 |---|---|---|
-| 5 | Saúde do cadastro de itens, com propagação para notas | `/items`, `/items/health` |
 | 6 | Apuração dual velho/novo nota a nota, memória de cálculo | `/assessments/{period}`, `/confirm` |
 | 7 | Trilhas de auditoria e Book de fechamento em PDF | `/audit-trails`, `/books/{period}` |
 | 8 | Contra-apuração contribuinte × Fisco e calendário | `/reconciliation/{period}`, `/deadlines` |

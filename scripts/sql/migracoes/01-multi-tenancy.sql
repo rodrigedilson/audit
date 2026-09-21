@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 1 de 5: multi-tenancy
+-- audit — passo 1 de 6: multi-tenancy
 --
 -- Escritórios, usuários, CNPJs, competências e o event log.
 -- Cria append_event(), que serializa a escrita por CNPJ, e o trigger que

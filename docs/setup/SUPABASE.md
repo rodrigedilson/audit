@@ -38,9 +38,14 @@ ordem**. Cada um depende das tabelas do anterior.
 | 2 | `02-cofre-certificados.sql` | cofre dos certificados A1 |
 | 3 | `03-cobranca.sql` | planos, assinatura, faturas; `billable_clients()` |
 | 4 | `04-ingestao.sql` | documentos fiscais e seus itens |
-| 5 | `05-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 5 | `05-catalogo-de-itens.sql` | catálogo com classificação por vigência, tabelas de códigos oficiais, `item_propagation()` |
+| 6 | `06-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
-Antes de executar o passo 5, edite as duas linhas marcadas:
+> Se você já aplicou uma versão anterior em que o bootstrap era o passo 5:
+> rode agora o **`05-catalogo-de-itens.sql`**. Não precisa repetir o bootstrap —
+> ele é idempotente e avisa que o usuário já pertence a um escritório.
+
+Antes de executar o passo 6, edite as duas linhas marcadas:
 
 ```sql
   -- ┌──────────────────────────── CONFIGURE ────────────────────────────┐
@@ -49,7 +54,7 @@ Antes de executar o passo 5, edite as duas linhas marcadas:
   -- └───────────────────────────────────────────────────────────────────┘
 ```
 
-O passo 5 termina com uma consulta de conferência. Deve devolver **uma linha**
+O passo 6 termina com uma consulta de conferência. Deve devolver **uma linha**
 com o seu e-mail e o papel `owner`:
 
 ```
@@ -270,6 +275,20 @@ nothing` evitam duplicar. Confirme com `npm run doctor` ou com
 Este é um caso que aconteceu de verdade nesta instalação: as 15 tabelas foram
 criadas e os `insert` de carga não. A API não reclama — a calculadora de preço
 simplesmente mostra nada, e a fatura só falha no fechamento do mês.
+
+### Saúde do cadastro diz "não verificado"
+
+As tabelas oficiais de códigos (`fiscal_codes`, `cclasstrib_cst`) estão vazias.
+
+Isso é deliberado, não um defeito: validar um NCM ou cClassTrib contra tabela
+vazia aprovaria **qualquer** código, o que é pior do que não validar. Então a
+API reporta `not_verified` e a resposta de `/items/health` traz um `notice`
+dizendo que a ausência de erro ali não significa que a classificação está
+correta.
+
+Para sair desse estado, carregue os códigos da IT RT 2025.002 e das tabelas da
+RFB em `fiscal_codes` e os pares válidos em `cclasstrib_cst`. É tarefa de dado,
+não mudança de código — `npm run doctor` avisa enquanto estiverem vazias.
 
 ### `403 Usuário não pertence a nenhum escritório`
 

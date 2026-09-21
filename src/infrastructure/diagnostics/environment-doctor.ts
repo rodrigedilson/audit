@@ -43,6 +43,11 @@ const TABELAS = [
   'billing_events',
   'documents',
   'document_items',
+  'items',
+  'item_classifications',
+  'fiscal_codes',
+  'cclasstrib_cst',
+  'ncm_flags',
 ] as const;
 
 const FUNCOES = [
@@ -51,6 +56,8 @@ const FUNCOES = [
   'append_event',
   'billable_clients',
   'events_reject_mutation',
+  'effective_classification',
+  'item_propagation',
 ] as const;
 
 /** Um por migration, para dizer qual arquivo falta rodar. */
@@ -70,6 +77,11 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   billing_events: '03-cobranca.sql',
   documents: '04-ingestao.sql',
   document_items: '04-ingestao.sql',
+  items: '05-catalogo-de-itens.sql',
+  item_classifications: '05-catalogo-de-itens.sql',
+  fiscal_codes: '05-catalogo-de-itens.sql',
+  cclasstrib_cst: '05-catalogo-de-itens.sql',
+  ncm_flags: '05-catalogo-de-itens.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
@@ -131,6 +143,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     }
 
     checagens.push(await checarCargaInicial(pool));
+    checagens.push(await checarTabelasOficiais(pool));
     checagens.push(await checarEscritorio(pool));
   } finally {
     await pool.end().catch(() => undefined);
@@ -233,7 +246,7 @@ async function checarTabelas(pool: pg.Pool): Promise<Checagem> {
   return {
     nome: 'schema',
     estado: 'falha',
-    detalhe: `faltam ${faltando.length} tabelas: ${faltando.join(', ')}`,
+    detalhe: `faltam ${faltando.length} de ${TABELAS.length}: ${faltando.join(', ')}`,
     acao: `Rode em scripts/sql/migracoes/: ${passos.join(', ')}`,
   };
 }
@@ -254,7 +267,9 @@ async function checarFuncoes(pool: pg.Pool): Promise<Checagem> {
         nome: 'funções',
         estado: 'falha',
         detalhe: `faltam: ${faltando.join(', ')}`,
-        acao: 'Reaplique scripts/sql/migracoes/01-multi-tenancy.sql e 03-cobranca.sql.',
+          acao:
+          'Reaplique os passos de scripts/sql/migracoes/ — as funções vêm de\n' +
+          '  01-multi-tenancy.sql, 03-cobranca.sql e 05-catalogo-de-itens.sql.',
       };
 }
 
@@ -309,6 +324,43 @@ async function checarCargaInicial(pool: pg.Pool): Promise<Checagem> {
       'Os INSERT de carga não entraram. Reaplique\n' +
       '  scripts/sql/migracoes/03-cobranca.sql — é idempotente,\n' +
       '  os `on conflict do nothing` evitam duplicar.',
+  };
+}
+
+/**
+ * Tabelas oficiais de códigos (NCM, CFOP, CST, cClassTrib).
+ *
+ * É **aviso**, não falha: a API sobe e funciona sem elas. Mas a saúde do
+ * cadastro passa a reportar "não verificado" em vez de "ok", porque validar
+ * contra tabela vazia aprovaria qualquer código — o que é pior do que não
+ * validar. O aviso existe para que essa lacuna não passe por aprovação.
+ */
+async function checarTabelasOficiais(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ codigos: string; pares: string; flags: string }>(
+    `select (select count(*)::text from fiscal_codes)   as codigos,
+            (select count(*)::text from cclasstrib_cst) as pares,
+            (select count(*)::text from ncm_flags)      as flags`,
+  );
+
+  const codigos = Number(rows[0]!.codigos);
+  const pares = Number(rows[0]!.pares);
+
+  if (codigos > 0 && pares > 0) {
+    return {
+      nome: 'tabelas oficiais de códigos',
+      estado: 'ok',
+      detalhe: `${codigos} códigos, ${pares} pares cClassTrib×CST, ${rows[0]!.flags} NCM marcados`,
+    };
+  }
+
+  return {
+    nome: 'tabelas oficiais de códigos',
+    estado: 'aviso',
+    detalhe: `${codigos} códigos, ${pares} pares cClassTrib×CST`,
+    acao:
+      'Sem elas a saúde do cadastro reporta "não verificado" em vez de "ok" —\n' +
+      '  de propósito, porque validar contra tabela vazia aprovaria qualquer\n' +
+      '  código. Carregue a IT RT 2025.002 em fiscal_codes e cclasstrib_cst.',
   };
 }
 

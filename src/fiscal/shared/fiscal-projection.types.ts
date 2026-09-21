@@ -20,6 +20,7 @@ export interface FiscalProjection {
   /** Chaveado por competência `YYYY-MM`. */
   periods: Record<string, PeriodProjection>;
   certificate: CertificateProjection | null;
+  catalog: CatalogProjection;
   alerts: ClientAlert[];
   issues: FiscalIssue[];
   stats: FiscalStats;
@@ -55,6 +56,28 @@ export interface PeriodProjection {
   rectifies?: string;
   /** Competência de retificação que corrige esta, se houver. */
   rectified_by?: string;
+}
+
+/**
+ * Saúde da classificação vigente de cada item, e os totais derivados dela.
+ *
+ * Guarda apenas `item_id -> saúde`, não a classificação inteira: os códigos
+ * ficam no read model (`item_classifications`), reconstruível por replay.
+ * Milhares de classificações completas dentro do objeto hasheado tornariam a
+ * projeção grande sem acrescentar garantia — qualquer classificação nova é um
+ * evento, e o evento já muda o hash por `last_event_seq`.
+ *
+ * O mapa precisa existir, e não só os totais, porque reclassificar tem de
+ * **substituir** a saúde anterior do item. Sem saber o estado anterior, uma
+ * reclassificação de `error` para `ok` deixaria o contador de erros inflado, e é
+ * por esse contador que o escritório prioriza a fila de trabalho.
+ */
+export interface CatalogProjection {
+  items: Record<string, 'ok' | 'warning' | 'error'>;
+  items_total: number;
+  ok: number;
+  warning: number;
+  error: number;
 }
 
 export interface CertificateProjection {
@@ -156,6 +179,26 @@ export interface CertificateUsedPayload {
   target: string;
   outcome: 'success' | 'failure';
   ip?: string;
+}
+
+export interface ItemClassifiedPayload {
+  item_id: string;
+  effective_from: string;
+  ncm?: string;
+  nbs?: string;
+  cst_ibs_cbs?: string;
+  cclasstrib?: string;
+  cst_icms?: string;
+  cst_pis_cofins?: string;
+  cfop_default?: string;
+  justification?: string;
+  /**
+   * Saúde apurada no momento da classificação. Vem no evento para que a
+   * projeção seja determinística: recalcular na projeção usaria as tabelas de
+   * hoje para julgar uma classificação de ontem.
+   */
+  health: 'ok' | 'warning' | 'error';
+  reasons: string[];
 }
 
 export interface ClientAlertPayload {

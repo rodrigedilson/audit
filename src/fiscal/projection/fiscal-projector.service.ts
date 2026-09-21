@@ -3,12 +3,14 @@ import { hashProjection } from '../../esaa/shared/infrastructure/crypto-utils.js
 import type { FiscalAction, PeriodState } from '../shared/fiscal-vocabulary.js';
 import { CREDIT_STATES } from '../shared/fiscal-vocabulary.js';
 import type {
+  CatalogProjection,
   ClientAlertPayload,
   ClientEnrolledPayload,
   ClientUpdatedPayload,
   CertificateStoredPayload,
   CertificateUsedPayload,
   FiscalProjection,
+  ItemClassifiedPayload,
   PeriodClosedPayload,
   PeriodOpenedPayload,
   RectificationFiledPayload,
@@ -51,6 +53,7 @@ export class FiscalProjectorService {
       client: null,
       periods: {},
       certificate: null,
+      catalog: emptyCatalog(),
       alerts: [],
       issues: [],
       stats: emptyStats(),
@@ -113,7 +116,7 @@ export class FiscalProjectorService {
       // -------------------------------------------------- catalog (Onda 5)
       case 'item.classified':
       case 'item.reclassified':
-        projection.stats.items_classified += 1;
+        this.applyItemClassified(projection, event);
         break;
 
       // ---------------------------------------------- assessment (Onda 6)
@@ -271,6 +274,21 @@ export class FiscalProjectorService {
     }
   }
 
+  /**
+   * Reclassificar **substitui** a saúde do item, não acumula. Os totais saem
+   * do mapa em `recalculateStats`, então uma reclassificação de `error` para
+   * `ok` reduz o contador de erros — que é por onde o escritório prioriza.
+   *
+   * `items_classified` conta eventos, não itens: é quantas vezes houve
+   * classificação, incluindo reclassificações.
+   */
+  private applyItemClassified(projection: FiscalProjection, event: ESAAEventData): void {
+    const payload = event.payload as unknown as ItemClassifiedPayload;
+
+    projection.catalog.items[payload.item_id] = payload.health;
+    projection.stats.items_classified += 1;
+  }
+
   private applyAssessmentConfirmed(projection: FiscalProjection, event: ESAAEventData): void {
     const payload = event.payload as unknown as AssessmentConfirmedPayload;
     const period = projection.periods[payload.period];
@@ -314,7 +332,17 @@ export class FiscalProjectorService {
     projection.stats.periods_reconciled = periods.filter((p) => p.state === 'reconciled').length;
     projection.stats.periods_confirmed = periods.filter((p) => p.state === 'confirmed').length;
     projection.stats.open_issues = projection.issues.filter((i) => i.status === 'open').length;
+
+    const saudes = Object.values(projection.catalog.items);
+    projection.catalog.items_total = saudes.length;
+    projection.catalog.ok = saudes.filter((s) => s === 'ok').length;
+    projection.catalog.warning = saudes.filter((s) => s === 'warning').length;
+    projection.catalog.error = saudes.filter((s) => s === 'error').length;
   }
+}
+
+function emptyCatalog(): CatalogProjection {
+  return { items: {}, items_total: 0, ok: 0, warning: 0, error: 0 };
 }
 
 function emptyStats(): FiscalProjection['stats'] {

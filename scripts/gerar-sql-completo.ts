@@ -28,6 +28,7 @@ const TITULOS: Record<string, string> = {
   '20260918130000_certificate_vault.sql': 'cofre-certificados',
   '20260918140000_billing.sql': 'cobranca',
   '20260918150000_ingestion.sql': 'ingestao',
+  '20260921120000_catalog.sql': 'catalogo-de-itens',
 };
 
 const DESCRICOES: Record<string, string> = {
@@ -43,6 +44,11 @@ const DESCRICOES: Record<string, string> = {
     '-- de R$ 150. Cria billable_clients(), que define "CNPJ ativo".',
   '20260918150000_ingestion.sql':
     'Documentos fiscais e seus itens, com tributos atuais e IBS/CBS lado a lado.',
+  '20260921120000_catalog.sql':
+    'Catálogo de itens com classificação versionada por vigência, tabelas de\n' +
+    '-- códigos oficiais e as funções effective_classification() e\n' +
+    '-- item_propagation() — esta última responde quantas notas emitidas cada\n' +
+    '-- item mal classificado contaminou.',
 };
 
 const CABECALHO = `-- =============================================================================

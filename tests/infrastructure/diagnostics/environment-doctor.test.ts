@@ -146,10 +146,11 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
 
       const schema = checagem(resultado, 'schema');
       expect(schema?.estado).toBe('falha');
-      expect(schema?.detalhe).toContain('faltam 15 tabelas');
-      // A ação nomeia os quatro arquivos, na ordem.
+      expect(schema?.detalhe).toMatch(/^faltam \d+ de \d+:/);
+      // A ação nomeia os arquivos a rodar, na ordem.
       expect(schema?.acao).toContain('01-multi-tenancy.sql');
       expect(schema?.acao).toContain('04-ingestao.sql');
+      expect(schema?.acao).toContain('05-catalogo-de-itens.sql');
     });
 
     /**
@@ -247,15 +248,54 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
       expect(escritorio?.acao).toMatch(/Auto Confirm User/);
     });
 
-    it('dá tudo ok quando o escritório existe com um owner', async () => {
+    /**
+     * Tabela oficial vazia é AVISO, não falha: a API sobe e funciona, e a saúde
+     * do cadastro reporta "não verificado" em vez de "ok". Um aviso não pode
+     * reprovar o ambiente, senão ninguém conseguiria começar a usar o produto
+     * antes de carregar a IT RT 2025.002.
+     */
+    it('acusa as tabelas oficiais de códigos vazias como aviso', async () => {
+      const oficiais = checagem(
+        await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),
+        'tabelas oficiais de códigos',
+      );
+
+      expect(oficiais?.estado).toBe('aviso');
+      expect(oficiais?.acao).toMatch(/aprovaria qualquer/);
+      expect(oficiais?.acao).toMatch(/IT RT 2025\.002/);
+    });
+
+    it('aprova o ambiente quando só restam avisos', async () => {
       const tenant = '33333333-3333-3333-3333-333333333333';
-      await pool.query(`insert into tenants (id, name) values ($1, 'Escritório') 
-                        on conflict do nothing`, [tenant]);
+      await pool.query(
+        `insert into tenants (id, name) values ($1, 'Escritório') on conflict do nothing`,
+        [tenant],
+      );
       await pool.query(
         `insert into memberships (tenant_id, user_id, role)
          values ($1::uuid, '44444444-4444-4444-4444-444444444444', 'owner')
          on conflict do nothing`,
         [tenant],
+      );
+
+      const resultado = await diagnosticar({
+        ...ENV_BASE,
+        DATABASE_URL: urlVazia,
+      } as NodeJS.ProcessEnv);
+
+      expect(resultado.ok).toBe(true);
+      expect(resultado.checagens.some((c) => c.estado === 'falha')).toBe(false);
+      // O aviso continua visível: aprovar não é o mesmo que silenciar.
+      expect(resultado.checagens.some((c) => c.estado === 'aviso')).toBe(true);
+    });
+
+    it('dá tudo ok com as tabelas oficiais carregadas', async () => {
+      await pool.query(
+        `insert into fiscal_codes (kind, code) values ('ncm','73181500') on conflict do nothing`,
+      );
+      await pool.query(
+        `insert into cclasstrib_cst (cclasstrib, cst_ibs_cbs) values ('000001','000')
+         on conflict do nothing`,
       );
 
       const resultado = await diagnosticar({
