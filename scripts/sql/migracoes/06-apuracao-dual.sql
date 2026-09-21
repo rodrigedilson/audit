@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 6 de 9: apuracao-dual
+-- audit — passo 6 de 10: apuracao-dual
 --
 -- Motor de regras com vigência por data, apuração dual e a memória de
 -- cálculo linha por linha. A tabela `tax_rules` nasce VAZIA de propósito:

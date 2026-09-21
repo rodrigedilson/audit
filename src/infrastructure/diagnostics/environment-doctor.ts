@@ -59,6 +59,8 @@ const TABELAS = [
   'assessment_divergences',
   'deadline_rules',
   'deadlines',
+  'assistant_threads',
+  'assistant_messages',
 ] as const;
 
 const FUNCOES = [
@@ -71,6 +73,7 @@ const FUNCOES = [
   'item_propagation',
   'effective_rules',
   'portfolio_deadlines',
+  'assistant_usage',
 ] as const;
 
 /** Um por migration, para dizer qual arquivo falta rodar. */
@@ -106,6 +109,8 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   assessment_divergences: '08-contra-apuracao.sql',
   deadline_rules: '08-contra-apuracao.sql',
   deadlines: '08-contra-apuracao.sql',
+  assistant_threads: '09-assistente-fiscal.sql',
+  assistant_messages: '09-assistente-fiscal.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
@@ -172,6 +177,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await checarTabelasOficiais(pool));
     checagens.push(await checarRegrasPublicadas(pool));
     checagens.push(await checarPrazosNormativos(pool));
+    checagens.push(await checarCotaDoAssistente(pool));
     checagens.push(await checarEscritorio(pool));
   } finally {
     await pool.end().catch(() => undefined);
@@ -354,6 +360,43 @@ async function checarCargaInicial(pool: pg.Pool): Promise<Checagem> {
       'Os INSERT de carga não entraram. Reaplique\n' +
       '  scripts/sql/migracoes/03-cobranca.sql — é idempotente,\n' +
       '  os `on conflict do nothing` evitam duplicar.',
+  };
+}
+
+/**
+ * Cota do assistente nos planos.
+ *
+ * Falha, e não aviso: a coluna existir com zero em toda linha significa que o
+ * `UPDATE` de carga da migration não rodou, e o efeito é o assistente responder
+ * `403` para todos os clientes — um recurso contratado que simplesmente não
+ * aparece, sem erro em log nenhum. Zero é valor legítimo para MEI e Simples
+ * integrado, então a checagem olha se **algum** plano tem cota.
+ */
+export async function checarCotaDoAssistente(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ com_cota: string; total: string }>(
+    `select count(*) filter (where assistant_messages_per_month > 0)::text as com_cota,
+            count(*)::text as total
+       from plans`,
+  );
+
+  const comCota = Number(rows[0]!.com_cota);
+
+  if (comCota > 0) {
+    return {
+      nome: 'cota do assistente',
+      estado: 'ok',
+      detalhe: `${comCota} de ${rows[0]!.total} planos com assistente incluído`,
+    };
+  }
+
+  return {
+    nome: 'cota do assistente',
+    estado: 'falha',
+    detalhe: 'nenhum plano com cota de assistente',
+    acao:
+      'O `UPDATE` de carga não rodou: o assistente vai responder 403 para todos os\n' +
+      '  clientes, sem erro em log nenhum. Reaplique\n' +
+      '  scripts/sql/migracoes/09-assistente-fiscal.sql — é idempotente.',
   };
 }
 
