@@ -254,6 +254,39 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
      * reprovar o ambiente, senão ninguém conseguiria começar a usar o produto
      * antes de carregar a IT RT 2025.002.
      */
+    /**
+     * Regressão de um caso real: os 5 planos estavam na tabela e a API REST
+     * devolvia `[]`, porque RLS ligada sem policy filtra tudo e responde 200,
+     * não 403. O sintoma não aponta a causa para quem não conhece a diferença.
+     */
+    it('acusa plans com RLS ligada e sem policy, que devolve lista vazia sem erro', async () => {
+      await pool.query('alter table plans enable row level security');
+
+      try {
+        const visibilidade = checagem(
+          await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),
+          'visibilidade das tabelas públicas',
+        );
+
+        expect(visibilidade?.estado).toBe('falha');
+        expect(visibilidade?.detalhe).toContain('plans');
+        expect(visibilidade?.detalhe).toMatch(/lista vazia, não erro/);
+        expect(visibilidade?.acao).toContain('reparo-planos.sql');
+      } finally {
+        await pool.query('alter table plans disable row level security');
+      }
+    });
+
+    it('aprova a visibilidade quando o RLS das públicas está desligado', async () => {
+      const visibilidade = checagem(
+        await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),
+        'visibilidade das tabelas públicas',
+      );
+
+      expect(visibilidade?.estado).toBe('ok');
+      expect(visibilidade?.detalhe).toContain('plans=rls_off');
+    });
+
     it('acusa as tabelas oficiais de códigos vazias como aviso', async () => {
       const oficiais = checagem(
         await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),

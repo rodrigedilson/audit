@@ -143,6 +143,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     }
 
     checagens.push(await checarCargaInicial(pool));
+    checagens.push(await checarVisibilidadePublica(pool));
     checagens.push(await checarTabelasOficiais(pool));
     checagens.push(await checarEscritorio(pool));
   } finally {
@@ -324,6 +325,53 @@ async function checarCargaInicial(pool: pg.Pool): Promise<Checagem> {
       'Os INSERT de carga não entraram. Reaplique\n' +
       '  scripts/sql/migracoes/03-cobranca.sql — é idempotente,\n' +
       '  os `on conflict do nothing` evitam duplicar.',
+  };
+}
+
+/**
+ * Visibilidade das tabelas públicas.
+ *
+ * `plans` e `billing_settings` alimentam a calculadora de preço, que é pública.
+ * Elas têm de estar com RLS **desligado**: com RLS ligada e sem policy, a API
+ * REST devolve `200` com lista vazia — nem erro, nem dado. A calculadora
+ * simplesmente mostra nada, e ninguém descobre por quê.
+ *
+ * Esta checagem existe porque aconteceu: os 5 planos estavam na tabela e a API
+ * devolvia `[]`. O `disable row level security` da migration não estava em
+ * efeito, e o sintoma (200 com lista vazia, não 403) só aponta RLS para quem
+ * já conhece a diferença.
+ */
+async function checarVisibilidadePublica(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ tabela: string; rls: boolean; policies: string }>(
+    `select c.relname as tabela,
+            c.relrowsecurity as rls,
+            (select count(*)::text from pg_policies p
+              where p.schemaname = 'public' and p.tablename = c.relname) as policies
+       from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'r'
+        and c.relname in ('plans', 'billing_settings')`,
+  );
+
+  const bloqueadas = rows.filter((r) => r.rls && Number(r.policies) === 0);
+
+  if (bloqueadas.length === 0) {
+    return {
+      nome: 'visibilidade das tabelas públicas',
+      estado: 'ok',
+      detalhe: rows.map((r) => `${r.tabela}=${r.rls ? 'rls_on' : 'rls_off'}`).join(', '),
+    };
+  }
+
+  return {
+    nome: 'visibilidade das tabelas públicas',
+    estado: 'falha',
+    detalhe:
+      `${bloqueadas.map((r) => r.tabela).join(', ')} com RLS ligada e sem policy: ` +
+      'a API REST devolve lista vazia, não erro',
+    acao:
+      'Rode scripts/sql/reparo-planos.sql, que desliga o RLS dessas duas e concede\n' +
+      '  select a anon. Sem isso a calculadora de preço pública mostra nada, e o\n' +
+      '  sintoma não aponta a causa: seriam 403 se fosse permissão.',
   };
 }
 
