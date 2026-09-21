@@ -116,6 +116,12 @@ npm ci
 npm run doctor
 ```
 
+A primeira linha da saída diz se o `.env` foi lido e quantas variáveis vieram
+dele. **O ambiente real tem precedência sobre o arquivo**: uma variável já
+definida no shell não é sobreposta pelo `.env`, e o doctor informa quantas
+ignorou por esse motivo — é o que evita editar o arquivo e não entender por que
+nada mudou.
+
 Verifica, em ordem: variáveis obrigatórias, conexão, as 15 tabelas, as 5
 funções, o trigger append-only de `events`, a carga inicial de cobrança e a
 existência de um escritório com `owner`. Cada falha vem com a ação:
@@ -244,18 +250,55 @@ O `verify` reprojeta o log do zero e compara hashes. Tem de devolver
 ### `ENETUNREACH` ao conectar no banco
 
 O host de conexão direta (`db.SEU-REF.supabase.co`) tem **apenas endereço
-IPv6**. Máquinas sem rota IPv6 — WSL2 costuma ser o caso — nunca conseguem
-alcançá-lo. Os hosts `*.pooler.supabase.com` atendem em IPv4.
+IPv6**. Máquinas sem rota IPv6 nunca o alcançam.
 
 Diagnóstico:
 
 ```bash
-getent ahostsv4 db.SEU-REF.supabase.co   # vazio = só IPv6
-ip -6 route show default                  # vazio = sem rota IPv6
+getent ahostsv4 db.SEU-REF.supabase.co   # vazio = o host é só IPv6
+ip -6 route show default                  # vazio = esta máquina não tem rota IPv6
+ip -4 addr show eth0                      # 172.x.x.x no WSL = modo NAT
 ```
 
-Solução: use a string do pooler. Alternativas: habilitar IPv6 na máquina, ou
-contratar o add-on de IPv4 do Supabase.
+Há três saídas. Escolha pela que combina com a sua operação:
+
+#### 1. Habilitar IPv6 no WSL (mantém a conexão direta)
+
+O WSL em modo **NAT** — o padrão, reconhecível pelo IP `172.x.x.x` — não
+repassa IPv6, mesmo quando o Windows tem. O modo **mirrored** dá ao WSL a pilha
+de rede do host, IPv6 incluído.
+
+Exige Windows 11 22H2+ e WSL 2.0+; confira com `wsl.exe --version`.
+
+Crie `C:\Users\SEU-USUARIO\.wslconfig`:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+No PowerShell, reinicie o WSL:
+
+```powershell
+wsl --shutdown
+```
+
+Reabra o terminal e confirme:
+
+```bash
+ip -6 route show default   # agora deve mostrar uma rota
+npm run doctor
+```
+
+#### 2. Usar o pooler (IPv4, sem mexer na máquina)
+
+Painel → **Connect** → **Session pooler**. O usuário passa a ser
+`postgres.<project-ref>`.
+
+#### 3. Add-on de IPv4 do Supabase
+
+Dá um endereço IPv4 ao host direto. É pago e mensal; só vale se a conexão direta
+for requisito de outras ferramentas do seu fluxo.
 
 ### `invalid_credentials` mesmo com a senha certa
 

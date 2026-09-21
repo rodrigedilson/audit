@@ -1,10 +1,20 @@
 #!/usr/bin/env node
+import { loadDotEnv } from '../config/dotenv.js';
 import { bootstrap, DEV_TENANT_ID, DEV_CNPJ, type BootstrapOptions } from '../composition-root.js';
 import { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { loadEnv, EnvError } from '../config/env.js';
 import { buildServer } from '../api/server.js';
 import { diagnosticar, type Checagem } from '../infrastructure/diagnostics/environment-doctor.js';
 import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
+
+/**
+ * Carrega o `.env` antes de qualquer coisa.
+ *
+ * Fica só na CLI, e não numa biblioteca: quem importa o kernel como pacote não
+ * deve ter o ambiente alterado por efeito colateral de import. O ambiente real
+ * tem precedência sobre o arquivo.
+ */
+const DOTENV = loadDotEnv();
 
 const EXIT_OK = 0;
 const EXIT_ERROR = 1;
@@ -96,6 +106,17 @@ function readBootstrapOptions(args: readonly string[]): BootstrapOptions {
  * tudo.
  */
 async function runDoctor(): Promise<number> {
+  // Dizer de onde a configuração veio evita o mal-entendido de editar o .env e
+  // não entender por que nada mudou.
+  process.stdout.write(
+    DOTENV.found
+      ? `[ ok ] .env\n    ${DOTENV.loaded.length} variáveis carregadas` +
+          (DOTENV.skipped.length > 0
+            ? `, ${DOTENV.skipped.length} ignoradas porque já estavam no ambiente\n`
+            : '\n')
+      : '[aviso] .env\n    arquivo não encontrado: a configuração tem de vir do ambiente\n',
+  );
+
   const { checagens, ok } = await diagnosticar();
 
   for (const checagem of checagens) {
