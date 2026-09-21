@@ -11,7 +11,7 @@ O frontend deste projeto é desenvolvido externamente utilizando o **Lovable** (
 │                   GitHub                         │
 │                                                  │
 │  ┌──────────────┐       ┌──────────────────────┐│
-│  │   audit       │       │   audit-frontend     ││
+│  │   audit       │       │  sped-genius-hub     ││
 │  │  (backend)    │◄─────►│   (Lovable app)      ││
 │  │  Este repo    │  API  │   Repo separado      ││
 │  └──────────────┘       └──────────────────────┘│
@@ -34,8 +34,8 @@ design-system/
 ├── tokens.json             # Tokens brutos
 ├── tokens.css              # Tokens em CSS puro (--ejr-*)
 └── lovable/                # Pacote pronto para o app Lovable
-    ├── index.css           # → src/index.css do audit-frontend
-    └── tailwind.config.ts  # → tailwind.config.ts do audit-frontend
+    ├── index.css           # → src/index.css do sped-genius-hub
+    └── tailwind.config.ts  # → tailwind.config.ts do sped-genius-hub
 ```
 
 ### Princípios inegociáveis
@@ -81,7 +81,7 @@ Ao aplicar o padrão via lovable.dev, usar:
 
 ### Verificação
 
-Antes de considerar a adaptação concluída, conferir no `audit-frontend`:
+Antes de considerar a adaptação concluída, conferir no `sped-genius-hub`:
 
 ```bash
 # Nao deve retornar nada: cores/raios/sombras fora do padrao
@@ -124,7 +124,7 @@ orquestrador nem pelas 7 camadas de validação.
 No **backend**:
 
 ```bash
-CORS_ORIGINS=http://localhost:5173,https://<projeto>.lovable.app
+CORS_ORIGINS=https://sped-genius-hub.vercel.app,http://localhost:5173
 ```
 
 ### CORS
@@ -134,7 +134,9 @@ variável, o padrão é apenas `http://localhost:5173` — liberar `*` por omiss
 transformaria um esquecimento de configuração em CORS aberto num produto que
 custodia certificado digital de terceiros.
 
-Então a origem do preview do Lovable entra explícita, e a de produção também.
+Então a origem da Vercel entra literal. Preview deploy da Vercel gera uma URL
+nova por commit, e cada uma seria outra origem — para testar preview, use o
+frontend local apontado para a API deployada.
 
 ## Fluxo de Trabalho
 
@@ -146,15 +148,17 @@ node dist/cli/audit.js serve     # http://localhost:3000
 npm run doctor                   # confere o ambiente antes de subir
 
 # Frontend (repo Lovable)
-cd ../audit-frontend && npm run dev   # http://localhost:5173
+cd ../sped-genius-hub && npm run dev   # http://localhost:5173
 ```
 
-O passo a passo completo de construção do frontend está em
-[`LOVABLE.md`](LOVABLE.md).
+O plano de migração do frontend está em [`LOVABLE.md`](LOVABLE.md). O
+`sped-genius-hub` já existe e está em produção; o trabalho é trocar a fonte do
+dado fiscal, não construir telas do zero.
 
 ### 2. Integração Contínua
-- Backend: push para `main` → deploy automático
-- Frontend: Lovable publica no repo `audit-frontend` → deploy via GitHub Actions
+- Backend: push para `main` → deploy (ainda a configurar; ver `LOVABLE.md`, passo 1)
+- Frontend: Lovable publica no repo `sped-genius-hub` → deploy nativo da Vercel
+  em <https://sped-genius-hub.vercel.app>
 
 ### 3. Testes de Integração
 
@@ -180,7 +184,7 @@ arquivos soltos: o contrato precisa validar como uma peça só, e um DTO fora de
 
 O Lovable faz push automático para o repositório GitHub. Para sincronizar:
 
-1. O repo do Lovable é `rodrigedilson/audit-frontend`
+1. O repo do Lovable é `rodrigedilson/sped-genius-hub`
 2. Este repo (backend) é `rodrigedilson/audit`
 3. Ambos compartilham o mesmo padrão de branches
 4. Contratos de API são versionados neste repo em `docs/api/`

@@ -1,345 +1,338 @@
-# Passo a passo — construir o `audit-frontend` no Lovable
+# Passo a passo — migrar o `sped-genius-hub` para ser o front do `audit`
 
-Este documento é o roteiro de execução. Os blocos marcados **`PROMPT`** são para
-colar no Lovable, um por vez — o Lovable acerta muito mais em pedidos pequenos e
-incrementais do que num pedido gigante.
+O frontend **já existe e está em produção**: `sped-genius-hub`, projeto Lovable,
+publicado em <https://sped-genius-hub.vercel.app>. Este documento é o plano de
+migração para ele passar a consumir a API do `audit` e o Supabase atual
+(`uflputiyytswvagrrzzn`).
 
-Duas fontes da verdade, que o frontend consome e **não** reescreve:
+Não é plano de construção. O que precisa ser construído já está construído — o
+trabalho é **trocar a fonte do dado fiscal** sem perder o que funciona.
 
-| O quê | Onde |
+| Fonte da verdade | Onde |
 |---|---|
-| Contrato da API | [`docs/api/openapi.yaml`](../api/openapi.yaml) — v1.0.0, 60+ rotas |
-| Especificação das telas | [`TELAS.md`](TELAS.md) — 16 telas, com as regras de cada uma |
+| Contrato da API | [`docs/api/openapi.yaml`](../api/openapi.yaml) — v1.0.0 |
+| Regras de cada tela | [`TELAS.md`](TELAS.md) — 16 telas |
 | Design system | [`design-system/lovable/`](../../design-system/lovable/) |
+| Frontend | `rodrigedilson/sped-genius-hub` |
 
 ---
 
-## Carga horária
+## O ponto de partida real
 
-| Passo | Entrega | Esforço |
-|---|---|---|
-| **0** | Acesso à API — caminho A (local) | **1h** |
-| **0** | Acesso à API — caminho B (túnel) | **+1h** |
-| **0** | Acesso à API — caminho C (deploy) | **8–12h** |
-| **1** | Design system aplicado | **1–2h** |
-| **2** | Cliente de API tipado, auth e contrato de erro | **4–6h** |
-| **4** | Componentes base 1 a 8 | **10–14h** |
-| **3** | Bloco 1 — Fundação (5 telas) | **12–18h** |
-| **3** | Bloco 2 — O mês (3 telas) | **16–22h** |
-| **3** | Bloco 3 — O entregável (2 telas) | **12–18h** |
-| **3** | Bloco 4 — Diferenciais (4 telas) | **18–26h** |
-| **3** | Bloco 5 — Comercial (4 telas) | **14–20h** |
-| **4** | Componentes 9 a 14, junto dos blocos | **8–12h** |
-| **5** | Auditoria das cinco regras — 2h por bloco | **10h** |
-| **6** | Verificação e roteiro funcional | **4–6h** |
-| | **Total sem deploy** | **~110–155h** |
-| | **Total com deploy (caminho C)** | **~120–170h** |
+O `sped-genius-hub` não é uma casca vazia. Ele tem:
 
-Para uma pessoa em tempo integral: **3 a 4 semanas** sem o deploy, **4 a 5** com.
-Em meio período, dobre.
+- **17 páginas**, autenticação funcionando, AppShell, upload com drag-and-drop
+- **5 features organizadas em pasta própria, com hooks** — o que torna a
+  migração tratável: troca-se o hook, não a tela
+- **36 arquivos de 177** tocam o Supabase. O acoplamento é menor do que parece
+- **22 tabelas e 14 edge functions** no projeto `rzzohjzfgfefuceardxe`
+- **Nenhum teste automatizado**
 
-**Como estes números foram formados, para você poder corrigi-los:**
+E o `audit` tem o mesmo domínio implementado por outro caminho: 7 camadas de
+validação, event log append-only, single-writer por CNPJ, hash de projeção
+verificável e 930 testes.
 
-- O Lovable gera a tela em minutos; o custo real é **revisar, corrigir e
-  reprompt**. A divisão típica que assumi é **20% gerando, 80% ajustando** — e é
-  por isso que telas com muita regra de negócio (apuração, contra-apuração,
-  dossiê) custam o dobro de telas de cadastro, mesmo tendo menos campos.
-- Cada tela dos blocos 2 a 4 tem entre 8 e 12 regras em [`TELAS.md`](TELAS.md), e
-  cada regra é um ponto onde o Lovable acerta ou erra. A faixa alta da estimativa
-  é o cenário em que metade precisa de um segundo prompt.
-- O passo 5 (auditoria das cinco regras) está contado **à parte de propósito**.
-  É a etapa que as equipes cortam quando o prazo aperta, e é justamente a que
-  preserva o valor do backend — sem ela, o painel afirma ao contador coisas que
-  o sistema nunca verificou.
-- Os componentes do passo 4 aparecem em duas linhas porque os 8 primeiros são
-  pré-requisito do bloco 2, e os outros 6 nascem junto da tela que os usa.
-
-**O que não está nesta conta:** QA com dados reais de um cliente, acessibilidade
-além do que o shadcn já entrega, responsivo para celular (o painel é de trabalho
-em desktop), internacionalização e o `audit-frontend` em produção com domínio e
-certificado.
+**A decisão que orienta tudo abaixo:** onde os dois fazem a mesma coisa, o
+`audit` ganha — não por ser mais novo, mas porque é ele que tem a trilha de
+defesa. Onde só o `sped-genius-hub` faz, ele fica.
 
 ---
 
-## Passo 0 — Resolver o acesso à API antes de abrir o Lovable
+## Passo 1 — Deploy da API do `audit` (bloqueio duro)
 
-**Este é o único bloqueio real, e ele existe hoje:** o repositório do backend não
-tem configuração de deploy. Há CI (`.github/workflows/ci.yml`), mas nenhum
-`Dockerfile`, `fly.toml` ou equivalente. O preview do Lovable roda numa página
-`https://*.lovable.app`, e ela precisa alcançar a API de algum lugar.
+**Isto é primeiro e não tem desvio.** O frontend em produção roda no navegador a
+partir de `sped-genius-hub.vercel.app`, e esse navegador precisa alcançar a API.
+`localhost` não serve. E o repositório do backend **não tem configuração de
+deploy** — só CI.
 
-Três caminhos, em ordem de esforço:
+O mínimo:
 
-### A. Desenvolver localmente (mais rápido para começar)
-
-O Lovable faz push para o GitHub. Você clona o `audit-frontend`, roda
-`npm run dev` e aponta para o backend local:
-
-```bash
-# terminal 1 — backend
-cd ~/projects/audit
-npm run build
-node dist/cli/audit.js serve         # sobe em http://localhost:3000
-
-# terminal 2 — frontend
-cd ~/projects/audit-frontend
-npm run dev                          # http://localhost:5173
+```dockerfile
+# Dockerfile, no repo do audit
+FROM node:22-slim
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+ENV API_HOST=0.0.0.0
+CMD ["node", "dist/cli/audit.js", "serve"]
 ```
 
-`CORS_ORIGINS` já aceita `http://localhost:5173` por omissão — é o padrão
-quando a variável não está definida. Nada a configurar.
-
-**Limite:** o preview dentro do editor do Lovable não vai funcionar, porque a
-página servida de `lovable.app` não alcança o seu `localhost`. Você constrói no
-Lovable e confere rodando local.
-
-### B. Túnel para o backend local (preview do Lovable funcionando)
+Variáveis no serviço de deploy:
 
 ```bash
-# no repo do backend, com o serve rodando
-npx localtunnel --port 3000          # ou cloudflared tunnel --url http://localhost:3000
+DATABASE_URL=postgresql://...        # pooler do Supabase (npm run pooler descobre o host)
+SUPABASE_URL=https://uflputiyytswvagrrzzn.supabase.co
+SUPABASE_ANON_KEY=...
+SUPABASE_JWT_SECRET=...              # ou SUPABASE_JWKS_URL
+CERTIFICATE_MASTER_KEY=...           # ← em SECRET MANAGER, não em variável de painel
+CORS_ORIGINS=https://sped-genius-hub.vercel.app,http://localhost:5173
+API_PORT=3000
 ```
 
-Pegue a URL `https://...` que o túnel devolve e:
+Três coisas que vão morder se passarem batido:
 
-```bash
-# no .env do backend
-CORS_ORIGINS=http://localhost:5173,https://<seu-projeto>.lovable.app
-```
+1. **`CORS_ORIGINS` não aceita curinga.** É lista de origens exatas, de propósito
+   (ver o comentário em [`env.ts`](../../src/config/env.ts)). A URL da Vercel
+   entra literal. Se você usar preview deploys da Vercel, cada URL de preview é
+   uma origem diferente — nesses, use o frontend local contra a API deployada.
+2. **`CERTIFICATE_MASTER_KEY` em secret manager.** Rotacioná-la torna ilegível
+   todo certificado A1 já armazenado. Variável de painel de deploy não é lugar
+   para ela.
+3. **Conferir antes de apontar o front:** `npm run doctor` contra o ambiente de
+   produção deve dar 34 tabelas e 10 funções. É o que prova que as 13 migrações
+   chegaram inteiras.
 
-`CORS_ORIGINS` **não aceita curinga** — a lista é de origens exatas, de propósito
-(ver o comentário em [`env.ts`](../../src/config/env.ts)): liberar `*` por
-omissão transformaria um esquecimento de configuração em CORS aberto num produto
-que custodia certificado digital de terceiros. Então a origem do seu projeto
-Lovable entra explícita.
-
-### C. Deploy do backend (o caminho definitivo)
-
-É o que precisa existir antes de qualquer cliente real. Não está pronto, e é
-trabalho separado deste roteiro. O mínimo:
-
-- `Dockerfile` (Node 20+, `npm ci && npm run build`, `CMD node dist/cli/audit.js serve`)
-- variáveis: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-  `SUPABASE_JWT_SECRET` (ou `SUPABASE_JWKS_URL`), `CERTIFICATE_MASTER_KEY`,
-  `CORS_ORIGINS`, `API_PORT`
-- `CERTIFICATE_MASTER_KEY` **em secret manager**, nunca em variável de ambiente
-  do painel. Rotacioná-la torna ilegível todo certificado A1 já armazenado.
-
-> **Recomendação:** comece pelo caminho A, que não depende de nada. Passe ao C
-> quando a primeira tela estiver de pé.
+**Esforço: 8–12h.**
 
 ---
 
-## Passo 1 — Criar o projeto e aplicar o design system
+## Passo 2 — Resolver os dois Supabase
 
-Crie o projeto no lovable.dev e conecte ao repositório `rodrigedilson/audit-frontend`.
+Hoje o `sped-genius-hub` tem uma inconsistência:
 
-Depois cole o conteúdo de `design-system/lovable/index.css` e
-`design-system/lovable/tailwind.config.ts` com o prompt que já está em
-[`FRONTEND.md`](FRONTEND.md#prompt-para-o-lovable).
+```
+supabase/config.toml  → project_id = "uflputiyytswvagrrzzn"   ← projeto do audit
+.env                  → rzzohjzfgfefuceardxe.supabase.co      ← onde o app roda
+```
 
-**Verificação** — no `audit-frontend`, isto não deve retornar nada:
+Você decidiu: **o front liga no Supabase atual**, `uflputiyytswvagrrzzn`. Isso
+significa que o `config.toml` já está certo e o `.env` é que muda. Mas tem
+consequência, e ela é a parte mais delicada da migração:
+
+### 2.1 Os usuários não são os mesmos
+
+`auth.users` de `rzzohjzfgfefuceardxe` não existe em `uflputiyytswvagrrzzn`. O
+`teste@exemplo.com / Senha@123` do checkpoint **não vai logar**. Quem loga é o
+usuário que o `13-bootstrap-escritorio.sql` vinculou ao escritório.
+
+Confira com:
 
 ```bash
-grep -rnE '(bg|text|border)-\[#|dark:|rounded-(xl|2xl|3xl)|shadow-(xl|2xl)' src/
+cd ~/projects/audit && npm run doctor    # a checagem "escritório e usuário"
 ```
+
+### 2.2 Os dados da FASE 1 ficam para trás
+
+As 22 tabelas do `sped-genius-hub` têm dados em produção no projeto antigo.
+Apontar o front para o projeto do `audit` **não leva os dados**. Duas saídas:
+
+| Saída | Quando faz sentido |
+|---|---|
+| **Começar limpo** | Se os dados da FASE 1 eram de teste. É o caminho simples. |
+| **Migrar por `pg_dump`** | Se houver dado de cliente real ali. Tabela por tabela, e os `user_id` precisam ser remapeados para os `auth.users` do projeto novo. |
+
+**Decida isto antes do passo 3.** Migrar dado depois de o front já estar
+apontado é bem mais difícil.
+
+### 2.3 As features que ficam precisam do schema delas
+
+Três features do `sped-genius-hub` não têm equivalente no `audit` e vão
+continuar existindo. Elas dependem de tabelas que hoje só existem no projeto
+antigo, e precisam ser aplicadas no atual:
+
+```bash
+cd ~/projects/sped-genius-hub
+
+# Extração de entidades
+supabase/migrations/20260210100001_create_entity_tables.sql
+supabase/migrations/20260210100002_create_entity_indexes.sql
+supabase/migrations/20260210100003_create_extraction_jobs.sql
+supabase/migrations/20260210100004_create_extraction_function.sql
+
+# CFOP (tabela de referência própria + carga oficial)
+supabase/migrations/20260216300001_create_cfop_tables.sql
+supabase/migrations/20260216300002_seed_cfop_official_data.sql
+```
+
+**Conferi que não há colisão de nome** com as 40 tabelas do `audit` — os dois
+schemas convivem no mesmo Postgres sem se pisarem.
+
+As edge functions correspondentes (`extract-entities`, `graph-*`) precisam ser
+deployadas no projeto novo:
+
+```bash
+supabase link --project-ref uflputiyytswvagrrzzn
+supabase functions deploy extract-entities graph-init graph-populate graph-query
+```
+
+> **Não deployar** `sped-parser`, `parse-xml`, `import-xml-batch`,
+> `cross-reference`, `upload-file`, `list-files`, `delete-file`. Essas quatro
+> primeiras fazem o que o `audit` faz com 7 camadas de validação e event log; as
+> três últimas viram chamadas à API. Deployá-las criaria um segundo caminho de
+> escrita no mesmo banco, sem orquestrador — exatamente o que a arquitetura do
+> `audit` existe para impedir.
+
+**Esforço: 3–5h (começando limpo) ou 10–16h (migrando dados).**
 
 ---
 
-## Passo 2 — Camada de API, antes de qualquer tela
+## Passo 3 — Cliente de API, ao lado do cliente Supabase
 
-Gerar os tipos do contrato evita metade dos erros de integração:
+Não remova o `src/integrations/supabase/client.ts` agora. Ele continua servindo
+as features que ficam. O que entra é um segundo cliente, para a API do `audit`.
 
 ```bash
-cd ~/projects/audit-frontend
+cd ~/projects/sped-genius-hub
 npm i -D openapi-typescript
-npx openapi-typescript ../audit/docs/api/openapi.yaml -o src/api/schema.d.ts
+npx openapi-typescript ../audit/docs/api/openapi.yaml -o src/integrations/audit/schema.d.ts
 ```
 
-> **`PROMPT` — cliente de API**
+> **`PROMPT` — cliente da API do audit**
 >
-> Crie `src/api/client.ts` com um cliente HTTP tipado para a nossa API REST,
-> usando os tipos de `src/api/schema.d.ts`.
+> Crie `src/integrations/audit/client.ts`, um cliente HTTP tipado para a API do
+> `audit`, usando os tipos de `src/integrations/audit/schema.d.ts`. Ele vai
+> conviver com o cliente Supabase existente, não substituí-lo.
 >
-> Regras:
->
-> 1. A base da URL vem de `import.meta.env.VITE_API_URL`, e todas as rotas têm
->    prefixo `/v1`. Não use nenhum valor de URL escrito no código.
-> 2. **Não instale nem use `supabase-js`.** A autenticação é feita pela nossa
->    API: `POST /v1/auth/login` com `{ email, password }` devolve
->    `{ access_token, expires_in, tenant: { id, name, plan } }`. Guarde o token
->    em memória e em `sessionStorage`, e mande `Authorization: Bearer <token>`
->    em toda requisição. O frontend nunca fala com o Supabase direto.
+> 1. Base da URL em `import.meta.env.VITE_AUDIT_API_URL`; todas as rotas com
+>    prefixo `/v1`. Nenhuma URL escrita no código.
+> 2. O token é o **mesmo** do Supabase Auth que o app já usa: pegue o
+>    `access_token` da sessão atual (`supabase.auth.getSession()`) e mande em
+>    `Authorization: Bearer <token>`. A API do `audit` verifica esse JWT contra
+>    o mesmo projeto Supabase, então não há segundo login.
 > 3. `GET /v1/me` devolve `{ user: { id, email, role }, tenant: { id, name, plan } }`.
->    `role` é `owner`, `accountant` ou `viewer`.
-> 4. Rotas públicas, que **não** devem levar `Authorization`: `/v1/auth/login`,
->    `/v1/health`, `/v1/plans`, `/v1/price-calculator`.
-> 5. Tratamento de erro — o corpo de erro tem forma conhecida e o `status`
->    decide a tela:
->    - `400` → `{ code, message, details }`: erro de campo, destaque inline.
->    - `401` → sessão expirada: limpe o token e vá para o login.
->    - `403` → `{ code, message }`: **mostre a mensagem da API**. Ela explica se
->      é papel sem permissão ou recurso fora do plano.
->    - `404` → `{ code, message }`: "não encontrado nesta carteira".
+>    `role` é `owner`, `accountant` ou `viewer`. Use isso, e não a tabela
+>    `profiles`, como fonte do papel do usuário.
+> 4. Rotas públicas, sem `Authorization`: `/v1/health`, `/v1/plans`,
+>    `/v1/price-calculator`, `/v1/simulations/methodology`,
+>    `/v1/assistant/capabilities`, `/v1/audit-trails`.
+> 5. Contrato de erro, que decide a tela:
+>    - `400` → `{ code, message, details }`: erro de campo, inline.
+>    - `401` → sessão expirada: use o refresh do Supabase e repita uma vez.
+>    - `403` → **mostre a mensagem da API**: ela explica se é papel sem
+>      permissão ou recurso fora do plano.
+>    - `404` → "não encontrado nesta carteira".
 >    - `409` / `422` → `{ rejected, layer, reason, message, details }`. **É
->      inconsistência fiscal, não bug.** Exponha camada + motivo + mensagem; ver
->      o passo 5 deste roteiro.
->    - `429` → `{ code, message, usage }`: limite do plano atingido.
-> 6. Use TanStack Query para cache e revalidação. Não invente retry automático
->    em `POST`: toda escrita nesta API gera evento no log, e repetir uma escrita
->    silenciosamente é o tipo de coisa que este produto existe para impedir.
+>      inconsistência fiscal, não bug.** Ver o passo 6.
+>    - `429` → `{ code, message, usage }`: limite do plano.
+> 6. Reaproveite o TanStack Query que o projeto já usa. **Sem retry automático
+>    em `POST`**: toda escrita nessa API grava evento no log, e repetir uma
+>    escrita em silêncio é o tipo de coisa que o produto existe para impedir.
 >
-> Não crie nenhuma tela ainda.
+> Não altere nenhuma tela nem nenhum hook existente neste prompt.
 
-`.env` do `audit-frontend`:
+`.env` do `sped-genius-hub`:
 
 ```bash
-VITE_API_URL=http://localhost:3000   # ou a URL do túnel / do deploy
+VITE_SUPABASE_URL=https://uflputiyytswvagrrzzn.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<anon key do projeto atual>
+VITE_AUDIT_API_URL=https://<api-do-audit>
 ```
 
+As mesmas três variáveis no painel da Vercel.
+
+**Esforço: 4–6h.**
+
 ---
 
-## Passo 3 — Ordem de construção das telas
+## Passo 4 — Migrar feature por feature
 
-Cinco blocos. Cada um entrega algo demonstrável, e cada um depende só do
-anterior. A numeração das telas é a de [`TELAS.md`](TELAS.md), que traz as regras
-detalhadas de cada uma — **leia a seção da tela antes de escrever o prompt dela.**
+Esta é a tabela de decisão. Cada linha é um commit.
 
-| Bloco | Telas | Esforço | Por que nesta ordem |
+| Feature / hook | Arquivos | Destino | Esforço |
 |---|---|---|---|
-| **1 — Fundação** | 1 Login · AppShell · 2 Carteira · 3 Cadastro de empresa · 4 Detalhe do cliente | 12–18h | Sem a casca e a carteira não há onde pendurar nada |
-| **2 — O mês** | 6 Ingestão · 7 Saúde do cadastro · 8 Apuração dual | 16–22h | É o ciclo de trabalho; a saúde do cadastro é o diferencial #1 |
-| **3 — O entregável** | 9 Trilhas + Book · 10 Contra-apuração + calendário | 12–18h | O primeiro artefato que sai para o cliente final |
-| **4 — Diferenciais** | 5 Cofre A1 · 11 Assistente · 12 Crédito em risco · 14 Dossiê | 18–26h | Cada um é um upsell independente |
-| **5 — Comercial** | Calculadora pública · 13 Simulador · 15 Planos · 16 Usuários | 14–20h | Funil de aquisição; **pode ser feito em paralelo**, porque as duas primeiras são páginas públicas e não dependem da casca autenticada |
+| `hooks/useAuth.tsx`, `hooks/useProfile.tsx` | 2 | `GET /v1/me` como fonte de papel e escritório; login segue no Supabase Auth | 3–4h |
+| `hooks/useFileUpload.tsx`, `hooks/useFileList.tsx` | 2 | `POST /v1/clients/{cnpj}/documents` (207 Multi-Status), `GET .../documents` | 5–7h |
+| `features/xml-import/` | 9 | Ingestão (Onda 4) + contra-apuração `POST/GET /fisco-assessments/{period}` (Onda 8) | 10–14h |
+| `features/sped-upload/` | 6 | `POST /v1/clients/{cnpj}/sped` + `GET /credit-dossier/{period}` (Onda 12) | 8–12h |
+| `features/entity-extraction/` | 8 | **fica como está** — o `audit` não tem equivalente | 0h |
+| `features/knowledge-graph/` | 2 | **fica como está** | 0h |
+| `features/cfop-manual/` | 2 | **fica como está** por ora; ver a nota abaixo | 0h |
+| `pages/AuthTest.tsx` | 1 | Apagar — é página de teste em produção | 15min |
 
-Esforço por tela dentro de cada bloco, para você poder cortar ou adiar uma sem
-desmontar a conta:
+> **Nota sobre CFOP:** o `audit` tem `fiscal_codes` e `cclasstrib_cst` (Onda 5),
+> que são as tabelas oficiais usadas pela camada 3 de validação, e elas **nascem
+> vazias** de propósito. A `cfops` do `sped-genius-hub` já tem carga oficial. Vale
+> abrir uma tarefa separada para alimentar `fiscal_codes` a partir dela — isso
+> ligaria a validação de código do `audit`, que hoje reporta `not_verified`.
+> Não faz parte desta migração.
 
-| Tela | Esforço | O que pesa |
+### O que ganha de concreto ao migrar `xml-import` e `sped-upload`
+
+Não é refatoração por gosto. O que muda para o usuário:
+
+- **7 camadas de validação** em vez de parse no browser: XML malformado, chave
+  inconsistente, documento duplicado e competência fechada passam a ser recusas
+  nomeadas, com camada e motivo.
+- **Event log append-only**, com hash de projeção verificável por
+  `POST /v1/clients/{cnpj}/verify`.
+- **Contra-apuração nota a nota** com causa provável, em vez de cross-reference
+  genérico — e com os três valores que não se somam (ver passo 6).
+- **Dossiê de saldo credor** com a janela de cobertura documental, que distingue
+  "crédito sem lastro" de "não coletávamos aquele mês".
+
+### Ordem recomendada
+
+1. `useAuth` + `useProfile` — sem isso nada mais funciona
+2. `useFileUpload` + `useFileList` — o caminho de dado mais usado
+3. `features/xml-import` — o maior ganho de validação
+4. `features/sped-upload` — o mais novo do `audit`, e o menos usado hoje
+
+Depois de cada um: rode o passo 6.
+
+**Esforço total do passo: 26–37h.**
+
+---
+
+## Passo 5 — Telas que o `audit` tem e o front ainda não
+
+Depois da migração, estas ficam faltando. As regras de cada uma estão em
+[`TELAS.md`](TELAS.md) — **leia a seção da tela antes de escrever o prompt.**
+
+| Tela | Rotas | Esforço |
 |---|---|---|
-| 1 Login | 2–3h | Contrato de erro e guarda de sessão |
-| AppShell | 4–6h | Sidebar, papéis e tratamento de `403` |
-| 2 Carteira | 4–6h | DataTable com filtros, paginação e estado vazio |
-| 3 Cadastro de empresa | 2–3h | Formulário e validação de CNPJ |
-| 4 Detalhe do cliente | 3–4h | Tabs e KPIs |
-| 5 Cofre A1 | 3–4h | Upload, aviso de vencimento, PFX que nunca volta |
-| 6 Ingestão | 4–6h | `207 Multi-Status`: aceitos e rejeitados na mesma tela |
-| 7 Saúde do cadastro | 5–7h | Propagação por item e o estado `not_verified` |
-| 8 Apuração dual | 7–10h | Quatro números distintos, `null` ≠ zero, memória de cálculo |
-| 9 Trilhas + Book | 6–9h | Quatro estados de trilha e o download com hash |
-| 10 Contra-apuração + calendário | 6–9h | Três valores que não se somam, duas listas separadas |
-| 11 Assistente | 6–8h | Citações clicáveis e `suggested[]` com confirmação |
-| 12 Crédito em risco | 5–7h | Cinco estados e o resolvedor de ambiguidade |
-| 13 Simulador | 6–8h | Heatmap de sensibilidade e `winner: null` |
-| 14 Dossiê | 4–6h | `nao_verificavel` e a janela de cobertura |
-| Calculadora pública | 3–4h | Página pública, sem sessão |
-| 15 Planos | 3–4h | Cancelamento em um clique, sem retenção |
-| 16 Usuários | 2–3h | Convites e papéis |
+| 2 Carteira de CNPJs | `GET /v1/clients` | 4–6h |
+| 3 Cadastro de empresa | `POST /v1/clients` | 2–3h |
+| 4 Detalhe do cliente | `GET /v1/clients/{cnpj}` | 3–4h |
+| 5 Cofre de certificados A1 | `/certificate`, `/certificates/expiring` | 3–4h |
+| 7 Saúde do cadastro | `GET /items/health` | 5–7h |
+| 8 Apuração dual | `/assessments/{period}`, `/trace`, `/confirm` | 7–10h |
+| 9 Trilhas + Book | `/audit-trails`, `/books/{period}` | 6–9h |
+| 10 Calendário | `GET /v1/deadlines` | 3–4h |
+| 11 Assistente fiscal | `/assistant/threads`, `/messages` | 6–8h |
+| 12 Crédito em risco | `/bank-statements`, `/credits/at-risk` | 5–7h |
+| 13 Simulador | `/simulations`, `/methodology` | 6–8h |
+| 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
+| 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-### Bloco 1 — o prompt de partida
-
-> **`PROMPT` — casca e login**
->
-> Crie o AppShell do painel e a tela de login.
->
-> **Login:** e-mail e senha, chamando `POST /v1/auth/login`. Mensagem de erro
-> genérica em falha — a API devolve "E-mail ou senha inválidos" de propósito, e
-> distinguir "e-mail não existe" de "senha errada" entregaria uma lista de
-> usuários a quem sonda a API. Guarde o token e o `tenant` do retorno; o nome do
-> escritório já vem no login, então o painel não deve piscar sem carteira.
->
-> **AppShell:** sidebar fixa com a navegação, cabeçalho com o nome do escritório
-> e o menu do usuário. Use os tokens `--sidebar-*` do design system. Itens da
-> sidebar, nesta ordem: Carteira, Competências, Cofre de certificados, Prazos,
-> Assistente, Planos, Usuários, Configurações.
->
-> **Papéis:** `GET /v1/me` devolve `role`. `viewer` é somente leitura. Esconda o
-> que o papel não permite **e** trate o `403` — esconder botão não é
-> autorização, é conveniência de tela.
->
-> Não crie as telas internas ainda; deixe rotas com placeholder.
-
-Depois, uma tela por prompt, sempre na forma:
-
-> **`PROMPT` — tela N**
->
-> Crie a tela *[nome]*, consumindo *[rotas]*. As regras estão abaixo, e elas não
-> são sugestão — cada uma existe porque o contrário induz o contador ao erro:
->
-> *[cole aqui a seção correspondente de `TELAS.md`, os bullets inteiros]*
+**Esforço: 55–77h.** A ordem sugerida é a da tabela: a carteira primeiro, porque
+todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
 
 ---
 
-## Passo 4 — Os 14 componentes que faltam no design system
+## Passo 6 — As cinco regras que não podem ser perdidas na renderização
 
-`design-system/` tem os tokens e os primitivos, mas nasceu de outro produto
-(ReviewCard, StepPanel, Citation, de um assistente de requisitos regulatórios).
-Para este painel faltam, em ordem de necessidade — a lista completa com o
-porquê está no fim de [`TELAS.md`](TELAS.md#componentes-que-faltam-no-design-system):
-
-1. **AppShell** com sidebar montada
-2. **DataTable** com ordenação, paginação, estado vazio e de carregamento
-3. **Barra de filtros** (select + busca + limpar)
-4. **Stat tile / KPI**
-5. **Tabs** para o detalhe do cliente
-6. **Modal / Sheet** para cadastro e upload
-7. **Timeline de eventos** (aproveita `.ejr-citation`)
-8. **Badges de estado fiscal** (competência e crédito)
-9. **Badge de trilha em quatro estados** — `passed`, `warning`, `failed` e
-   `not_applicable`
-10. **Fila de pendências**, distinta do calendário: ordenada por gravidade e com
-    `daysOpen`, nunca com vencimento inventado
-11. **Chip de citação** clicável, que abre o evento ou documento citado
-12. **Resolvedor de ambiguidade**: candidatos lado a lado para o humano escolher
-13. **Heatmap de sensibilidade** (alíquota × fração de crédito)
-14. **Badge de "não conferido"** — ver o passo 5, é o mais importante da lista
-
-> **`PROMPT` — componentes base**
->
-> Antes das telas do bloco 2, crie em `src/components/` os componentes 1 a 8 da
-> lista acima, usando shadcn/ui como base e apenas tokens semânticos do design
-> system. DataTable com estado vazio e de carregamento explícitos — lista vazia
-> sem mensagem é indistinguível de falha de carregamento.
-
----
-
-## Passo 5 — As cinco regras que não podem ser perdidas na renderização
-
-Este é o passo mais importante do roteiro. O backend foi construído para
-distinguir **"verifiquei e está certo"** de **"não verifiquei"**, e essa
-distinção aparece em quatro módulos diferentes. Se a tela colapsar os dois
-estados no mesmo visual, todo o trabalho de backend se perde na renderização — e
-o produto passa a afirmar ao contador coisas que o sistema nunca verificou.
+O passo mais importante do plano. O backend distingue **"verifiquei e está
+certo"** de **"não verifiquei"**, e isso aparece em quatro módulos. Se a tela
+colapsar os dois estados no mesmo visual, o trabalho de backend se perde na
+renderização — e o painel passa a afirmar ao contador coisas que o sistema nunca
+verificou.
 
 ### 1. "Não conferido" nunca tem a cara de "aprovado"
-
-O mesmo conceito, em quatro lugares:
 
 | Campo | Onde | Significa |
 |---|---|---|
 | `not_verified` | Saúde do cadastro | A tabela oficial de códigos não estava carregada |
 | `not_applicable` | Trilhas de auditoria | A trilha não pôde ser executada |
-| `nao_verificavel` | Dossiê de saldo credor | A competência está fora da janela de cobertura |
-| `winner: null` | Simulador | A escolha depende de uma alíquota não publicada |
+| `nao_verificavel` | Dossiê de saldo credor | Competência fora da janela de cobertura |
+| `winner: null` | Simulador | A escolha depende de alíquota não publicada |
 
-Nos quatro, **cor de aviso e o texto "não verificado"** — nunca verde, nunca
+Nos quatro: **cor de aviso e o texto "não verificado"**. Nunca verde, nunca
 junto dos aprovados, nunca um vazio silencioso.
 
 ### 2. Valor ausente não é zero
 
 `dueCents: null` na apuração, `credit_at_risk_brl: null` na carteira,
 `releasedCents: 0` no crédito em risco. Renderize *"não determinável"* com o
-motivo ao lado. Um `0` é uma **afirmação fiscal**; um `—` sem explicação faz o
+motivo ao lado. Um `0` é **afirmação fiscal**; um `—` sem explicação faz o
 contador achar que é bug.
 
 ### 3. Números que não se somam
 
-Três casos em que um "total líquido" esconderia o problema:
-
 - **Contra-apuração:** `exposureCents` (será cobrado), `creditLossCents`
-  (dinheiro na mesa) e `creditAtRiskCents` (tende a ser glosado). Um milhão de
-  cada lado se cancelaria na tela.
+  (dinheiro na mesa), `creditAtRiskCents` (tende a ser glosado). Um milhão de
+  cada lado se cancelaria num "líquido".
 - **Simulador:** `directTaxMonthlyCents` (a guia) e `economicCostMonthlyCents`
   (guia + desconto que o cliente PJ exige). No Simples integrado a guia é a
   **menor** e o custo econômico pode ser o **maior**.
@@ -348,53 +341,92 @@ Três casos em que um "total líquido" esconderia o problema:
 
 ### 4. Causa provável é hipótese, não diagnóstico
 
-`probableCause` na contra-apuração e `reason` no crédito em risco. Rotule como
+`probableCause` na contra-apuração, `reason` no crédito em risco. Rotule como
 *"causa provável"*. O sistema compara duas listas de números; a razão real pode
 ser erro nosso, erro do Fisco, documento cancelado ou nota ainda não processada.
 
 ### 5. O assistente sugere; o usuário executa
 
-`suggested[]` vem com `method`, `endpoint`, `payload` e `rationale`. Renderize
-como botão **com confirmação** e o `rationale` visível. Toda afirmação de
-`kind: 'fact'` traz `citations[]` — **uma afirmação factual sem chip de citação
-visível é bug de tela**, porque a API nunca emite uma.
+`suggested[]` traz `method`, `endpoint`, `payload` e `rationale`. Botão **com
+confirmação** e o `rationale` visível. Toda afirmação de `kind: 'fact'` traz
+`citations[]` — **afirmação factual sem chip de citação visível é bug de tela**,
+porque a API nunca emite uma.
 
 > **`PROMPT` — auditoria das cinco regras**
 >
-> Revise todas as telas já construídas contra estas cinco regras: *[cole a
-> seção acima]*. Para cada violação encontrada, corrija e me diga o que mudou.
-> Não altere nenhuma chamada de API.
+> Revise as telas alteradas contra estas cinco regras: *[cole a seção acima]*.
+> Para cada violação, corrija e me diga o que mudou. Não altere chamadas de API.
 
-Rode este prompt ao fim de **cada bloco**, não só no fim do projeto.
+Rode ao fim de **cada feature migrada**, não no fim do projeto. **2h por
+rodada.**
 
 ---
 
-## Passo 6 — Verificação antes de considerar pronto
+## Passo 7 — Verificação
 
 ```bash
-cd ~/projects/audit-frontend
+cd ~/projects/sped-genius-hub
 
 # 1. Design system respeitado
 grep -rnE '(bg|text|border)-\[#|dark:|rounded-(xl|2xl|3xl)|shadow-(xl|2xl)' src/
 
-# 2. Nenhuma URL de API escrita no código
-grep -rnE "https?://(localhost|[a-z0-9.-]+\.supabase\.co)" src/ --include=*.ts --include=*.tsx
+# 2. Nenhuma URL escrita no codigo
+grep -rnE "https?://(localhost|[a-z0-9-]+\.supabase\.co|[a-z0-9-]+\.vercel\.app)" src/ --include=*.ts --include=*.tsx
 
-# 3. O frontend não fala com o Supabase direto
-grep -rn "supabase" src/ package.json
+# 3. Nenhum dado fiscal saindo do Supabase direto
+#    (deve sobrar SO as features que ficam: entity-extraction, knowledge-graph, cfop-manual)
+grep -rln "supabase" src/ | grep -vE "integrations/supabase|features/(entity-extraction|knowledge-graph|cfop-manual)|hooks/useAuth"
 
 # 4. Build e tipos
 npm run build
 ```
 
-Os quatro devem passar limpos: 1 e 2 sem saída, 3 sem nenhuma ocorrência, 4 sem
-erro.
+O item 3 é o que prova a migração: se sobrar qualquer arquivo de `xml-import`,
+`sped-upload` ou de upload de arquivo nessa lista, há caminho de escrita fiscal
+fora do orquestrador.
 
 **Roteiro funcional, com um CNPJ de teste:** login → cadastrar empresa → abrir
-competência → subir XML → ver saúde do cadastro → apurar → subir proposta do
-Fisco → gerar Book → baixar o PDF e conferir o hash do rodapé contra
+competência → subir XML → saúde do cadastro → apurar → subir proposta do Fisco →
+gerar Book → baixar o PDF e conferir o hash do rodapé contra
 `POST /v1/clients/{cnpj}/verify`.
 
 Esse último passo é o laço de governança fechando: o número impresso no
 documento que o escritório entrega ao cliente é reproduzível pelo replay do
 event log.
+
+**Esforço: 4–6h.**
+
+---
+
+## Carga horária
+
+| Passo | Entrega | Esforço |
+|---|---|---|
+| **1** | Deploy da API do `audit` — **bloqueio duro** | **8–12h** |
+| **2** | Resolver os dois Supabase (começando limpo) | **3–5h** |
+| **2** | *alternativa:* migrando os dados da FASE 1 | *10–16h* |
+| **3** | Cliente de API, ao lado do Supabase | **4–6h** |
+| **4** | Migrar as 4 features acopladas | **26–37h** |
+| **5** | As 13 telas que faltam | **55–77h** |
+| **6** | Auditoria das cinco regras — 2h × 6 rodadas | **12h** |
+| **7** | Verificação e roteiro funcional | **4–6h** |
+| | **Total** | **~112–155h** |
+
+Para uma pessoa em tempo integral: **3 a 4 semanas**. Em meio período, dobre.
+
+**Como os números foram formados, para você poder corrigi-los:** o Lovable gera
+a tela em minutos, e o custo real é revisar, corrigir e reprompt — assumi **20%
+gerando, 80% ajustando**. É por isso que telas com muita regra de negócio
+(apuração, contra-apuração, dossiê) custam o dobro de telas de cadastro, mesmo
+tendo menos campos. Cada tela dos blocos densos tem 8 a 12 regras em
+[`TELAS.md`](TELAS.md), e cada regra é um ponto onde o Lovable acerta ou erra.
+
+**Observação sobre o total:** ele ficou praticamente igual ao de construir do
+zero. O front existente economiza o Bloco 1 inteiro (login, shell, upload,
+~18h), e a migração das 4 features acopladas custa ~30h que não existiriam num
+projeto novo. O ganho real não é tempo — é **não jogar fora um app em produção**
+e manter as três features que o `audit` não tem.
+
+**O que não está na conta:** QA com dado real de cliente, acessibilidade além do
+que o shadcn entrega, responsivo de celular (o painel é de trabalho em desktop),
+i18n, e os testes automatizados que o `sped-genius-hub` não tem.
