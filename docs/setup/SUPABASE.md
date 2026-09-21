@@ -267,14 +267,46 @@ Senha do banco errada, ou caractere especial sem URL-encode. Redefina em
 
 ### `/v1/plans` devolve lista vazia
 
-A carga inicial de `plans` não entrou. Reaplique
-`scripts/sql/migracoes/03-cobranca.sql` — é idempotente, os `on conflict do
-nothing` evitam duplicar. Confirme com `npm run doctor` ou com
-`scripts/sql/diagnostico.sql`.
+A carga inicial de `plans` não entrou. Rode
+[`scripts/sql/reparo-planos.sql`](../../scripts/sql/reparo-planos.sql): ele
+insere **um plano por instrução**, com o erro capturado individualmente, e
+relata qual linha falhou e por quê. Um `insert ... on conflict do nothing` em
+bloco, como o da migration, não diz nada quando falha.
+
+Ele também confere o tipo `public.regime`, religa o RLS desligado dessas duas
+tabelas e concede `select` a `anon` — tudo o que a calculadora de preço pública
+precisa para responder.
+
+> O reparo **restaura os preços canônicos**. Se você já ajustou valores em
+> `plans`, anote antes: ao contrário da migration, ele sobrescreve.
 
 Este é um caso que aconteceu de verdade nesta instalação: as 15 tabelas foram
 criadas e os `insert` de carga não. A API não reclama — a calculadora de preço
 simplesmente mostra nada, e a fatura só falha no fechamento do mês.
+
+### `Failed to fetch (api.supabase.com)` no dashboard
+
+É o **dashboard** falando com a API de gestão do Supabase, não o seu SQL. O
+projeto pode estar perfeitamente no ar enquanto o painel falha.
+
+Verifique antes de mexer em qualquer coisa:
+
+```bash
+curl -s https://status.supabase.com/api/v2/status.json
+curl -s https://status.supabase.com/api/v2/incidents/unresolved.json
+```
+
+E confirme que o seu projeto responde, o que é independente do painel:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  https://SEU-REF.supabase.co/auth/v1/settings -H 'apikey: SUA-CHAVE-ANON'
+```
+
+Havia um incidente aberto em setembro de 2026 — *"401 errors due to JWT
+rejections"*, no API Gateway — cuja resolução exigia **atualizar a versão do
+projeto pelo dashboard** depois que o Supabase implantasse o fix. Se o erro
+persistir, procure o aviso de upgrade em **Project Settings → Infrastructure**.
 
 ### Saúde do cadastro diz "não verificado"
 
