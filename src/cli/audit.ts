@@ -2,6 +2,7 @@
 import { loadDotEnv } from '../config/dotenv.js';
 import { bootstrap, DEV_TENANT_ID, DEV_CNPJ, type BootstrapOptions } from '../composition-root.js';
 import { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
+import type { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { loadEnv, EnvError } from '../config/env.js';
 import pg from 'pg';
 import { buildServer } from '../api/server.js';
@@ -19,6 +20,8 @@ const DOTENV = loadDotEnv();
 
 const EXIT_OK = 0;
 const EXIT_ERROR = 1;
+let ESTRITO = false;
+
 const EXIT_USAGE = 2;
 /** Código próprio para integridade: deixa a CI distinguir falha de trilha de falha comum. */
 const EXIT_INTEGRITY = 3;
@@ -41,6 +44,7 @@ Comandos previstos (ainda não implementados)
 
 Opções
   --config <caminho>              Padrão: config/esaa.config.yaml
+  --strict                        verify falha (3) se não houver o que verificar
   --tenant <uuid>                 Escritório (tenant). Padrão: escopo de dev
   --cnpj <14 dígitos>             CNPJ do cliente. Padrão: escopo de dev
 `;
@@ -63,6 +67,7 @@ const PENDING: Record<string, PendingCommand> = {
 
 async function main(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
+  ESTRITO = rest.includes('--strict');
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     process.stdout.write(USAGE);
@@ -233,12 +238,27 @@ async function runVersion(options: BootstrapOptions): Promise<number> {
 }
 
 async function runVerify(options: BootstrapOptions): Promise<number> {
-  const { orchestrator, scope } = await bootstrap(options);
-  const report = await orchestrator.verify();
+  const { orchestrator, scope, backend, pool } = await bootstrap(options);
 
+  try {
+    const report = await orchestrator.verify();
+    return relatarVerificacao(report, scope, backend);
+  } finally {
+    await pool?.end().catch(() => undefined);
+  }
+}
+
+function relatarVerificacao(
+  report: Awaited<ReturnType<FiscalOrchestratorService['verify']>>,
+  scope: EventScope,
+  backend: 'postgres' | 'jsonl',
+): number {
   process.stdout.write(
     [
       `escopo            ${scope.toKey()}`,
+      // De onde o log veio. Sem isto, verificar o arquivo de desenvolvimento e
+      // verificar o log do cliente têm a mesma cara na tela.
+      `origem do log     ${backend === 'postgres' ? 'Postgres (DATABASE_URL)' : 'arquivo JSONL local'}`,
       `eventos           ${report.eventCount}`,
       `ultimo event_seq  ${report.lastEventSeq}`,
       `hash gravado      ${report.storedHash || '(vazio)'}`,
@@ -268,7 +288,16 @@ async function runVerify(options: BootstrapOptions): Promise<number> {
         '  documentos: se você esperava que uma ingestão tivesse rodado, ela não\n' +
         '  gravou. Confira o escopo acima — tenant e CNPJ precisam ser os certos.\n',
     );
-    return EXIT_OK;
+
+    /**
+     * `--strict` existe para automação.
+     *
+     * Num pipeline, sair 0 aqui transforma o passo num carimbo: ele passa
+     * sempre, inclusive quando não verificou nada, e a equipe conclui que
+     * INV-006 está guardado. Interativamente o 0 é correto — não achar evento
+     * não é erro de quem perguntou.
+     */
+    return ESTRITO ? EXIT_INTEGRITY : EXIT_OK;
   }
 
   if (report.valid) {

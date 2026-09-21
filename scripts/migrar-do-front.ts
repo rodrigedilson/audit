@@ -270,7 +270,27 @@ async function executar(
   });
   console.log(`  cliente "${cadastro.legalName}": HTTP ${cliente.status}`);
 
+  /**
+   * Abre só o que ainda não está aberto.
+   *
+   * Reabrir uma competência aberta é recusado pela camada 4 — e a recusa vira
+   * `output.rejected` no log. Numa retomada isso acrescenta um evento de
+   * inconsistência que não é inconsistência nenhuma, e as trilhas de auditoria
+   * passam a contá-lo como achado.
+   */
+  const { rows: abertas } = await pool.query<{ period: string }>(
+    `select period from periods
+      where cnpj = $1::char(14)
+        and tenant_id = (select tenant_id from clients where cnpj = $1::char(14) limit 1)`,
+    [cadastro.cnpj],
+  );
+  const jaAbertas = new Set(abertas.map((r) => String(r.period).trim()));
+
   for (const period of [...competencias].sort()) {
+    if (jaAbertas.has(period)) {
+      console.log(`  competência ${period}: já aberta`);
+      continue;
+    }
     const r = await chamar(`/clients/${cadastro.cnpj}/periods`, { period });
     console.log(`  competência ${period}: HTTP ${r.status}`);
   }
@@ -280,10 +300,67 @@ async function executar(
       where raw_xml is not null order by data_emissao, chave_acesso`,
   );
 
+  /**
+   * Retomável: documento já no log é pulado.
+   *
+   * Uma migração de 192 documentos contra uma API em tier gratuito não termina
+   * numa tacada, e reenviar o que já entrou não corrompe nada — a camada 2
+   * recusa por `duplicate_document`. Mas reportaria dezenas de "recusas" que são
+   * só reenvio, e quem lesse o placar concluiria que a migração falhou.
+   */
+  const { rows: jaNoLog } = await pool.query<{ access_key: string }>(
+    `select access_key from documents
+      where tenant_id = (select tenant_id from clients where cnpj = $1::char(14) limit 1)
+        and cnpj = $1::char(14)`,
+    [cadastro.cnpj],
+  );
+  const existentes = new Set(jaNoLog.map((r) => String(r.access_key).trim()));
+
+  /**
+   * Documento já recusado antes também é pulado.
+   *
+   * O `raw_xml` não muda entre execuções, então reenviar um XML malformado
+   * produz a mesma recusa — e mais um `output.rejected` no log append-only a
+   * cada retomada. Três retomadas dariam três achados para um problema só, e as
+   * trilhas de auditoria contariam os três.
+   */
+  const { rows: jaRecusados } = await pool.query<{ task_id: string }>(
+    `select distinct task_id from events
+      where cnpj = $1::char(14) and action = 'output.rejected'
+        and payload->>'original_action' = 'doc.received'`,
+    [cadastro.cnpj],
+  );
+  const recusadosAntes = new Set(
+    jaRecusados.map((r) => String(r.task_id).replace(/\.xml$/i, '').trim()),
+  );
+
+  if (existentes.size > 0) {
+    console.log(`  ${existentes.size} documento(s) já no log; serão pulados.`);
+  }
+  if (recusadosAntes.size > 0) {
+    console.log(
+      `  ${recusadosAntes.size} documento(s) já recusados antes; não serão reenviados.`,
+    );
+  }
+
   let aceitos = 0;
+  let pulados = 0;
+  let jaFalhos = 0;
   const recusas: string[] = [];
 
   for (const [i, linha] of rows.entries()) {
+    const chave = linha.chave_acesso?.trim() ?? null;
+
+    if (chave !== null && existentes.has(chave)) {
+      pulados += 1;
+      continue;
+    }
+
+    if (chave !== null && recusadosAntes.has(chave)) {
+      jaFalhos += 1;
+      continue;
+    }
+
     const form = new FormData();
     form.append(
       'files',
@@ -317,8 +394,10 @@ async function executar(
   }
 
   console.log(`\n--- resultado ---`);
-  console.log(`  aceitos:  ${aceitos}`);
-  console.log(`  recusados: ${recusas.length}`);
+  console.log(`  aceitos nesta rodada:  ${aceitos}`);
+  console.log(`  ja estavam no log:     ${pulados}`);
+  console.log(`  recusados antes:       ${jaFalhos}`);
+  console.log(`  recusados nesta rodada: ${recusas.length}`);
   for (const r of recusas.slice(0, 20)) {
     console.log(`    ${r}`);
   }
