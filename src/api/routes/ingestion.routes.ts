@@ -208,21 +208,19 @@ export async function registerIngestionRoutes(
   );
 
   /**
-   * Coleta na distribuição DF-e e importação de SPED. As duas dependem de fonte
-   * externa — certificado A1 contra o webservice da SEFAZ, e o arquivo do SPED —
-   * e o worker que consome a fila entra junto da coleta real. Enfileirar sem
-   * consumidor seria pior do que dizer que ainda não está pronto, porque o
-   * escritório ficaria esperando um job que nunca sai de `queued`.
+   * Coleta na distribuição DF-e. Depende de fonte externa — certificado A1
+   * contra o webservice da SEFAZ — e o worker que consome a fila entra junto da
+   * coleta real. Enfileirar sem consumidor seria pior do que dizer que ainda não
+   * está pronto, porque o escritório ficaria esperando um job que nunca sai de
+   * `queued`.
    *
-   * O extrato bancário saiu desta lista na Onda 10: deixou de ser `501` e passou
-   * a ser upload de OFX ou CSV em `POST /clients/{cnpj}/bank-statements`, na
-   * rota de crédito. O caminho de open finance continua sendo o desejável, e
-   * quando existir entra como outra origem do mesmo módulo.
+   * Duas importações saíram desta lista, porque deixaram de ser promessa:
+   * o extrato bancário na Onda 10 (`POST /bank-statements`, OFX ou CSV) e a
+   * EFD-Contribuições na Onda 12 (`POST /sped`, upload do arquivo que o cliente
+   * já gera). Nos dois casos o caminho automático continua desejável, e quando
+   * existir entra como outra origem do mesmo módulo.
    */
-  for (const [path, kind] of [
-    ['sync', 'dfe_sync'],
-    ['sped', 'sped_import'],
-  ] as const) {
+  for (const [path, kind] of [['sync', 'dfe_sync']] as const) {
     app.post<{ Params: CnpjParams }>(
       `/clients/:cnpj/${path}`,
       {

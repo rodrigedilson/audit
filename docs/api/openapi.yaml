@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: audit — API fiscal (ESAA-Flow)
-  version: 0.7.0
+  version: 1.0.0
   description: |
     Contrato mínimo para destravar o frontend (Lovable). Toda escrita passa pelo
     orquestrador single-writer: o cliente envia uma *intenção*; a API valida
@@ -33,6 +33,8 @@ tags:
     description: Apuração dual (tributos atuais × IBS/CBS)
   - name: credit
     description: Crédito em risco por fornecedor, extrato bancário e casamento de pagamento
+  - name: dossier
+    description: EFD-Contribuições e o dossiê de saldo credor PIS/Cofins
   - name: reconciliation
     description: Contra-apuração, crédito em risco, prazos
   - name: simulation
@@ -293,24 +295,83 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Cnpj"
     post:
-      tags: [ingestion]
-      summary: Importa arquivo SPED (EFD ICMS/IPI ou EFD-Contribuições)
+      tags: [dossier]
+      operationId: importSped
+      summary: Importa a EFD-Contribuições do cliente
+      description: >
+        Síncrono, e `201` em vez de `202` com job: o arquivo é o que o cliente já
+        gera hoje, e é a fonte de verdade do saldo credor de PIS/Cofins.
+
+
+        Lê os registros de que o dossiê precisa — `0000`, `C100`, `C170`, `M100`,
+        `M500`, `1100` e `1500` — e conta os demais sem interpretá-los. Um parser
+        que anunciasse ler o layout inteiro e ignorasse metade em silêncio seria
+        pior do que um que diz o que lê.
+
+
+        **Versão de layout desconhecida é recusada**, não lida no palpite: entre
+        versões os campos mudam de posição, e adivinhar trocaria base por valor.
+
+
+        O CNPJ do arquivo é conferido contra o do escopo antes de qualquer
+        gravação. Divergência devolve `tenant_violation`: importar a EFD de um
+        CNPJ na conta de outro produziria um dossiê que acusa o cliente errado.
+
+
+        Uma escrituração por competência: a retificadora substitui a original,
+        como na própria EFD. Manter as duas daria dois saldos credores para o
+        mesmo mês e nenhum defensável.
       requestBody:
         required: true
         content:
+          text/plain:
+            schema: { type: string }
           multipart/form-data:
             schema:
               type: object
-              required: [file, kind]
               properties:
                 file: { type: string, format: binary }
-                kind: { type: string, enum: [efd_icms_ipi, efd_contribuicoes] }
       responses:
-        "202":
-          description: Job aceito
+        "201":
+          description: Escrituração importada
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Job" }
+              schema: { $ref: "#/components/schemas/SpedImportOutcome" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/credit-dossier/{period}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [dossier]
+      operationId: getCreditDossier
+      summary: Dossiê de saldo credor PIS/Cofins, com o lastro documental de cada crédito
+      description: |
+        O diferencial #9: crédito sem lastro documental será perdido no
+        pente-fino, e a Nota Técnica RFB 011/2026 restringe a EFD-Contribuições a
+        retificação e saldos a partir de 2027 — o que faz do saldo credor
+        acumulado um ativo com prazo para ser defendido.
+
+        **A honestidade central:** a ausência de um documento na nossa base não
+        prova que o crédito é indevido. Se o escritório só começou a ingerir XML
+        em 2026, um crédito de 2023 não tem como ser conferido aqui, e reportá-lo
+        como `sem_documento` acusaria o cliente de um problema que é nosso. Por
+        isso `nao_verificavel` é um estado de primeira classe, e a janela de
+        cobertura vem na resposta.
+
+        O dossiê é **derivado na leitura**, e não um resultado guardado.
+        Congelá-lo esconderia o ganho de lastro de quando o escritório localiza
+        um XML que faltava — e localizar documento é exatamente o trabalho que o
+        dossiê encomenda.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreditDossier" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /clients/{cnpj}/bank-statements:
     parameters:
@@ -2267,6 +2328,138 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AssistantSuggestedIntention" }
         created_at: { type: string, format: date-time }
+
+    SpedImportOutcome:
+      type: object
+      required:
+        [sped_file_id, period, kind, layout_version, documents_count,
+         carried_credits_count, rejected, counts, event_seq, projection_hash]
+      properties:
+        sped_file_id: { type: string, format: uuid }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        kind: { type: string, enum: [original, retificadora] }
+        layout_version: { type: string }
+        company_name: { type: string }
+        documents_count: { type: integer }
+        carried_credits_count: { type: integer }
+        rejected:
+          type: array
+          description: Registros recusados, com a linha e o motivo. Um ruim não derruba os bons.
+          items:
+            type: object
+            properties:
+              line: { type: integer }
+              record: { type: string }
+              reason: { type: string }
+        counts:
+          type: object
+          description: Registros lidos por tipo, para conferir o que entrou.
+          additionalProperties: { type: integer }
+        event_seq: { type: integer }
+        projection_hash: { type: string }
+
+    CreditBackingCheck:
+      type: object
+      required: [accessKey, period, status, reason, declared, differenceCents]
+      properties:
+        accessKey: { type: string, nullable: true }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        documentNumber: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [lastreado, divergente, sem_documento, nao_verificavel, sem_chave]
+          description: >
+            `sem_documento` = escriturado, ausente da base, competência coberta —
+            é o que o pente-fino cobra. `nao_verificavel` = competência fora da
+            janela de cobertura: a ausência é da nossa coleta, e **não** indício
+            de crédito indevido. `sem_chave` = nota em papel, que não é erro.
+        reason: { type: string, description: "Nunca vazio." }
+        declared:
+          type: object
+          description: O que a EFD declarou.
+          properties:
+            pisCents: { type: integer }
+            cofinsCents: { type: integer }
+        found:
+          type: object
+          nullable: true
+          description: O que a nossa base tem; `null` quando não há documento.
+          properties:
+            pisCents: { type: integer }
+            cofinsCents: { type: integer }
+        differenceCents: { type: integer }
+
+    CarriedCreditAssessment:
+      type: object
+      required: [tax, originPeriod, creditCode, finalBalanceCents, withinCoverage, note]
+      properties:
+        tax: { type: string, enum: [pis, cofins] }
+        originPeriod: { $ref: "#/components/schemas/PeriodId" }
+        creditCode: { type: string }
+        origin: { type: string }
+        apuredCents: { type: integer }
+        availableCents: { type: integer }
+        usedCents: { type: integer }
+        refundedCents: { type: integer }
+        finalBalanceCents: { type: integer }
+        withinCoverage:
+          type: boolean
+          description: >
+            `false` não diz nada sobre o crédito: diz que este sistema não tem os
+            documentos daquele mês, e portanto não pode confirmá-lo nem negá-lo.
+        note: { type: string }
+
+    CreditDossier:
+      type: object
+      required: [period, kind, imported_at, coverage, checks, carried, summary]
+      properties:
+        period: { $ref: "#/components/schemas/PeriodId" }
+        kind: { type: string, enum: [original, retificadora] }
+        imported_at: { type: string, format: date-time }
+        coverage:
+          type: object
+          description: Competências com documento ingerido. É o que delimita o que dá para conferir.
+          properties:
+            from: { type: string, nullable: true }
+            to: { type: string, nullable: true }
+            periods:
+              type: array
+              items: { type: string }
+        checks:
+          type: array
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/CreditBackingCheck" }
+        carried:
+          type: array
+          items: { $ref: "#/components/schemas/CarriedCreditAssessment" }
+        summary:
+          type: object
+          properties:
+            documentsChecked: { type: integer, description: "Total exato, mesmo com o detalhe cortado." }
+            lastreado: { type: integer }
+            divergente: { type: integer }
+            sem_documento: { type: integer }
+            nao_verificavel: { type: integer }
+            sem_chave: { type: integer }
+            backedCents: { type: integer }
+            unbackedCents:
+              type: integer
+              description: Crédito escriturado sem XML na base, com a competência coberta.
+            unverifiableCents:
+              type: integer
+              description: >
+                Crédito que **não foi conferido** — competência descoberta ou nota
+                sem chave. Não é crédito sem lastro, e somar os dois acusaria o
+                cliente por limitação nossa.
+            divergentCents: { type: integer }
+            carriedBalanceCents:
+              type: object
+              properties:
+                pis: { type: integer }
+                cofins: { type: integer }
+            carriedWithinCoverageRatio:
+              type: number
+              description: "Fração em VALOR do saldo credor cuja origem está coberta. Sem saldo, é 1."
 
     Job:
       type: object
