@@ -48,6 +48,10 @@ const TABELAS = [
   'fiscal_codes',
   'cclasstrib_cst',
   'ncm_flags',
+  'tax_rules',
+  'assessments',
+  'assessment_lines',
+  'assessment_adjustments',
 ] as const;
 
 const FUNCOES = [
@@ -58,6 +62,7 @@ const FUNCOES = [
   'events_reject_mutation',
   'effective_classification',
   'item_propagation',
+  'effective_rules',
 ] as const;
 
 /** Um por migration, para dizer qual arquivo falta rodar. */
@@ -82,6 +87,10 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   fiscal_codes: '05-catalogo-de-itens.sql',
   cclasstrib_cst: '05-catalogo-de-itens.sql',
   ncm_flags: '05-catalogo-de-itens.sql',
+  tax_rules: '06-apuracao-dual.sql',
+  assessments: '06-apuracao-dual.sql',
+  assessment_lines: '06-apuracao-dual.sql',
+  assessment_adjustments: '06-apuracao-dual.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
@@ -145,6 +154,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await checarCargaInicial(pool));
     checagens.push(await checarVisibilidadePublica(pool));
     checagens.push(await checarTabelasOficiais(pool));
+    checagens.push(await checarRegrasPublicadas(pool));
     checagens.push(await checarEscritorio(pool));
   } finally {
     await pool.end().catch(() => undefined);
@@ -409,6 +419,44 @@ async function checarTabelasOficiais(pool: pg.Pool): Promise<Checagem> {
       'Sem elas a saúde do cadastro reporta "não verificado" em vez de "ok" —\n' +
       '  de propósito, porque validar contra tabela vazia aprovaria qualquer\n' +
       '  código. Carregue a IT RT 2025.002 em fiscal_codes e cclasstrib_cst.',
+  };
+}
+
+/**
+ * Regras de creditamento publicadas.
+ *
+ * Aviso, não falha: a apuração roda sem elas e entrega débito e crédito
+ * potencial — o que já é a "Base Espelho" dos documentos. O que não sai é o
+ * valor devido, que vem `null` com o motivo em vez de um número assumido.
+ */
+async function checarRegrasPublicadas(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ total: string; tributos: string | null }>(
+    `select count(*)::text as total,
+            string_agg(distinct tax, ', ' order by tax) as tributos
+       from tax_rules
+      where kind = 'credit_share'
+        and (valid_to is null or valid_to >= current_date)`,
+  );
+
+  const total = Number(rows[0]!.total);
+
+  if (total > 0) {
+    return {
+      nome: 'regras de creditamento',
+      estado: 'ok',
+      detalhe: `${total} vigentes: ${rows[0]!.tributos}`,
+    };
+  }
+
+  return {
+    nome: 'regras de creditamento',
+    estado: 'aviso',
+    detalhe: 'nenhuma regra vigente em tax_rules',
+    acao:
+      'A apuração roda e entrega débito e crédito potencial, mas o valor devido\n' +
+      '  vem nulo com o motivo — de propósito, porque decidir se um crédito é\n' +
+      '  aproveitável depende de norma, e um número fiscal errado é pior do que\n' +
+      '  um ausente. Publique as regras em tax_rules com a fonte normativa.',
   };
 }
 

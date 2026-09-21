@@ -13,6 +13,7 @@ import { registerCertificateRoutes } from './routes/certificate.routes.js';
 import { registerBillingRoutes, registerBillingWebhook } from './routes/billing.routes.js';
 import { registerIngestionRoutes } from './routes/ingestion.routes.js';
 import { registerCatalogRoutes } from './routes/catalog.routes.js';
+import { registerAssessmentRoutes } from './routes/assessment.routes.js';
 import { AsaasClient } from '../billing/asaas-client.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
@@ -144,6 +145,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerBillingWebhook(instance, deps);
       await registerIngestionRoutes(instance, deps);
       await registerCatalogRoutes(instance, deps);
+      await registerAssessmentRoutes(instance, deps);
     },
     { prefix: '/v1' },
   );

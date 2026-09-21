@@ -154,6 +154,59 @@ describe('Camada 4 — StateMachineValidator (ciclo da competência)', () => {
     ).not.toThrow();
   });
 
+  /**
+   * Reapurar depois de ingerir mais documentos é operação normal do fechamento.
+   * Sem a autotransição, o contador teria de conciliar uma apuração que ele sabe
+   * estar incompleta só para poder corrigi-la.
+   */
+  it('permite reapurar uma competência já apurada', () => {
+    const projecao = projectionWith(
+      enrolled,
+      opened,
+      makeEvent(2, 'assessment.projected', '2027-01', TEST_USER_ID, {}, { period: '2027-01' }),
+    );
+
+    expect(projecao.periods['2027-01']?.state).toBe('assessed');
+    expect(() =>
+      validator.validate(
+        intention({ action: 'assessment.projected', period: '2027-01' }),
+        projecao,
+      ),
+    ).not.toThrow();
+  });
+
+  it('permite ajustar antes da conciliação', () => {
+    const projecao = projectionWith(
+      enrolled,
+      opened,
+      makeEvent(2, 'assessment.projected', '2027-01', TEST_USER_ID, {}, { period: '2027-01' }),
+    );
+
+    expect(() =>
+      validator.validate(
+        intention({ action: 'assessment.adjusted', period: '2027-01' }),
+        projecao,
+      ),
+    ).not.toThrow();
+  });
+
+  it('permite voltar de reconciled para assessed por ajuste', () => {
+    const projecao = projectionWith(
+      enrolled,
+      opened,
+      makeEvent(2, 'assessment.projected', '2027-01', TEST_USER_ID, {}, { period: '2027-01' }),
+      makeEvent(3, 'assessment.compared', '2027-01', TEST_USER_ID, {}, { period: '2027-01' }),
+    );
+
+    expect(projecao.periods['2027-01']?.state).toBe('reconciled');
+    expect(() =>
+      validator.validate(
+        intention({ action: 'assessment.adjusted', period: '2027-01' }),
+        projecao,
+      ),
+    ).not.toThrow();
+  });
+
   /** `open → confirmed` salta a apuração e a conciliação: não existe. */
   it('rejeita salto de open direto para confirmed', () => {
     expect(() =>

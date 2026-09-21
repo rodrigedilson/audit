@@ -153,7 +153,32 @@ emitida com ele. A tela tem de deixar essa relação óbvia.
   destaque. Sem as tabelas oficiais, "nenhum erro" não quer dizer "correto", e
   esconder isso daria falsa segurança ao escritório.
 
-### 8. Planos e assinatura (Onda 3)
+### 8. Apuração dual (Onda 6)
+`POST /assessments/{period}` · `GET /assessments/{period}` · `GET .../trace` · `POST .../adjustments` · `POST .../confirm`
+
+É o diferencial #2: os dois sistemas lado a lado, nota a nota.
+
+- **Mostre `debitsCents`, `potentialCreditsCents`, `creditableCents` e `dueCents`
+  como quatro coisas diferentes.** Não colapse em "total": os dois primeiros
+  saem dos documentos e são certos; os dois últimos dependem de norma.
+- **`dueCents: null` não é erro nem zero.** Renderize como *"não determinável"*
+  com o motivo de `not_computable` ao lado. Um `—` sem explicação faria o
+  contador achar que é bug; um `0` seria mentira.
+- **`coverage` é o indicador de prontidão**: quantos itens já trazem o grupo
+  IBS/CBS. Bom lugar para uma barra de progresso na home do cliente.
+- **`GET .../trace` é a memória de cálculo.** Uma linha por item e por tributo,
+  com chave de acesso, base, alíquota e valor. É o que o contador apresenta —
+  deixe filtrar por tributo e por documento, e permita exportar.
+- **Ajuste não sobrescreve.** Os totais continuam os do documento e o ajuste
+  aparece à parte: a diferença entre o apurado e o ajustado é informação, não
+  ruído. Justificativa é obrigatória.
+- **O `confirm` exige o `projection_hash` que a tela recebeu.** Se divergir vem
+  `422` com `verification_mismatch` — significa que algo mudou entre a
+  conferência e o clique. **Não reenvie o hash novo automaticamente**: recarregue
+  a apuração e faça o usuário revisar. Reenviar sozinho anularia a proteção.
+- **Confirmada é terminal.** Sem botão de editar; a correção é retificação.
+
+### 9. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -165,7 +190,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 9. Usuários e papéis
+### 10. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |

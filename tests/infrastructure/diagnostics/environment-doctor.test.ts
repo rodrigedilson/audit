@@ -322,12 +322,32 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
       expect(resultado.checagens.some((c) => c.estado === 'aviso')).toBe(true);
     });
 
-    it('dá tudo ok com as tabelas oficiais carregadas', async () => {
+    /**
+     * Regra de creditamento vazia também é aviso: a apuração roda e entrega
+     * débito e crédito potencial, e só o valor devido fica indeterminável.
+     */
+    it('acusa a falta de regra de creditamento como aviso', async () => {
+      const regras = checagem(
+        await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),
+        'regras de creditamento',
+      );
+
+      expect(regras?.estado).toBe('aviso');
+      expect(regras?.acao).toMatch(/pior do que\n?\s*um ausente|pior do que um ausente/);
+      expect(regras?.acao).toContain('tax_rules');
+    });
+
+    it('dá tudo ok com as tabelas oficiais e as regras carregadas', async () => {
       await pool.query(
         `insert into fiscal_codes (kind, code) values ('ncm','73181500') on conflict do nothing`,
       );
       await pool.query(
         `insert into cclasstrib_cst (cclasstrib, cst_ibs_cbs) values ('000001','000')
+         on conflict do nothing`,
+      );
+      await pool.query(
+        `insert into tax_rules (kind, tax, value, valid_from, source)
+         values ('credit_share', 'icms', 1.0, '2026-01-01', 'regra de teste do doctor')
          on conflict do nothing`,
       );
 

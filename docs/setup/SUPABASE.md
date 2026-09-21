@@ -39,13 +39,15 @@ ordem**. Cada um depende das tabelas do anterior.
 | 3 | `03-cobranca.sql` | planos, assinatura, faturas; `billable_clients()` |
 | 4 | `04-ingestao.sql` | documentos fiscais e seus itens |
 | 5 | `05-catalogo-de-itens.sql` | catálogo com classificação por vigência, tabelas de códigos oficiais, `item_propagation()` |
-| 6 | `06-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 6 | `06-apuracao-dual.sql` | motor de regras com vigência, apuração dual e memória de cálculo |
+| 7 | `07-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
-> Se você já aplicou uma versão anterior em que o bootstrap era o passo 5:
-> rode agora o **`05-catalogo-de-itens.sql`**. Não precisa repetir o bootstrap —
-> ele é idempotente e avisa que o usuário já pertence a um escritório.
+> **Os arquivos são renumerados quando uma onda nova entra.** Se você já aplicou
+> uma versão anterior, rode os que faltam e ignore o bootstrap — ele é
+> idempotente e avisa que o usuário já pertence a um escritório. `npm run doctor`
+> diz exatamente quais tabelas faltam e de qual arquivo elas vêm.
 
-Antes de executar o passo 6, edite as duas linhas marcadas:
+Antes de executar o passo 7, edite as duas linhas marcadas:
 
 ```sql
   -- ┌──────────────────────────── CONFIGURE ────────────────────────────┐
@@ -54,7 +56,7 @@ Antes de executar o passo 6, edite as duas linhas marcadas:
   -- └───────────────────────────────────────────────────────────────────┘
 ```
 
-O passo 6 termina com uma consulta de conferência. Deve devolver **uma linha**
+O passo 7 termina com uma consulta de conferência. Deve devolver **uma linha**
 com o seu e-mail e o papel `owner`:
 
 ```
@@ -321,6 +323,21 @@ correta.
 Para sair desse estado, carregue os códigos da IT RT 2025.002 e das tabelas da
 RFB em `fiscal_codes` e os pares válidos em `cclasstrib_cst`. É tarefa de dado,
 não mudança de código — `npm run doctor` avisa enquanto estiverem vazias.
+
+### Apuração devolve `due: null`
+
+Não é defeito: é a recusa deliberada de calcular o valor devido sem regra
+publicada. Débito e crédito potencial saem dos valores destacados nos próprios
+documentos e estão sempre disponíveis; decidir se um crédito é **aproveitável**
+depende do regime e da norma vigente.
+
+Um número fiscal errado é pior do que um ausente: o ausente o contador
+investiga, o errado ele entrega. Então o campo vem `null` com o motivo em
+`not_computable`.
+
+Para sair desse estado, publique as regras em `tax_rules` com a fonte
+normativa — a coluna `source` é obrigatória de propósito. `npm run doctor`
+avisa enquanto não houver nenhuma.
 
 ### `403 Usuário não pertence a nenhum escritório`
 

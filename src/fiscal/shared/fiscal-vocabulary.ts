@@ -87,8 +87,15 @@ export type PeriodState = (typeof PERIOD_STATES)[number];
  */
 export const VALID_PERIOD_TRANSITIONS: Record<PeriodState, readonly PeriodState[]> = {
   open: ['assessed'],
-  assessed: ['reconciled'],
+  /**
+   * `assessed -> assessed` é permitido de propósito: reapurar depois de ingerir
+   * mais documentos, e registrar ajuste antes da conciliação, são operações
+   * normais do fechamento. Sem a autotransição, o contador teria de conciliar
+   * uma apuração que ele sabe estar incompleta só para poder corrigi-la.
+   */
+  assessed: ['assessed', 'reconciled'],
   reconciled: ['assessed', 'confirmed'],
+  /** Terminal (INV-001): a correção é por retificação, em competência vinculada. */
   confirmed: [],
 };
 

@@ -13,6 +13,44 @@ import type { FiscalProjection } from '../shared/fiscal-projection.types.js';
  * que é recuperável. O inverso (gravar a tabela antes do evento) criaria estado
  * que o log não explica, e é isso que o produto promete não fazer.
  */
+/**
+ * Sincroniza o estado de UMA competência a partir da projeção.
+ *
+ * Existe porque a apuração move a competência no event log, e o read model
+ * `periods` — que a carteira lê — ficava para trás mostrando `open` numa
+ * competência já apurada.
+ */
+export async function syncPeriodState(
+  pool: Pool,
+  projection: FiscalProjection,
+  period: string,
+): Promise<void> {
+  const estado = projection.periods[period];
+  if (!estado) {
+    return;
+  }
+
+  await pool.query(
+    `insert into periods (
+       tenant_id, cnpj, period, state, projection_hash, confirmed_at, confirmed_by
+     ) values ($1::uuid, $2::char(14), $3::char(7), $4::period_state, $5, $6, $7::uuid)
+     on conflict (tenant_id, cnpj, period) do update set
+       state = excluded.state,
+       projection_hash = coalesce(excluded.projection_hash, periods.projection_hash),
+       confirmed_at = coalesce(excluded.confirmed_at, periods.confirmed_at),
+       confirmed_by = coalesce(excluded.confirmed_by, periods.confirmed_by)`,
+    [
+      projection.tenant_id,
+      projection.cnpj,
+      estado.period,
+      estado.state,
+      estado.projection_hash ?? null,
+      estado.confirmed_at ?? null,
+      estado.confirmed_by ?? null,
+    ],
+  );
+}
+
 export async function syncPortfolioReadModel(
   pool: Pool,
   projection: FiscalProjection,

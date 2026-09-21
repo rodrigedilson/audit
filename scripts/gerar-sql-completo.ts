@@ -29,6 +29,7 @@ const TITULOS: Record<string, string> = {
   '20260918140000_billing.sql': 'cobranca',
   '20260918150000_ingestion.sql': 'ingestao',
   '20260921120000_catalog.sql': 'catalogo-de-itens',
+  '20260921130000_assessment.sql': 'apuracao-dual',
 };
 
 const DESCRICOES: Record<string, string> = {
@@ -49,6 +50,11 @@ const DESCRICOES: Record<string, string> = {
     '-- códigos oficiais e as funções effective_classification() e\n' +
     '-- item_propagation() — esta última responde quantas notas emitidas cada\n' +
     '-- item mal classificado contaminou.',
+  '20260921130000_assessment.sql':
+    'Motor de regras com vigência por data, apuração dual e a memória de\n' +
+    '-- cálculo linha por linha. A tabela `tax_rules` nasce VAZIA de propósito:\n' +
+    '-- sem regra publicada o valor devido vem nulo com o motivo, nunca um\n' +
+    '-- número assumido.',
 };
 
 const CABECALHO = `-- =============================================================================
