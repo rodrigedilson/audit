@@ -1,0 +1,239 @@
+/* ============================================================
+   EJR Software — Design System 2.0
+   Destino no app Lovable: src/index.css
+   Padrao light-only. Tokens convertidos para HSL (shadcn/ui).
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* --- Superficies e texto --------------------------------- */
+    --background: 30 12.5% 96.9%;        /* #F8F7F6 canvas */
+    --foreground: 34.3 8.4% 16.3%;       /* #2D2A26 */
+
+    --card: 0 0% 100%;                   /* #FFFFFF surface */
+    --card-foreground: 34.3 8.4% 16.3%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 34.3 8.4% 16.3%;
+
+    /* --- Marca ------------------------------------------------ */
+    --primary: 175.4 26.5% 28.8%;        /* #365D5A verde EJR */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 171.4 25.9% 94.7%;      /* #EEF5F4 primary-50 */
+    --secondary-foreground: 175.4 26.5% 28.8%;
+
+    --muted: 0 6.7% 97.1%;               /* #F8F7F7 */
+    --muted-foreground: 32.7 5% 43.3%;   /* #746F69 */
+
+    --accent: 170 27.3% 95.7%;           /* #F1F7F6 accent subtle */
+    --accent-foreground: 175.6 28.4% 18.6%;
+
+    --destructive: 0 72.4% 50.2%;        /* #DC2424 */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 34.3 13.2% 89.6%;          /* #E8E5E1 */
+    --input: 30 11.1% 85.9%;             /* #DFDBD7 */
+    --ring: 175.4 26.5% 28.8%;
+
+    --radius: 0.5rem;                    /* lg 8px / md 6px / sm 4px */
+
+    /* --- Sidebar (shadcn sidebar) ----------------------------- */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 34.3 8.4% 16.3%;
+    --sidebar-primary: 175.4 26.5% 28.8%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 170.8 22.8% 88.8%; /* #DCE9E7 primary-100 */
+    --sidebar-accent-foreground: 175.6 28.4% 18.6%;
+    --sidebar-border: 34.3 13.2% 89.6%;
+    --sidebar-ring: 175.4 26.5% 28.8%;
+
+    /* --- Escala do verde EJR ---------------------------------- */
+    --ejr-primary-50: 171.4 25.9% 94.7%;
+    --ejr-primary-100: 170.8 22.8% 88.8%;
+    --ejr-primary-200: 172.2 23.7% 81%;
+    --ejr-primary-300: 172.7 20% 67.6%;
+    --ejr-primary-400: 171.6 17.7% 52.4%;
+    --ejr-primary-500: 172.5 23.3% 40.4%;
+    --ejr-primary-600: 174.5 26.5% 32.5%;
+    --ejr-primary-700: 175.4 26.5% 28.8%;
+    --ejr-primary-800: 174.7 27.4% 24.3%;
+    --ejr-primary-900: 175.6 28.4% 18.6%;
+
+    --ejr-primary-hover: 174.7 27.4% 24.3%;   /* #2D4F4C */
+    --ejr-primary-active: 174 28.8% 20.4%;    /* #254340 */
+
+    /* --- Neutros quentes -------------------------------------- */
+    --ejr-surface-hover: 30 11.1% 92.9%;      /* #EFEDEB */
+    --ejr-warm-pill: 30 11.1% 92.9%;
+    --ejr-border-strong: 30 10.1% 72.9%;      /* #C1BAB3 */
+    --ejr-text-tertiary: 28.2 7.2% 46.1%;     /* #7E756D */
+    --ejr-text-disabled: 31.8 7.9% 57.8%;     /* #9C948B */
+    --ejr-text-high-contrast: 210 5.9% 13.3%; /* #202224 */
+
+    /* --- Feedback --------------------------------------------- */
+    --ejr-success: 145.2 54.9% 40%;           /* #2E9E5D */
+    --ejr-success-bg: 148 71.4% 95.9%;        /* #EDFCF4 */
+    --ejr-warning: 34.8 85.3% 40%;            /* #BD740F */
+    --ejr-warning-bg: 40 75% 96.9%;           /* #FDF9F1 */
+    --ejr-danger: 0 72.4% 50.2%;              /* #DC2424 */
+    --ejr-danger-bg: 0 86.7% 97.1%;           /* #FEF1F1 */
+    --ejr-info: 175.4 26.5% 28.8%;
+    --ejr-info-bg: 171.4 25.9% 94.7%;
+
+    --ejr-overlay: 34.3 8.4% 16.3%;
+
+    /* --- Tipografia ------------------------------------------- */
+    --font-body: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-heading: "Montserrat", "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    /* --- Sombras ---------------------------------------------- */
+    --shadow-xs: 0 1px 2px rgba(45, 42, 38, 0.06);
+    --shadow-sm: 0 2px 8px rgba(45, 42, 38, 0.07);
+    --shadow-md: 0 8px 24px rgba(45, 42, 38, 0.10);
+    --shadow-lg: 0 16px 40px rgba(45, 42, 38, 0.14);
+
+    /* --- Alturas de controle ---------------------------------- */
+    --control-h-sm: 32px;
+    --control-h: 36px;
+    --control-h-lg: 40px;
+  }
+
+  /*
+    O padrao EJR 2.0 e light-only: dark mode como padrao deve ser evitado.
+    A classe .dark espelha o tema claro para que qualquer toggle herdado
+    do template Lovable nao quebre a identidade da marca.
+  */
+  .dark {
+    --background: 30 12.5% 96.9%;
+    --foreground: 34.3 8.4% 16.3%;
+    --card: 0 0% 100%;
+    --card-foreground: 34.3 8.4% 16.3%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 34.3 8.4% 16.3%;
+    --primary: 175.4 26.5% 28.8%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 171.4 25.9% 94.7%;
+    --secondary-foreground: 175.4 26.5% 28.8%;
+    --muted: 0 6.7% 97.1%;
+    --muted-foreground: 32.7 5% 43.3%;
+    --accent: 170 27.3% 95.7%;
+    --accent-foreground: 175.6 28.4% 18.6%;
+    --destructive: 0 72.4% 50.2%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 34.3 13.2% 89.6%;
+    --input: 30 11.1% 85.9%;
+    --ring: 175.4 26.5% 28.8%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 34.3 8.4% 16.3%;
+    --sidebar-primary: 175.4 26.5% 28.8%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 170.8 22.8% 88.8%;
+    --sidebar-accent-foreground: 175.6 28.4% 18.6%;
+    --sidebar-border: 34.3 13.2% 89.6%;
+    --sidebar-ring: 175.4 26.5% 28.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    letter-spacing: -0.025em;
+  }
+
+  h1 {
+    letter-spacing: -0.045em;
+    line-height: 1.05;
+  }
+
+  code, pre, kbd, samp {
+    font-family: var(--font-mono);
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Eyebrow editorial: rotulo de secao do padrao EJR */
+  .eyebrow {
+    @apply text-xs font-bold uppercase leading-none text-primary;
+    letter-spacing: 0.14em;
+  }
+
+  /* Citacao inline de fonte regulatoria */
+  .ejr-citation {
+    @apply inline-flex rounded-sm px-1 py-px text-[11px] font-semibold;
+    background: hsl(var(--ejr-primary-50));
+    color: hsl(var(--ejr-primary-800));
+  }
+
+  /* Cartao revisavel: trabalho pendente x conteudo aceito */
+  .ejr-review {
+    @apply overflow-hidden rounded-card;
+    background: hsl(var(--accent));
+  }
+
+  .ejr-review--accepted {
+    @apply border border-border bg-card;
+  }
+
+  .ejr-review__topbar {
+    @apply flex min-h-[48px] items-center justify-between border-b border-border/90 px-3 py-2;
+  }
+
+  .ejr-review__body {
+    @apply p-4;
+  }
+
+  /* Painel de etapas */
+  .ejr-step-panel {
+    @apply overflow-hidden rounded-panel border border-border bg-card;
+  }
+
+  .ejr-step-panel__header {
+    @apply flex h-14 items-center justify-between border-b border-border px-5;
+  }
+
+  .ejr-step-panel__body {
+    @apply p-5;
+  }
+
+  .ejr-step-panel__footer {
+    @apply border-t border-border px-5 py-3;
+  }
+
+  /* Item de navegacao lateral */
+  .ejr-sidebar-item {
+    @apply min-h-[44px] rounded-md px-3 py-2.5 transition-colors;
+  }
+
+  .ejr-sidebar-item:hover {
+    background: hsl(var(--ejr-warm-pill));
+  }
+
+  .ejr-sidebar-item--active {
+    background: hsl(var(--ejr-primary-100));
+    color: hsl(var(--ejr-primary-900));
+  }
+}

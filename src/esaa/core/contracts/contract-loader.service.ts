@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
-import type { TaskKind } from '../../shared/types/esaa-vocabulary.js';
+import type { AgentTaskKind } from '../../../fiscal/shared/fiscal-vocabulary.js';
 import { ContractNotFoundError } from '../../shared/types/esaa-errors.js';
-import { TaskBoundary } from '../task-machine/value-objects/task-boundary.vo.js';
+import { AgentBoundary } from '../../../fiscal/shared/agent-boundary.js';
 
 export interface AgentBoundaryConfig {
   readable: string[];
@@ -12,7 +12,7 @@ export interface AgentBoundaryConfig {
 
 export interface AgentContractConfig {
   agents: Record<string, {
-    task_kind: TaskKind;
+    task_kind: AgentTaskKind;
     allowed_actions: string[];
     boundaries: AgentBoundaryConfig;
   }>;
@@ -41,7 +41,7 @@ export class ContractLoaderService {
     return this.orchestratorContracts;
   }
 
-  getBoundaryForAgent(agentName: string): TaskBoundary {
+  getBoundaryForAgent(agentName: string): AgentBoundary {
     if (!this.agentContracts) {
       throw new Error('Agent contracts not loaded. Call loadAgentContract() first.');
     }
@@ -51,14 +51,14 @@ export class ContractLoaderService {
       throw new ContractNotFoundError(agentName);
     }
 
-    return TaskBoundary.create(
+    return AgentBoundary.create(
       config.boundaries.readable,
       config.boundaries.writable,
       config.boundaries.forbidden,
     );
   }
 
-  getTaskKindForAgent(agentName: string): TaskKind {
+  getAgentTaskKindForAgent(agentName: string): AgentTaskKind {
     if (!this.agentContracts) {
       throw new Error('Agent contracts not loaded. Call loadAgentContract() first.');
     }

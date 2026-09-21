@@ -1,5 +1,10 @@
 import { ValueObject } from '../../../shared/domain/value-object.js';
-import { AGENT_TO_TASK_KIND, type TaskKind } from '../../../shared/types/esaa-vocabulary.js';
+import {
+  AGENT_TO_TASK_KIND,
+  ORCHESTRATOR_AGENT,
+  isUserActor,
+  type AgentTaskKind,
+} from '../../../../fiscal/shared/fiscal-vocabulary.js';
 
 interface ActorProps {
   name: string;
@@ -21,12 +26,21 @@ export class Actor extends ValueObject<ActorProps> {
     return this.props.name;
   }
 
-  get taskKind(): TaskKind | undefined {
+  get taskKind(): AgentTaskKind | undefined {
     return AGENT_TO_TASK_KIND[this.props.name];
   }
 
+  /**
+   * Usuário age através da API, que **é** o orquestrador; agente só propõe. O
+   * nome do agente orquestrador vem do vocabulário, e não hardcoded como antes
+   * (`=== 'tech-lead'`), que amarrava o kernel a um agente do domínio antigo.
+   */
   isOrchestrator(): boolean {
-    return this.props.name === 'tech-lead';
+    return this.props.name === ORCHESTRATOR_AGENT || isUserActor(this.props.name);
+  }
+
+  isUser(): boolean {
+    return isUserActor(this.props.name);
   }
 
   toString(): string {

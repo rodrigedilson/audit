@@ -1,9 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ESAA Event",
-  "description": "Schema for ESAA event entries in activity.jsonl",
+  "description": "Schema do envelope de evento do audit. Escopado por (tenant_id, cnpj) — ver ADR-002 e ADR-003.",
   "type": "object",
-  "required": ["event_id", "event_seq", "action", "task_id", "actor", "ts", "schema_version", "payload"],
+  "required": [
+    "event_id",
+    "event_seq",
+    "action",
+    "task_id",
+    "actor",
+    "ts",
+    "schema_version",
+    "tenant_id",
+    "cnpj",
+    "payload"
+  ],
   "properties": {
     "event_id": {
       "type": "string",
@@ -13,7 +24,7 @@
     "event_seq": {
       "type": "integer",
       "minimum": 0,
-      "description": "Strictly monotonic, gap-free sequence number"
+      "description": "Sequência monotônica e sem gaps DENTRO do par (tenant_id, cnpj); não é global"
     },
     "action": {
       "type": "string",
@@ -53,6 +64,21 @@
       "type": "string",
       "const": "0.4.0",
       "description": "ESAA schema version"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Escritório (tenant) dono do evento"
+    },
+    "cnpj": {
+      "type": "string",
+      "pattern": "^[0-9]{14}$",
+      "description": "CNPJ do cliente, 14 dígitos sem máscara"
+    },
+    "period": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+      "description": "Competência YYYY-MM. Ausente quando o evento é do CNPJ e não de um mês (ex.: client.enrolled)"
     },
     "payload": {
       "type": "object",

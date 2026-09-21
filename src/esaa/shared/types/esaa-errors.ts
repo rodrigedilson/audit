@@ -1,4 +1,4 @@
-import type { RejectionReason } from './esaa-vocabulary.js';
+import type { RejectionReason } from '../../../fiscal/shared/fiscal-vocabulary.js';
 
 export class ESAAError extends Error {
   constructor(
@@ -21,12 +21,22 @@ export class ValidationError extends ESAAError {
   }
 }
 
-export class ImmutabilityViolationError extends ESAAError {
+/**
+ * INV-001: competência confirmada é terminal. A correção não reabre o período —
+ * emite `rectification.filed` e abre uma competência de retificação vinculada,
+ * preservando o hash original.
+ */
+export class ClosedPeriodViolationError extends ESAAError {
   constructor(
-    public readonly taskId: string,
+    public readonly period: string,
+    public readonly cnpj: string,
   ) {
-    super(`Task ${taskId} is in 'done' state and cannot be modified`, 'IMMUTABILITY_VIOLATION');
-    this.name = 'ImmutabilityViolationError';
+    super(
+      `Competência ${period} do CNPJ ${cnpj} está confirmada e não pode ser alterada. ` +
+        'Use uma retificação.',
+      'CLOSED_PERIOD_VIOLATION',
+    );
+    this.name = 'ClosedPeriodViolationError';
   }
 }
 
@@ -43,11 +53,14 @@ export class BoundaryViolationError extends ESAAError {
 
 export class InvalidTransitionError extends ESAAError {
   constructor(
-    public readonly taskId: string,
+    public readonly entityId: string,
     public readonly fromState: string,
     public readonly toState: string,
   ) {
-    super(`Invalid transition for task ${taskId}: ${fromState} → ${toState}`, 'INVALID_TRANSITION');
+    super(
+      `Transição inválida para ${entityId}: ${fromState} → ${toState}`,
+      'INVALID_TRANSITION',
+    );
     this.name = 'InvalidTransitionError';
   }
 }

@@ -1,25 +1,26 @@
-import { ValidationError } from '../../../shared/types/esaa-errors.js';
-import type { ESAAIntention, MaterializedRoadmap } from '../../../shared/types/esaa-event.types.js';
-import { ImmutabilityGuardService } from '../../task-machine/immutability-guard.service.js';
+import type { ESAAIntention } from '../../../shared/types/esaa-event.types.js';
+import { ValidationError, ClosedPeriodViolationError } from '../../../shared/types/esaa-errors.js';
+import type { FiscalProjection } from '../../../../fiscal/shared/fiscal-projection.types.js';
+import { ClosedPeriodGuardService } from '../../../../fiscal/period/period-transition.service.js';
 
+/**
+ * Camada 6 — imutabilidade da competência confirmada (INV-001).
+ *
+ * É a camada que impede o caso mais caro do produto: alterar em silêncio um
+ * número já entregue ao Fisco. A correção existe, mas por retificação, que abre
+ * competência nova e preserva o hash original.
+ */
 export class ImmutabilityValidator {
-  readonly layer = 6;
-  private readonly guard = new ImmutabilityGuardService();
+  private readonly guard = new ClosedPeriodGuardService();
 
-  validate(intention: ESAAIntention, roadmap: MaterializedRoadmap): void {
-    const task = roadmap.tasks[intention.task_id];
-    if (!task) {
-      return;
-    }
-
+  validate(intention: ESAAIntention, projection: FiscalProjection): void {
     try {
-      this.guard.guard(task, intention.action);
-    } catch {
-      throw new ValidationError(
-        this.layer,
-        'immutable_done_violation',
-        `Task '${intention.task_id}' is in 'done' state and cannot be modified via '${intention.action}'`,
-      );
+      this.guard.guard(projection, intention.action, intention.period);
+    } catch (cause) {
+      if (cause instanceof ClosedPeriodViolationError) {
+        throw new ValidationError(6, 'closed_period_violation', cause.message);
+      }
+      throw cause;
     }
   }
 }
