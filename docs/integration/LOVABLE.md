@@ -124,6 +124,17 @@ Você decidiu: **o front liga no Supabase atual**, `uflputiyytswvagrrzzn`. Isso
 significa que o `config.toml` já está certo e o `.env` é que muda. Mas tem
 consequência, e ela é a parte mais delicada da migração:
 
+### 2.0 O código já aponta para o projeto certo
+
+`src/integrations/supabase/client.ts` tem fallback embutido para
+`uflputiyytswvagrrzzn` — o projeto do `audit`. É o `.env` que sobrescreve com o
+outro. Então "ligar no Supabase atual" é **remover a sobrescrita**, não mudar
+código.
+
+Vale limpar o fallback depois: URL e chave escritas no fonte são o que o item 2
+da verificação do passo 7 procura. Enquanto existirem, um `.env` ausente faz o
+app apontar para produção sem avisar.
+
 ### 2.1 Os usuários não são os mesmos
 
 `auth.users` de `rzzohjzfgfefuceardxe` não existe em `uflputiyytswvagrrzzn`. O
@@ -235,6 +246,27 @@ npx openapi-typescript ../audit/docs/api/openapi.yaml -o src/integrations/audit/
 >
 > Não altere nenhuma tela nem nenhum hook existente neste prompt.
 
+### O que já está pronto
+
+O cliente existe: `src/integrations/audit/client.ts` no branch
+`feat/cliente-api-audit` do `sped-genius-hub`, com `schema.d.ts` gerado do
+contrato (3.130 linhas). Cobre as 14 áreas da API, com `AuditRejection`
+carregando `layer` e `reason`, `AuditQuotaError` com o uso, renovação de token
+pelo Supabase no `401` e **sem retry em `POST`**.
+
+Verificado: `tsc` limpo no arquivo novo, `npm run build` do front passa, e o
+contrato foi exercitado contra o contêiner da API — `/me`, `/clients`,
+`/deadlines` e as quatro rotas públicas respondem.
+
+> **Um defeito do backend que apareceu nessa verificação.** `/simulations/methodology`
+> e `/assistant/capabilities` estavam **atrás de autenticação**. As duas existem
+> para ser lidas *antes* de contratar — a primeira diz o que o simulador não
+> modela, a segunda diz o que o assistente sabe responder — e só quem já era
+> cliente conseguia lê-las. A autenticação é por hook global (rota nova nasce
+> protegida, e `PUBLIC_ROUTES` é o que abre), então o esquecimento é silencioso.
+> Corrigido, com teste nos dois sentidos: o que é público responde sem token, e o
+> que não é exige token.
+
 `.env` do `sped-genius-hub`:
 
 ```bash
@@ -245,7 +277,8 @@ VITE_AUDIT_API_URL=https://<api-do-audit>
 
 As mesmas três variáveis no painel da Vercel.
 
-**Esforço: 4–6h.**
+**Esforço restante: 1–2h** (era 4–6h; o cliente e os tipos estão feitos, falta
+configurar as variáveis na Vercel).
 
 ---
 
@@ -428,12 +461,12 @@ event log.
 | **1** | Deploy da API — `Dockerfile` e CI **feitos**; falta escolher provedor e subir | **2–4h** |
 | **2** | Resolver os dois Supabase (começando limpo) | **3–5h** |
 | **2** | *alternativa:* migrando os dados da FASE 1 | *10–16h* |
-| **3** | Cliente de API, ao lado do Supabase | **4–6h** |
+| **3** | Cliente de API — **feito**; falta configurar a Vercel | **1–2h** |
 | **4** | Migrar as 4 features acopladas | **26–37h** |
 | **5** | As 13 telas que faltam | **55–77h** |
 | **6** | Auditoria das cinco regras — 2h × 6 rodadas | **12h** |
 | **7** | Verificação e roteiro funcional | **4–6h** |
-| | **Total** | **~106–147h** |
+| | **Total** | **~103–143h** |
 
 Para uma pessoa em tempo integral: **3 a 4 semanas**. Em meio período, dobre.
 
