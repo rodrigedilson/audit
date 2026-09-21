@@ -45,21 +45,43 @@ partir de `sped-genius-hub.vercel.app`, e esse navegador precisa alcançar a API
 `localhost` não serve. E o repositório do backend **não tem configuração de
 deploy** — só CI.
 
-O mínimo:
+### O que já está pronto
 
-```dockerfile
-# Dockerfile, no repo do audit
-FROM node:22-slim
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-ENV API_HOST=0.0.0.0
-CMD ["node", "dist/cli/audit.js", "serve"]
+O [`Dockerfile`](../../Dockerfile) e o [`.dockerignore`](../../.dockerignore)
+existem e estão verificados. Imagem multi-stage, **389 MB**, usuário sem
+privilégio, `dumb-init` como PID 1 e healthcheck em `/v1/health`.
+
+Verificado rodando o contêiner de fato, não só buildando:
+
+| Checagem | Resultado |
+|---|---|
+| `GET /v1/health` | `{"status":"ok"}` |
+| `GET /v1/plans` (toca o banco) | devolve os 5 planos semeados |
+| `GET /v1/clients` sem token | `401` |
+| Healthcheck do Docker | `healthy` |
+| CORS com a origem da Vercel | `access-control-allow-origin` devolvido |
+| CORS com origem não listada | **sem** o header — o navegador bloqueia |
+| `docker stop` | exit `0` em 0,08s, com `app.close()` |
+
+O [job `image` do CI](../../.github/workflows/ci.yml) repete isso a cada PR:
+sobe o contêiner contra um Postgres e exige resposta em `/v1/health`. Existe
+porque o `tsc` não vê leitura de disco — uma dependência de runtime fora de
+`src/` passa por lint, build e 930 testes e só quebra no deploy. Foi o que
+aconteceu ao escrever este passo: o servidor carrega `config/esaa.config.yaml`
+no start para montar o `AGENT_CONTRACT` da camada 5, e a primeira versão da
+imagem não copiava `config/`.
+
+Para rodar local:
+
+```bash
+docker build -t audit-api .
+docker run -p 3000:3000 --env-file .env audit-api
 ```
 
-Variáveis no serviço de deploy:
+### O que falta
+
+Escolher o provedor e subir. Qualquer um que aceite `Dockerfile` serve (Fly,
+Render, Railway, Cloud Run). Variáveis no serviço de deploy:
 
 ```bash
 DATABASE_URL=postgresql://...        # pooler do Supabase (npm run pooler descobre o host)
@@ -84,7 +106,8 @@ Três coisas que vão morder se passarem batido:
    produção deve dar 34 tabelas e 10 funções. É o que prova que as 13 migrações
    chegaram inteiras.
 
-**Esforço: 8–12h.**
+**Esforço restante: 2–4h** (era 8–12h; o `Dockerfile`, o `.dockerignore` e a
+verificação no CI já estão feitos).
 
 ---
 
@@ -402,7 +425,7 @@ event log.
 
 | Passo | Entrega | Esforço |
 |---|---|---|
-| **1** | Deploy da API do `audit` — **bloqueio duro** | **8–12h** |
+| **1** | Deploy da API — `Dockerfile` e CI **feitos**; falta escolher provedor e subir | **2–4h** |
 | **2** | Resolver os dois Supabase (começando limpo) | **3–5h** |
 | **2** | *alternativa:* migrando os dados da FASE 1 | *10–16h* |
 | **3** | Cliente de API, ao lado do Supabase | **4–6h** |
@@ -410,7 +433,7 @@ event log.
 | **5** | As 13 telas que faltam | **55–77h** |
 | **6** | Auditoria das cinco regras — 2h × 6 rodadas | **12h** |
 | **7** | Verificação e roteiro funcional | **4–6h** |
-| | **Total** | **~112–155h** |
+| | **Total** | **~106–147h** |
 
 Para uma pessoa em tempo integral: **3 a 4 semanas**. Em meio período, dobre.
 

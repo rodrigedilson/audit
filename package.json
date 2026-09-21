@@ -14,7 +14,9 @@
     "verify": "tsx src/cli/audit.ts verify",
     "sql:bundle": "tsx scripts/gerar-sql-completo.ts",
     "doctor": "tsx src/cli/audit.ts doctor",
-    "pooler": "tsx scripts/descobrir-pooler.ts"
+    "pooler": "tsx scripts/descobrir-pooler.ts",
+    "start": "node dist/cli/audit.js serve",
+    "serve": "tsx src/cli/audit.ts serve"
   },
   "keywords": [
     "reforma-tributaria",
@@ -31,8 +33,6 @@
   "dependencies": {
     "@fastify/cors": "^11.3.0",
     "@fastify/multipart": "^10.1.1",
-    "ajv": "^8.17.1",
-    "claude-flow": "^3.5.2",
     "fast-xml-parser": "^4.5.7",
     "fastify": "^5.12.5",
     "jose": "^6.2.12",

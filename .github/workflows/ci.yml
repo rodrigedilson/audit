@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -80,3 +80,64 @@ jobs:
 
       - name: Valida docs/api/openapi.yaml
         run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
+
+  image:
+    name: Imagem de produção
+    runs-on: ubuntu-latest
+
+    # O mesmo Postgres do job de testes: aqui ele serve para provar que o
+    # contêiner ATENDE, e não só que builda.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit
+          POSTGRES_DB: audit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U audit -d audit_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build da imagem
+        run: docker build -t audit-api:ci .
+
+      # O `tsc` não vê leitura de disco, então uma dependência de runtime fora de
+      # `src/` passa por todo o resto do CI e só quebra no deploy. Foi o que
+      # aconteceu com `config/esaa.config.yaml`, que o servidor carrega no start
+      # para montar o AGENT_CONTRACT da camada 5. Este passo sobe o contêiner de
+      # verdade e exige resposta.
+      - name: O contêiner atende
+        run: |
+          docker run -d --name api --network host \
+            -e DATABASE_URL="postgres://audit:audit@localhost:5432/audit_test" \
+            -e SUPABASE_URL="https://projeto-de-ci.supabase.co" \
+            -e SUPABASE_ANON_KEY="chave-de-ci" \
+            -e SUPABASE_JWT_SECRET="segredo-de-ci-que-nao-vai-para-producao" \
+            -e CERTIFICATE_MASTER_KEY="chave-mestra-de-ci-com-mais-de-32-caracteres" \
+            -e API_PORT=3000 audit-api:ci
+
+          for i in $(seq 1 20); do
+            if curl -sf --max-time 2 http://localhost:3000/v1/health >/dev/null; then
+              echo "respondeu na tentativa $i"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::O contêiner não respondeu em /v1/health"
+          docker logs api
+          exit 1
+
+      # Encerrar sem terminar a requisição em voo é perder um append no meio, num
+      # log append-only. O handler de SIGTERM tem de existir e ser rápido.
+      - name: Desligamento limpo
+        run: |
+          timeout 15 docker stop api
+          test "$(docker inspect --format '{{.State.ExitCode}}' api)" = "0"
