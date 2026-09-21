@@ -1,6 +1,6 @@
 # Mapa de telas — painel do escritório
 
-> **Para quem é este documento:** quem constrói o frontend `audit-frontend` no
+> **Para quem é este documento:** quem constrói o frontend `sped-genius-hub` no
 > Lovable. Descreve telas, estados e a rota de API que alimenta cada uma.
 >
 > Fonte da verdade do contrato: [`docs/api/openapi.yaml`](../api/openapi.yaml).
