@@ -111,96 +111,104 @@ verificação no CI já estão feitos).
 
 ---
 
-## Passo 2 — Resolver os dois Supabase
+## Passo 2 — Migrar o dado fiscal do front para o event log
 
-Hoje o `sped-genius-hub` tem uma inconsistência:
+**Existe um só projeto Supabase** (`uflputiyytswvagrrzzn`), e os dois schemas já
+estão nele — verificado: 69 tabelas no `public`, as 34 do `audit` e as 22 do
+front, sem colisão de nome. O `rzzohjzfgfefuceardxe` que aparece no `.env` local
+do front é resíduo; o `client.ts` já tem fallback para o projeto certo.
 
-```
-supabase/config.toml  → project_id = "uflputiyytswvagrrzzn"   ← projeto do audit
-.env                  → rzzohjzfgfefuceardxe.supabase.co      ← onde o app roda
-```
+Então **não há migração entre projetos**. O que há é dado do front que a API do
+`audit` não conhece:
 
-Você decidiu: **o front liga no Supabase atual**, `uflputiyytswvagrrzzn`. Isso
-significa que o `config.toml` já está certo e o `.env` é que muda. Mas tem
-consequência, e ela é a parte mais delicada da migração:
+| Tabela | Linhas | O que é |
+|---|---|---|
+| `xml_documents` | 193 | NF-e, **com o XML original em `raw_xml`** |
+| `xml_document_items` | 613 | itens dessas notas |
+| `sped_parsed_records` | 1.499 | linhas de SPED parseadas |
+| `cfops` | 238 | tabela de CFOP com carga oficial |
+| `profiles` | 3 | usuários |
+| `documents`, `events`, `clients` (audit) | **0** | o `audit` está vazio de dado fiscal |
 
-### 2.0 O código já aponta para o projeto certo
+Os XMLs originais estão em dois lugares: a coluna `raw_xml` e o bucket
+`xml-uploads` (193 objetos). Os arquivos SPED estão no bucket `sped-files` (2).
 
-`src/integrations/supabase/client.ts` tem fallback embutido para
-`uflputiyytswvagrrzzn` — o projeto do `audit`. É o `.env` que sobrescreve com o
-outro. Então "ligar no Supabase atual" é **remover a sobrescrita**, não mudar
-código.
+### Por que não é `INSERT ... SELECT`
 
-Vale limpar o fallback depois: URL e chave escritas no fonte são o que o item 2
-da verificação do passo 7 procura. Enquanto existirem, um `.env` ausente faz o
-app apontar para produção sem avisar.
+O `audit` guarda **evento**, não linha de tabela. Copiar `xml_documents` para
+`documents` daria o número sem a trilha que o defende — e a trilha é o produto.
+A migração é **reingestão**: cada XML passa pelas 7 camadas e produz event log
+com hash verificável.
 
-### 2.1 Os usuários não são os mesmos
+### O script
 
-`auth.users` de `rzzohjzfgfefuceardxe` não existe em `uflputiyytswvagrrzzn`. O
-`teste@exemplo.com / Senha@123` do checkpoint **não vai logar**. Quem loga é o
-usuário que o `13-bootstrap-escritorio.sql` vinculou ao escritório.
-
-Confira com:
-
-```bash
-cd ~/projects/audit && npm run doctor    # a checagem "escritório e usuário"
-```
-
-### 2.2 Os dados da FASE 1 ficam para trás
-
-As 22 tabelas do `sped-genius-hub` têm dados em produção no projeto antigo.
-Apontar o front para o projeto do `audit` **não leva os dados**. Duas saídas:
-
-| Saída | Quando faz sentido |
-|---|---|
-| **Começar limpo** | Se os dados da FASE 1 eram de teste. É o caminho simples. |
-| **Migrar por `pg_dump`** | Se houver dado de cliente real ali. Tabela por tabela, e os `user_id` precisam ser remapeados para os `auth.users` do projeto novo. |
-
-**Decida isto antes do passo 3.** Migrar dado depois de o front já estar
-apontado é bem mais difícil.
-
-### 2.3 As features que ficam precisam do schema delas
-
-Três features do `sped-genius-hub` não têm equivalente no `audit` e vão
-continuar existindo. Elas dependem de tabelas que hoje só existem no projeto
-antigo, e precisam ser aplicadas no atual:
+[`scripts/migrar-do-front.ts`](../../scripts/migrar-do-front.ts). **Simula por
+padrão**, porque o event log é append-only e evento gravado não sai.
 
 ```bash
-cd ~/projects/sped-genius-hub
-
-# Extração de entidades
-supabase/migrations/20260210100001_create_entity_tables.sql
-supabase/migrations/20260210100002_create_entity_indexes.sql
-supabase/migrations/20260210100003_create_extraction_jobs.sql
-supabase/migrations/20260210100004_create_extraction_function.sql
-
-# CFOP (tabela de referência própria + carga oficial)
-supabase/migrations/20260216300001_create_cfop_tables.sql
-supabase/migrations/20260216300002_seed_cfop_official_data.sql
+npx tsx scripts/migrar-do-front.ts --regime <regime>              # simula
+npx tsx scripts/migrar-do-front.ts --regime <regime> --executar   # grava
 ```
 
-**Conferi que não há colisão de nome** com as 40 tabelas do `audit` — os dois
-schemas convivem no mesmo Postgres sem se pisarem.
+A simulação já rodou contra o dado real:
 
-As edge functions correspondentes (`extract-entities`, `graph-*`) precisam ser
-deployadas no projeto novo:
+```
+193 documento(s) com XML original em xml_documents.
+CNPJ do cliente: 04552217000165
+  parseiam:  192
+  recusados: 1
+  entradas:  150   saídas: 42
+  competências: 2025-07
+  1x camada 1: XML malformado na linha 1
+```
+
+**O documento recusado é genuinamente inválido:** a chave
+`35250704552217000165550010000094341004838774` tem **35 aberturas de `<ICMS00>`
+e 34 fechamentos**. A camada 1 está certa — e o front **aceitou** esse
+documento, gravando em `xml_documents` totais de ICMS derivados de um XML
+quebrado. É o exemplo concreto do que a migração compra.
+
+### O que a execução exige
+
+A ingestão vai **pela API**, não pelo banco: escrever direto puliria o
+orquestrador, o advisory lock por CNPJ e as 7 camadas, produzindo event log sem
+as garantias que ele existe para dar. Então:
 
 ```bash
-supabase link --project-ref uflputiyytswvagrrzzn
-supabase functions deploy extract-entities graph-init graph-populate graph-query
+MIGRACAO_API_URL=http://localhost:3000 \
+MIGRACAO_TOKEN=<access_token de um owner> \
+npx tsx scripts/migrar-do-front.ts --regime lucro_presumido --executar
 ```
 
-> **Não deployar** `sped-parser`, `parse-xml`, `import-xml-batch`,
-> `cross-reference`, `upload-file`, `list-files`, `delete-file`. Essas quatro
-> primeiras fazem o que o `audit` faz com 7 camadas de validação e event log; as
-> três últimas viram chamadas à API. Deployá-las criaria um segundo caminho de
-> escrita no mesmo banco, sem orquestrador — exatamente o que a arquitetura do
-> `audit` existe para impedir.
+O token sai de `POST /v1/auth/login`. O script cria o cliente, abre a
+competência 2025-07 e ingere os 192 documentos um a um, relatando camada e
+motivo de cada recusa. Ao fim, confira:
 
-**Esforço: 3–5h (começando limpo) ou 10–16h (migrando dados).**
+```bash
+npx tsx src/cli/audit.ts verify --cnpj 04552217000165
+```
 
----
+> **O `--regime` não tem padrão, de propósito.** O regime decide alíquota, anexo
+> e a apuração inteira; assumir um faria a migração gravar número errado em
+> silêncio. O script recusa rodar sem ele.
+
+### O SPED
+
+Dos dois arquivos no bucket, um é **EFD ICMS/IPI** — que o `audit` não importa,
+porque a Onda 12 cobre EFD-Contribuições. O outro é EFD-Contribuições, mas o
+front não detectou CNPJ nem período dele. O parser do `audit` lê o registro
+`0000` corretamente, então vale tentar por `POST /v1/clients/{cnpj}/sped`.
+
+### Dívida encontrada no caminho
+
+Sete tabelas em produção **sem migração no versionamento** e sem nenhuma
+referência no código: `analysis_groups` e `interop_*` (6). Todas com **zero
+linhas**. Foram criadas direto no painel do Supabase por alguma sessão que não
+commitou a migração. Como estão vazias e órfãs, o certo é derrubá-las — ou, se
+houver intenção por trás delas, escrever a migração. Schema em produção que
+ninguém consegue recriar é dívida, mesmo quando está vazio.
+
+**Esforço: 2–4h** (a simulação está feita; falta subir a API e executar).
 
 ## Passo 3 — Cliente de API, ao lado do cliente Supabase
 
@@ -459,14 +467,14 @@ event log.
 | Passo | Entrega | Esforço |
 |---|---|---|
 | **1** | Deploy da API — `Dockerfile` e CI **feitos**; falta escolher provedor e subir | **2–4h** |
-| **2** | Resolver os dois Supabase (começando limpo) | **3–5h** |
-| **2** | *alternativa:* migrando os dados da FASE 1 | *10–16h* |
+| **2** | Migrar o dado fiscal — simulação **feita**; falta executar | **2–4h** |
+
 | **3** | Cliente de API — **feito**; falta configurar a Vercel | **1–2h** |
 | **4** | Migrar as 4 features acopladas | **26–37h** |
 | **5** | As 13 telas que faltam | **55–77h** |
 | **6** | Auditoria das cinco regras — 2h × 6 rodadas | **12h** |
 | **7** | Verificação e roteiro funcional | **4–6h** |
-| | **Total** | **~103–143h** |
+| | **Total** | **~102–141h** |
 
 Para uma pessoa em tempo integral: **3 a 4 semanas**. Em meio período, dobre.
 
