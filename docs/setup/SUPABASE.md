@@ -102,14 +102,53 @@ openssl rand -base64 48
 
 ---
 
-## 4. Suba a API
+## 4. Confira o ambiente antes de subir a API
 
 ```bash
 npm ci
-npm run dev
+npm run doctor
 ```
 
-Confira que subiu e que o banco responde:
+Verifica, em ordem: variáveis obrigatórias, conexão, as 15 tabelas, as 5
+funções, o trigger append-only de `events`, a carga inicial de cobrança e a
+existência de um escritório com `owner`. Cada falha vem com a ação:
+
+```
+[ ok ] variáveis de ambiente
+[ ok ] conexão com o banco
+       PostgreSQL 16.15 · base postgres
+[ ok ] schema
+       15 tabelas
+[FALHA] carga inicial de cobrança
+       0 planos (esperado 5), 0 linha(s) de parâmetros (esperado 1)
+       -> Os INSERT de carga não entraram. Reaplique
+          scripts/sql/migracoes/03-cobranca.sql — é idempotente.
+```
+
+Existe porque nenhum desses problemas se anuncia: schema aplicado pela metade
+devolve 200 com lista vazia, e a falta de `memberships` devolve 403 em tudo.
+
+Sai com código 0 quando está tudo pronto, e 1 quando há o que resolver.
+
+### Se o doctor não conseguir conectar
+
+Rode o diagnóstico direto no SQL Editor:
+
+```
+scripts/sql/diagnostico.sql
+```
+
+Não altera nada, só relata — e responde o que de fora não se distingue: uma
+tabela que devolve lista vazia na API REST pode estar **sem dados** ou com **RLS
+ligada sem policy**. As duas situações são indistinguíveis pelo cliente e a
+correção é diferente. O diagnóstico roda como `postgres`, ignora RLS, e mostra
+as duas coisas lado a lado.
+
+## 5. Suba a API
+
+```bash
+npm run dev
+```
 
 ```bash
 curl -s localhost:3000/v1/health                       # {"status":"ok"}
@@ -117,10 +156,12 @@ curl -s localhost:3000/v1/plans | head -c 200          # rota pública, lê do b
 ```
 
 Se `/v1/health` responde mas `/v1/plans` dá 500, o problema é o `DATABASE_URL`.
+Se `/v1/plans` responde com a lista de planos **vazia**, a carga inicial não
+entrou — reaplique `03-cobranca.sql`.
 
 ---
 
-## 5. Teste o fluxo de ponta a ponta
+## 6. Teste o fluxo de ponta a ponta
 
 ### Autenticar
 
@@ -210,6 +251,17 @@ Users** e confirme, ou recrie marcando **Auto Confirm User**.
 
 Senha do banco errada, ou caractere especial sem URL-encode. Redefina em
 **Project Settings → Database → Reset database password**.
+
+### `/v1/plans` devolve lista vazia
+
+A carga inicial de `plans` não entrou. Reaplique
+`scripts/sql/migracoes/03-cobranca.sql` — é idempotente, os `on conflict do
+nothing` evitam duplicar. Confirme com `npm run doctor` ou com
+`scripts/sql/diagnostico.sql`.
+
+Este é um caso que aconteceu de verdade nesta instalação: as 15 tabelas foram
+criadas e os `insert` de carga não. A API não reclama — a calculadora de preço
+simplesmente mostra nada, e a fatura só falha no fechamento do mês.
 
 ### `403 Usuário não pertence a nenhum escritório`
 

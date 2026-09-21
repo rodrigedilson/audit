@@ -3,6 +3,7 @@ import { bootstrap, DEV_TENANT_ID, DEV_CNPJ, type BootstrapOptions } from '../co
 import { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { loadEnv, EnvError } from '../config/env.js';
 import { buildServer } from '../api/server.js';
+import { diagnosticar, type Checagem } from '../infrastructure/diagnostics/environment-doctor.js';
 import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
 
 const EXIT_OK = 0;
@@ -16,6 +17,7 @@ const USAGE = `audit — motor de conciliação da transição tributária (ESAA
 Uso: audit <comando> [opções]
 
 Comandos disponíveis
+  doctor                          Diagnostica o ambiente e diz o que falta
   serve                           Sobe a API HTTP (docs/api/openapi.yaml)
   verify                          Reprojeta o event log e confere o hash (INV-006)
   status                          Resumo da projeção corrente
@@ -68,6 +70,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return runStatus(options);
     case 'serve':
       return runServe();
+    case 'doctor':
+      return runDoctor();
     default:
       return reportUnavailable(command);
   }
@@ -83,6 +87,42 @@ function readBootstrapOptions(args: readonly string[]): BootstrapOptions {
     options.configPath = configPath;
   }
   return options;
+}
+
+/**
+ * Diagnóstico do ambiente. Cada checagem que falha vem com a ação, porque a
+ * causa raiz aqui raramente é óbvia a partir do sintoma: schema aplicado pela
+ * metade devolve 200 com lista vazia, e falta de `memberships` devolve 403 em
+ * tudo.
+ */
+async function runDoctor(): Promise<number> {
+  const { checagens, ok } = await diagnosticar();
+
+  for (const checagem of checagens) {
+    process.stdout.write(`${simbolo(checagem)} ${checagem.nome}\n`);
+    process.stdout.write(`    ${checagem.detalhe}\n`);
+    if (checagem.acao !== undefined) {
+      process.stdout.write(`    -> ${checagem.acao}\n`);
+    }
+  }
+
+  process.stdout.write('\n');
+  if (ok) {
+    process.stdout.write('Ambiente pronto. `npm run dev` sobe a API.\n');
+    return EXIT_OK;
+  }
+
+  const falhas = checagens.filter((c) => c.estado === 'falha').length;
+  process.stdout.write(
+    `${falhas} ${falhas === 1 ? 'problema' : 'problemas'} a resolver. ` +
+      'Detalhes em docs/setup/SUPABASE.md.\n',
+  );
+  return EXIT_ERROR;
+}
+
+function simbolo(checagem: Checagem): string {
+  if (checagem.estado === 'ok') return '[ ok ]';
+  return checagem.estado === 'aviso' ? '[aviso]' : '[FALHA]';
 }
 
 /**

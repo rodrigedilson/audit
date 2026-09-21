@@ -74,3 +74,8 @@ coverage/
 .roadmap/activity.jsonl
 .roadmap/roadmap.json
 data/
+
+# Material de referência licenciado (livros) - nao versionar
+docs/referencias/raw/
+docs/referencias/chunks/
+docs/referencias/*.md
