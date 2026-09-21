@@ -209,6 +209,25 @@ export class ReconciliationService {
 
     await this.syncDeadlines(tenantId, regras, periodos);
 
+    return this.readCalendar(tenantId, horizonDays, regras, periodos);
+  }
+
+  /**
+   * O mesmo calendário, **sem materializar nada**.
+   *
+   * Existe para o assistente fiscal, que é somente leitura: chamar `calendar()`
+   * faria uma conversa gravar linha em `deadlines`, e "somente leitura" tem de
+   * valer para todas as tabelas, não só para o log fiscal.
+   */
+  async readCalendar(
+    tenantId: string,
+    horizonDays: number,
+    regrasPreCarregadas?: readonly DeadlineRule[],
+    periodosPreCarregados?: readonly PeriodSnapshot[],
+  ): Promise<Calendar> {
+    const regras = regrasPreCarregadas ?? (await this.loadDeadlineRules());
+    const periodos = periodosPreCarregados ?? (await this.loadPeriodSnapshots(tenantId));
+
     const { rows } = await this.pool.query<CalendarRow & { days_left: string }>(
       'select * from portfolio_deadlines($1::uuid, $2::integer)',
       [tenantId, horizonDays],

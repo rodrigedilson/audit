@@ -270,7 +270,46 @@ o mesmo componente:
   tranquilizadora do produto seria a de um sistema sem nenhum prazo cadastrado.
 - `days_left` negativo é prazo vencido. Não esconda: é o que mais importa.
 
-### 11. Planos e assinatura (Onda 3)
+### 11. Assistente fiscal (Onda 9)
+`GET /v1/assistant/capabilities` · `GET|POST /clients/{cnpj}/assistant/threads` · `GET|POST .../threads/{id}/messages` · `GET .../assistant/usage`
+
+É o diferencial #6, e o contraexemplo a evitar está no briefing: assistente
+genérico sem ancoragem nos dados do CNPJ compete com o ChatGPT e perde.
+
+- **Cada afirmação é um item com suas citações, não um parágrafo.** A resposta
+  vem em `claims[]`, e `kind` decide o visual:
+  - `fact` sempre tem citação. Renderize as citações como chips clicáveis que
+    levam ao evento, ao documento ou ao item. **Uma afirmação factual sem chip
+    visível é um bug de tela** — a API nunca emite uma.
+  - `explanation` é texto normativo e não cita nada. Estilo secundário, menor.
+    Nunca misture os dois no mesmo bloco de texto: é o que distingue "o sistema
+    apurou isto" de "a norma funciona assim".
+- **`answerable: false` não é erro.** É a resposta certa quando os dados não
+  respondem, e `unanswerableReason` sempre vem preenchido. Mostre o motivo com
+  destaque, não como toast de falha. Vazio, esconde exatamente a informação mais
+  útil.
+- **`tier` muda o que o usuário pode esperar.** `1` é consulta determinística e
+  reproduzível: dá para dizer "este número sai do log e o replay confere". `3`
+  significaria raciocínio livre de modelo, que **não está configurado** — e
+  `GET /assistant/capabilities` diz isso em `language_model_configured: false`.
+  Exiba a lista de capacidades na tela de ajuda da conversa.
+- **`confidence: medium` tem significado específico.** Aparece quando a resposta
+  está certa e incompleta — devido não determinável, proposta do Fisco só com
+  totais. Mostre o motivo junto; um selo "média" sozinho não ajuda ninguém.
+- **`suggested[]` são botões, e o assistente não os aperta.** Cada item traz
+  `method`, `endpoint`, `payload` e `rationale`. Renderize como ação com o
+  `rationale` visível, e **confirme antes de executar**: o valor do produto é
+  justamente que nenhuma IA altera número fiscal sozinha.
+- **Cota por CNPJ, não por escritório.** `GET .../assistant/usage` traz `used`,
+  `allowance` e `remaining`; o `201` da pergunta devolve `X-Assistant-Remaining`.
+  Mostre o restante perto do campo de pergunta, antes de o usuário digitar.
+- **`allowance: 0` é `403`, não `429`.** "Não contratado" e "acabou o mês" são
+  telas diferentes: a primeira leva a upgrade, a segunda leva a esperar. Tratá-las
+  igual manda o usuário esperar por um recurso que ele nunca teria.
+- **A pergunta consome cota mesmo com resposta não respondível.** Diga isso na
+  interface, para o "não sei" não parecer cobrança indevida.
+
+### 12. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -282,7 +321,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 12. Usuários e papéis
+### 13. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -298,7 +337,6 @@ botão não é autorização.
 
 | Onda | Tela | Rota |
 |---|---|---|
-| 9 | Assistente fiscal com citações de `event_seq` | `/assistant/threads` |
 
 ## Componentes que faltam no design system
 
@@ -320,6 +358,8 @@ em ordem de necessidade:
    diferença entre "conferido e correto" e "não conferido" 
 10. **Fila de pendências**, distinta do calendário: ordenada por gravidade e com
     `daysOpen`, nunca com data de vencimento inventada
+11. **Chip de citação** clicável, que abre o evento ou o documento citado — é o
+    componente que sustenta a promessa do assistente
 
 Os tokens e os seis princípios não mudam.
 

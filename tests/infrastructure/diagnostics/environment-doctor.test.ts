@@ -5,6 +5,7 @@ import {
   classificarFalhaDeConexao,
   checarTrilhas,
   checarPrazosNormativos,
+  checarCotaDoAssistente,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
 
@@ -453,5 +454,36 @@ describe('checarPrazosNormativos', () => {
     expect(r.estado).toBe('aviso');
     expect(r.acao).toContain('normative_rules_loaded');
     expect(r.acao).toContain('base legal');
+  });
+});
+
+/**
+ * Cota do assistente, testado sem banco: `plans` é tabela global e os arquivos
+ * de teste de cobrança e do assistente leem e escrevem nela em paralelo.
+ */
+describe('checarCotaDoAssistente', () => {
+  const poolFalso = (comCota: number, total: number): pg.Pool =>
+    ({
+      query: async () => ({ rows: [{ com_cota: String(comCota), total: String(total) }] }),
+    }) as unknown as pg.Pool;
+
+  it('aprova quando algum plano inclui o assistente', async () => {
+    const r = await checarCotaDoAssistente(poolFalso(3, 5));
+
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toContain('3 de 5');
+  });
+
+  /**
+   * Falha, e não aviso: com cota zero em toda linha o assistente responde 403
+   * para todos os clientes, sem erro em log nenhum — um recurso contratado que
+   * simplesmente não aparece.
+   */
+  it('reprova quando nenhum plano tem cota, que faria o assistente sumir calado', async () => {
+    const r = await checarCotaDoAssistente(poolFalso(0, 5));
+
+    expect(r.estado).toBe('falha');
+    expect(r.acao).toContain('403');
+    expect(r.acao).toContain('09-assistente-fiscal.sql');
   });
 });

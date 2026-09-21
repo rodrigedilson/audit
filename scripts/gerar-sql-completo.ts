@@ -34,6 +34,7 @@ const TITULOS: Record<string, string> = {
   // agora faria o arquivo divergir do que está rodando nos ambientes.
   '20260921140000_reporting.sql': 'reporting',
   '20260921150000_reconciliation.sql': 'contra-apuracao',
+  '20260921160000_assistant.sql': 'assistente-fiscal',
 };
 
 const DESCRICOES: Record<string, string> = {
@@ -65,6 +66,10 @@ const DESCRICOES: Record<string, string> = {
     '-- executa, e não uma lista de verificações da RFB. Os bytes do PDF ficam\n' +
     '-- guardados: o Book carrega um hash no rodapé e regerá-lo depois de uma\n' +
     '-- regra mudar produziria outro arquivo com o mesmo número.',
+  '20260921160000_assistant.sql':
+    'Conversas do assistente fiscal e a cota mensal por CNPJ, tirada do plano\n' +
+    '-- do regime. O assistente é somente leitura: não escreve no log fiscal, e\n' +
+    '-- toda afirmação factual dele carrega citação de um `event_seq` deste CNPJ.',
   '20260921150000_reconciliation.sql':
     'Proposta do Fisco, divergências nota a nota e o calendário da carteira.\n' +
     '-- `deadline_rules` nasce VAZIA de propósito: as datas da janela do art.\n' +
