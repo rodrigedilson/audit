@@ -22,11 +22,12 @@ export default defineConfig({
       // código entregue. Onda 0: 60/60/70/80 · Onda 1: 68/68/73/80 · Onda 2: 82/82/76/80
       // · Onda 3: 83/83/78/80 · Onda 4: 85/85/80/80 · setup: 86/86/81/80 · Onda 5: 87/87/82/80
       // · Onda 6: 88/88/83/80 · Onda 7: 90/90/85/83 · Onda 8: 91/91/88/85
-      // · Onda 9: 92/92/89/86 · Onda 10: 92/92/90/87 · Onda 11: abaixo.
+      // · Onda 9: 92/92/89/86 · Onda 10: 92/92/90/87 · Onda 11: 93/93/90/87
+      // · Onda 12: abaixo.
       thresholds: {
         lines: 93,
         statements: 93,
-        functions: 90,
+        functions: 91,
         branches: 87,
       },
     },

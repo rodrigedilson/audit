@@ -409,7 +409,46 @@ dados reais da carteira. O prazo importa — a janela de opção de regime do ar
 - **MEI e Lucro Real recebem `403` com o motivo.** Mostre o texto da API em vez
   de esconder o botão: o contador precisa saber *por que* não se aplica.
 
-### 14. Planos e assinatura (Onda 3)
+### 14. Dossiê de saldo credor PIS/Cofins (Onda 12)
+`POST /clients/{cnpj}/sped` · `GET .../credit-dossier/{period}`
+
+É o diferencial #9 e upsell de Lucro Presumido e Real: crédito sem lastro
+documental será perdido no pente-fino, e a Nota Técnica RFB 011/2026 restringe a
+EFD-Contribuições a retificação e saldos a partir de 2027 — o saldo credor
+acumulado é um ativo com prazo para ser defendido.
+
+- **`nao_verificavel` não pode cair no mesmo visual de `sem_documento`.** É a
+  distinção que torna o dossiê defensável em vez de acusatório: o primeiro
+  significa "não temos os documentos daquele mês" e o segundo, "o crédito foi
+  escriturado e o XML não está onde deveria". Confundi-los faria o escritório
+  levar ao cliente uma acusação que é limitação nossa.
+- **Mostre a janela de cobertura no topo.** `coverage.from`/`to` é o que delimita
+  o que dá para conferir. Sem ela, o contador não sabe se um "não verificável"
+  é problema dele ou do produto.
+- **`sem_chave` é nota em papel, e não é erro.** Cor neutra, nunca vermelho.
+- **`unbackedCents` e `unverifiableCents` são dois totais e não se somam.** O
+  primeiro é o que o pente-fino cobra; o segundo é o que ainda não foi conferido.
+  Um total único transformaria o dossiê numa acusação inflada.
+- **`carriedWithinCoverageRatio` é a manchete.** "X% do seu saldo credor tem
+  como ser defendido com os documentos que temos" — é a frase que vende a onda, e
+  é a que motiva o escritório a recuperar os XML antigos.
+- **O dossiê é derivado na leitura.** Localizar um XML que faltava muda o
+  resultado **sem reimportar a EFD** — e é exatamente o trabalho que o dossiê
+  encomenda. Deixe isso explícito na tela: "recarregue depois de ingerir os
+  documentos localizados".
+- **`divergente` pede conferência, não correção automática.** O XML e a EFD
+  discordam; qual dos dois está certo é decisão do contador, e a divergência
+  aparece no cruzamento que a RFB faz.
+- **Versão de layout não suportada vem `422` com o motivo.** Mostre a mensagem:
+  entre versões os campos mudam de posição, e ler no palpite trocaria base por
+  valor. Não ofereça "tentar de qualquer forma".
+- **CNPJ divergente vem `tenant_violation`.** Importar a EFD de um CNPJ na conta
+  de outro produziria um dossiê que acusa o cliente errado; a mensagem nomeia os
+  dois CNPJ, e vale exibi-la inteira.
+- **`rejected[]` traz linha e motivo por registro.** Um registro ruim não derruba
+  o arquivo, e a lista é o que permite ao contador corrigir a origem.
+
+### 15. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -421,7 +460,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 15. Usuários e papéis
+### 16. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -435,8 +474,10 @@ botão não é autorização.
 
 ## Telas das ondas seguintes
 
-| Onda | Tela | Rota |
-|---|---|---|
+Nenhuma: o roadmap do briefing está coberto da Onda 0 à 12. O que sobrou está no
+backlog nomeado do plano — monitor de certidões, checklist de cláusulas de
+repasse, ISO 27001/SOC 2 e o adapter da API oficial da apuração assistida quando
+ela for publicada.
 
 ## Componentes que faltam no design system
 
@@ -464,6 +505,10 @@ em ordem de necessidade:
     humano escolher, com o motivo de cada um
 13. **Heatmap de sensibilidade** (alíquota × fração de crédito), com o regime
     vencedor por célula — é o que substitui a resposta única quando ela não existe
+14. **Badge de "não conferido"**, visualmente distinto tanto do aprovado quanto
+    do reprovado. Aparece em três lugares — `not_verified` no catálogo,
+    `not_applicable` nas trilhas e `nao_verificavel` no dossiê — e é sempre a
+    mesma ideia: o sistema não olhou, e isso não é um "passou".
 
 Os tokens e os seis princípios não mudam.
 

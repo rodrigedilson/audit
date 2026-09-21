@@ -384,11 +384,12 @@ describe.skipIf(!DATABASE_URL)('API — ingestão de documentos', () => {
      * escritório ficaria esperando um job que nunca sai de `queued`.
      */
     /**
-     * O extrato saiu desta lista na Onda 10: deixou de ser `501` e passou a ser
-     * upload de OFX ou CSV na rota de crédito.
+     * Sobrou só a coleta DF-e. O extrato saiu na Onda 10 (upload de OFX/CSV) e a
+     * EFD-Contribuições na Onda 12 (upload do arquivo) — as duas deixaram de ser
+     * promessa e viraram rota que funciona.
      */
-    it('sync e sped respondem 501 apontando o caminho disponível', async () => {
-      for (const path of ['sync', 'sped']) {
+    it('a coleta DF-e responde 501 apontando o caminho disponível', async () => {
+      for (const path of ['sync']) {
         const response = await app.inject({
           method: 'POST',
           url: `/v1/clients/${cnpj}/${path}`,

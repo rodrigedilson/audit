@@ -19,6 +19,7 @@ import { registerReconciliationRoutes } from './routes/reconciliation.routes.js'
 import { registerAssistantRoutes } from './routes/assistant.routes.js';
 import { registerCreditRoutes } from './routes/credit.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
+import { registerDossierRoutes } from './routes/dossier.routes.js';
 import { AsaasClient } from '../billing/asaas-client.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
@@ -169,6 +170,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerAssistantRoutes(instance, deps);
       await registerCreditRoutes(instance, deps);
       await registerSimulationRoutes(instance, deps);
+      await registerDossierRoutes(instance, deps);
     },
     { prefix: '/v1' },
   );

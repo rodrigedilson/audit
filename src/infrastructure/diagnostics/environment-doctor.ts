@@ -65,6 +65,9 @@ const TABELAS = [
   'bank_statement_lines',
   'payment_matches',
   'simulations',
+  'sped_files',
+  'sped_documents',
+  'sped_carried_credits',
 ] as const;
 
 const FUNCOES = [
@@ -78,6 +81,7 @@ const FUNCOES = [
   'effective_rules',
   'portfolio_deadlines',
   'assistant_usage',
+  'document_coverage',
 ] as const;
 
 /** Um por migration, para dizer qual arquivo falta rodar. */
@@ -119,6 +123,9 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   bank_statement_lines: '10-credito-por-fornecedor.sql',
   payment_matches: '10-credito-por-fornecedor.sql',
   simulations: '11-simulador-de-regime.sql',
+  sped_files: '12-dossie-saldo-credor.sql',
+  sped_documents: '12-dossie-saldo-credor.sql',
+  sped_carried_credits: '12-dossie-saldo-credor.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
