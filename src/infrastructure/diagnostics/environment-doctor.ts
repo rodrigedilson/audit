@@ -64,6 +64,7 @@ const TABELAS = [
   'bank_statements',
   'bank_statement_lines',
   'payment_matches',
+  'simulations',
 ] as const;
 
 const FUNCOES = [
@@ -117,6 +118,7 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   bank_statements: '10-credito-por-fornecedor.sql',
   bank_statement_lines: '10-credito-por-fornecedor.sql',
   payment_matches: '10-credito-por-fornecedor.sql',
+  simulations: '11-simulador-de-regime.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {

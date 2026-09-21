@@ -359,7 +359,57 @@ Na **carteira** (tela 2), `credit_at_risk_brl` vem `null`, e não `0`: a listage
 não deriva o estado do crédito por cliente. Mostre um traço com link para esta
 tela, nunca um zero — zero é uma afirmação.
 
-### 13. Planos e assinatura (Onda 3)
+### 13. Simulador de regime (Onda 11)
+`GET /v1/simulations/methodology` · `POST|GET /clients/{cnpj}/simulations`
+
+É o diferencial #8 e, na priorização, **funil de aquisição**: Sittax e
+simuleareforma já cobrem o espaço, e o que diferencia esta é rodar sobre os
+dados reais da carteira. O prazo importa — a janela de opção de regime do art.
+40-D é em março de 2027.
+
+- **A página de metodologia é parte do produto, não rodapé.** Publique
+  `GET /simulations/methodology` como página própria, linkada de dentro do
+  resultado. É o que o simuleareforma faz bem e o que impede o contador de
+  tratar a saída como cálculo.
+- **`not_modeled` vai junto do resultado, visível.** Dez itens, e o primeiro é
+  IRPJ/CSLL: o simulador compara carga sobre consumo, não carga total. Esconder
+  essa lista num accordion fechado é a forma mais fácil de transformar um
+  simulador honesto num desonesto.
+- **Três números por regime, e eles não se substituem:**
+  - `directTaxMonthlyCents` — a guia. É o que os simuladores genéricos mostram.
+  - `creditToB2BCustomersCents` — crédito que o cliente PJ aproveita. **Não
+    reduz a guia**; é vantagem competitiva.
+  - `economicCostMonthlyCents` — guia mais o desconto que o cliente PJ vai
+    exigir por não ter crédito. **É este que compara regimes.** No Simples
+    integrado a guia é a menor e o custo econômico pode ser o maior, e é
+    exatamente essa inversão que a tela precisa deixar óbvia.
+- **`workingCapitalExposureCents` merece destaque próprio.** É a tese: o impacto
+  está na necessidade de capital de giro, não na DRE. Sob split payment o tributo
+  sai na liquidação e não no vencimento da guia — a carga anual pode ser igual e
+  o caixa, não.
+- **`winner: null` é resposta, não erro.** Significa que a escolha depende de uma
+  alíquota que ainda não foi publicada, e vem com `robustness: 'sensitive'`.
+  Renderize como *"depende"* e leve ao mapa de sensibilidade. **Não** escolha o
+  primeiro da lista para preencher o espaço.
+- **`sensitivity` é o produto quando o vencedor é null.** Trinta células,
+  alíquota × fração de crédito. Heatmap com o regime vencedor em cada uma
+  transforma a incerteza em informação.
+- **`b2bBreakevenShare` é a frase que o contador leva para a reunião:** "acima de
+  X% de faturamento para PJ, sair do Simples integrado passa a valer".
+- **`assumptions[].origin` muda o peso de cada linha.** `measured` veio das notas
+  do cliente; `published` veio de norma, com a fonte; `provided` é premissa.
+  Cores diferentes, e a fonte sempre visível. A alíquota de referência sairá como
+  `provided` enquanto não houver as três (IBS-UF, IBS-Mun e CBS) publicadas.
+- **A fração contra PJ é medida, e dá para substituir.** Por omissão vem das
+  notas de saída com CNPJ na contraparte — é o número que o cliente não sabe
+  responder de cabeça. Se o usuário informar outro, ele aparece como
+  `b2b_share_override` com origem `provided`.
+- **Sem documento no período vem `422`.** Mostre a mensagem: qualquer número
+  seria inventado. Não ofereça "simular com dados de exemplo".
+- **MEI e Lucro Real recebem `403` com o motivo.** Mostre o texto da API em vez
+  de esconder o botão: o contador precisa saber *por que* não se aplica.
+
+### 14. Planos e assinatura (Onda 3)
 `GET /v1/plans` e `POST /v1/price-calculator` são **públicas** — a calculadora
 vai no site, antes de qualquer contato comercial.
 
@@ -371,7 +421,7 @@ vai no site, antes de qualquer contato comercial.
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
 
-### 14. Usuários e papéis
+### 15. Usuários e papéis
 Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 
 | Papel | Pode |
@@ -412,6 +462,8 @@ em ordem de necessidade:
     componente que sustenta a promessa do assistente
 12. **Resolvedor de ambiguidade**: dois ou mais candidatos lado a lado para o
     humano escolher, com o motivo de cada um
+13. **Heatmap de sensibilidade** (alíquota × fração de crédito), com o regime
+    vencedor por célula — é o que substitui a resposta única quando ela não existe
 
 Os tokens e os seis princípios não mudam.
 

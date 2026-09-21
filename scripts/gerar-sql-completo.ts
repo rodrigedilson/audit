@@ -36,6 +36,7 @@ const TITULOS: Record<string, string> = {
   '20260921150000_reconciliation.sql': 'contra-apuracao',
   '20260921160000_assistant.sql': 'assistente-fiscal',
   '20260921170000_supplier_credit.sql': 'credito-por-fornecedor',
+  '20260921180000_simulation.sql': 'simulador-de-regime',
 };
 
 const DESCRICOES: Record<string, string> = {
@@ -67,6 +68,10 @@ const DESCRICOES: Record<string, string> = {
     '-- executa, e não uma lista de verificações da RFB. Os bytes do PDF ficam\n' +
     '-- guardados: o Book carrega um hash no rodapé e regerá-lo depois de uma\n' +
     '-- regra mudar produziria outro arquivo com o mesmo número.',
+  '20260921180000_simulation.sql':
+    'Registro das simulações de regime. Não é apuração e não gera evento\n' +
+    '-- fiscal: guarda as premissas com que o escritório aconselhou, porque elas\n' +
+    '-- vão mudar quando as alíquotas de referência forem publicadas.',
   '20260921170000_supplier_credit.sql':
     'Extrato bancário, casamento pagamento × documento e o crédito em risco por\n' +
     '-- fornecedor. Não há tabela de posição de crédito de propósito: o estado é\n' +
