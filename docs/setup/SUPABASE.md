@@ -138,11 +138,19 @@ Rode o diagnóstico direto no SQL Editor:
 scripts/sql/diagnostico.sql
 ```
 
-Não altera nada, só relata — e responde o que de fora não se distingue: uma
-tabela que devolve lista vazia na API REST pode estar **sem dados** ou com **RLS
-ligada sem policy**. As duas situações são indistinguíveis pelo cliente e a
-correção é diferente. O diagnóstico roda como `postgres`, ignora RLS, e mostra
-as duas coisas lado a lado.
+Não altera nada, só relata. Devolve **um único resultado** de propósito: o SQL
+Editor do Supabase mostra apenas a saída da última instrução quando o script tem
+várias, então uma versão com vários `SELECT` esconderia todas as checagens menos
+a final.
+
+A linha `movimento` mostra contagens de CNPJs, competências, eventos e
+documentos. **Zeros ali são esperados** antes do primeiro cadastro e não indicam
+falha — o que importa são as linhas com estado `FALHA`.
+
+Responde também o que de fora não se distingue: uma tabela que devolve lista
+vazia na API REST pode estar **sem dados** ou com **RLS ligada sem policy**. As
+duas são indistinguíveis pelo cliente e a correção é diferente. O script roda
+como `postgres`, ignora RLS, e mostra as duas coisas lado a lado.
 
 ## 5. Suba a API
 
