@@ -41,19 +41,19 @@ ordem**. Cada um depende das tabelas do anterior.
 | 5 | `05-catalogo-de-itens.sql` | catálogo com classificação por vigência, tabelas de códigos oficiais, `item_propagation()` |
 | 6 | `06-apuracao-dual.sql` | motor de regras com vigência, apuração dual e memória de cálculo |
 | 7 | `07-reporting.sql` | catálogo das trilhas de auditoria (12 trilhas) e a tabela do Book de fechamento |
-| 8 | `08-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 8 | `08-contra-apuracao.sql` | proposta do Fisco, divergências nota a nota e o calendário da carteira |
+| 9 | `09-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
 > **Os arquivos são renumerados quando uma onda nova entra.** Se você já aplicou
 > uma versão anterior, rode os que faltam e ignore o bootstrap — ele é
 > idempotente e avisa que o usuário já pertence a um escritório. `npm run doctor`
 > diz exatamente quais tabelas faltam e de qual arquivo elas vêm.
 
-> **Já aplicou até o `07-bootstrap-escritorio.sql` de antes?** Ele agora é o
-> `08`, e o número 7 passou a ser o `07-reporting.sql`. Rode só o
-> `07-reporting.sql`: o bootstrap você já executou, e reexecutá-lo não faria
-> diferença — é idempotente.
+> **Já aplicou até o `07-reporting.sql`?** Rode só o `08-contra-apuracao.sql`.
+> O bootstrap mudou de número outra vez (era `08`, agora é `09`) e você já o
+> executou; reexecutá-lo não faria diferença — é idempotente.
 
-Antes de executar o passo 8, edite as duas linhas marcadas:
+Antes de executar o passo 9, edite as duas linhas marcadas:
 
 ```sql
   -- ┌──────────────────────────── CONFIGURE ────────────────────────────┐
@@ -62,7 +62,7 @@ Antes de executar o passo 8, edite as duas linhas marcadas:
   -- └───────────────────────────────────────────────────────────────────┘
 ```
 
-O passo 8 termina com uma consulta de conferência. Deve devolver **uma linha**
+O passo 9 termina com uma consulta de conferência. Deve devolver **uma linha**
 com o seu e-mail e o papel `owner`:
 
 ```

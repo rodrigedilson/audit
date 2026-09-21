@@ -4,6 +4,7 @@ import {
   diagnosticar,
   classificarFalhaDeConexao,
   checarTrilhas,
+  checarPrazosNormativos,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
 
@@ -362,6 +363,15 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
          values ('credit_share', 'icms', 1.0, '2026-01-01', 'regra de teste do doctor')
          on conflict do nothing`,
       );
+      await pool.query(
+        `insert into deadline_rules (
+           rule_id, name, description, nature, months_after, day_of_month,
+           severity, legal_basis
+         ) values ('prazo-de-teste-do-doctor', 'Prazo de teste',
+                   'Semeado pelo teste do doctor', 'normativo', 1, 20,
+                   'high', 'Norma fictícia, só para o teste do diagnóstico')
+         on conflict do nothing`,
+      );
 
       const resultado = await diagnosticar({
         ...ENV_BASE,
@@ -412,5 +422,36 @@ describe('checarTrilhas — catálogo vazio', () => {
 
   it('reprova catálogo parcial, não só o vazio', async () => {
     expect((await checarTrilhas(poolFalso(11))).estado).toBe('falha');
+  });
+});
+
+/**
+ * Prazos normativos, testado sem banco: `deadline_rules` é dado normativo
+ * global, e o arquivo de teste da contra-apuração lê a mesma tabela em
+ * paralelo. Mesma razão do teste de trilhas acima.
+ */
+describe('checarPrazosNormativos', () => {
+  const poolFalso = (total: number): pg.Pool =>
+    ({
+      query: async () => ({ rows: [{ total: String(total) }] }),
+    }) as unknown as pg.Pool;
+
+  it('aprova quando há prazo carregado', async () => {
+    const r = await checarPrazosNormativos(poolFalso(3));
+
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toContain('3 regra(s)');
+  });
+
+  /**
+   * Aviso e não falha: o calendário funciona sem prazo de norma. Mas a lista
+   * vazia precisa ser lida como "nada carregado", e não como "nada a vencer".
+   */
+  it('avisa sem falhar quando nenhum prazo está carregado', async () => {
+    const r = await checarPrazosNormativos(poolFalso(0));
+
+    expect(r.estado).toBe('aviso');
+    expect(r.acao).toContain('normative_rules_loaded');
+    expect(r.acao).toContain('base legal');
   });
 });

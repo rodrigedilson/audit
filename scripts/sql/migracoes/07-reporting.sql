@@ -1,5 +1,11 @@
 -- =============================================================================
--- audit — passo 7 de 8: reporting
+-- audit — passo 7 de 9: reporting
+--
+-- Catálogo das 12 trilhas de auditoria e a tabela do Book de fechamento.
+-- As trilhas semeadas são exatamente as checagens que ESTE sistema
+-- executa, e não uma lista de verificações da RFB. Os bytes do PDF ficam
+-- guardados: o Book carrega um hash no rodapé e regerá-lo depois de uma
+-- regra mudar produziria outro arquivo com o mesmo número.
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260921140000_reporting.sql
 -- Não edite aqui: altere a migration de origem.

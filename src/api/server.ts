@@ -15,6 +15,7 @@ import { registerIngestionRoutes } from './routes/ingestion.routes.js';
 import { registerCatalogRoutes } from './routes/catalog.routes.js';
 import { registerAssessmentRoutes } from './routes/assessment.routes.js';
 import { registerReportingRoutes } from './routes/reporting.routes.js';
+import { registerReconciliationRoutes } from './routes/reconciliation.routes.js';
 import { AsaasClient } from '../billing/asaas-client.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
@@ -120,6 +121,19 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     limits: { fileSize: 5 * 1024 * 1024, files: 200, fields: 8 },
   });
 
+  /**
+   * CSV como corpo cru, para a proposta do Fisco poder subir com um
+   * `curl --data-binary @proposta.csv`. Guardado como string e não parseado
+   * aqui: quem sabe interpretar o layout é o parser do módulo.
+   */
+  app.addContentTypeParser(
+    ['text/csv', 'text/plain'],
+    { parseAs: 'string', bodyLimit: 20 * 1024 * 1024 },
+    (_request, body, done) => {
+      done(null, body);
+    },
+  );
+
   app.get('/v1/health', async () => ({ status: 'ok' }));
 
   /**
@@ -148,6 +162,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerCatalogRoutes(instance, deps);
       await registerAssessmentRoutes(instance, deps);
       await registerReportingRoutes(instance, deps);
+      await registerReconciliationRoutes(instance, deps);
     },
     { prefix: '/v1' },
   );
