@@ -16,9 +16,9 @@ O frontend deste projeto é desenvolvido externamente utilizando o **Lovable** (
 │  │  Este repo    │  API  │   Repo separado      ││
 │  └──────────────┘       └──────────────────────┘│
 │         │                         │              │
-│    Python/Node              React/Vite           │
-│    Claude Flow              Lovable.dev          │
-│    Hive Mind                UI Components        │
+│    Node / Fastify           React / Vite         │
+│    Event sourcing           Lovable.dev          │
+│    Postgres (Supabase)      shadcn/ui            │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -91,60 +91,90 @@ grep -rnE '(bg|text|border)-\[#|dark:|rounded-(xl|2xl|3xl)|shadow-(xl|2xl)' src/
 ## Convenções de Integração
 
 ### Branches
-- `main` - Produção estável
-- `develop` - Desenvolvimento ativo
-- `feature/*` - Features individuais
-- `hotfix/*` - Correções urgentes
+- `main` — produção estável
+- `feature/*` — uma branch por entrega, com PR para `main`
 
 ### API Contract
 O backend expõe APIs REST que o frontend consome. O contrato é definido via OpenAPI.
 
 ```
-Localização: docs/api/openapi.yaml
+Localização: docs/api/openapi.yaml   (OAS 3.0.3, v1.0.0)
+```
+
+Gere os tipos a partir dele em vez de escrevê-los à mão:
+
+```bash
+npx openapi-typescript ../audit/docs/api/openapi.yaml -o src/api/schema.d.ts
 ```
 
 ### Variáveis de Ambiente
+
+No **frontend**, uma só:
+
 ```bash
-# .env.example
-API_URL=http://localhost:3000
-FRONTEND_URL=http://localhost:5173
-CORS_ORIGINS=http://localhost:5173,https://app.lovable.dev
+VITE_API_URL=http://localhost:3000
+```
+
+O frontend **não recebe chave do Supabase**. A autenticação passa pela nossa API
+(`POST /v1/auth/login`, que repassa o grant ao Supabase Auth e devolve o token
+junto do escritório resolvido), e os dados fiscais só saem por rota autenticada.
+Dar a chave anon ao frontend abriria um caminho de leitura que não passa pelo
+orquestrador nem pelas 7 camadas de validação.
+
+No **backend**:
+
+```bash
+CORS_ORIGINS=http://localhost:5173,https://<projeto>.lovable.app
 ```
 
 ### CORS
-O backend deve permitir origens do Lovable durante desenvolvimento:
-- `http://localhost:5173` (dev local)
-- `https://*.lovable.app` (preview do Lovable)
-- Domínio de produção (configurável)
+
+`CORS_ORIGINS` é uma lista de **origens exatas** e não aceita curinga. Sem a
+variável, o padrão é apenas `http://localhost:5173` — liberar `*` por omissão
+transformaria um esquecimento de configuração em CORS aberto num produto que
+custodia certificado digital de terceiros.
+
+Então a origem do preview do Lovable entra explícita, e a de produção também.
 
 ## Fluxo de Trabalho
 
 ### 1. Desenvolvimento Local
 ```bash
 # Backend (este repo)
-source .venv/bin/activate
-npm run dev       # ou python src/main.py
+npm run build
+node dist/cli/audit.js serve     # http://localhost:3000
+npm run doctor                   # confere o ambiente antes de subir
 
-# Frontend (repo Lovable) - desenvolvido via lovable.dev
-# Acessar: https://lovable.dev/projects/<project-id>
+# Frontend (repo Lovable)
+cd ../audit-frontend && npm run dev   # http://localhost:5173
 ```
+
+O passo a passo completo de construção do frontend está em
+[`LOVABLE.md`](LOVABLE.md).
 
 ### 2. Integração Contínua
 - Backend: push para `main` → deploy automático
 - Frontend: Lovable publica no repo `audit-frontend` → deploy via GitHub Actions
 
 ### 3. Testes de Integração
+
+Os testes de API do backend cobrem o contrato do lado dele:
+
 ```bash
-# Rodar testes E2E que validam contrato frontend-backend
-pytest tests/integration/ -v
+TEST_DATABASE_URL=postgresql://... npm test
+```
+
+O contrato em si é validado à parte:
+
+```bash
+npx @redocly/cli lint docs/api/openapi.yaml
 ```
 
 ## Estrutura de Dados Compartilhada
 
-Os DTOs (Data Transfer Objects) compartilhados entre frontend e backend ficam documentados em:
-```
-docs/api/schemas/
-```
+Os schemas ficam **dentro** do `openapi.yaml`, em `components/schemas`, e não em
+arquivos soltos: o contrato precisa validar como uma peça só, e um DTO fora dele
+é um DTO que ninguém garante.
 
 ## Sincronização com Lovable
 
