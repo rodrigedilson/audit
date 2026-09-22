@@ -3,7 +3,7 @@ import type { ApiDeps } from '../server.js';
 import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { syncPortfolioReadModel } from '../../fiscal/portfolio/portfolio-read-model.js';
-import { REGIMES } from '../../fiscal/shared/fiscal-vocabulary.js';
+import { PERIOD_STATES, REGIMES } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 
 const CNPJ_PARAM = {
@@ -23,9 +23,6 @@ interface ListQuery {
   status?: string;
   state?: string;
 }
-
-/** Estados da competência, na ordem do fechamento. `confirmed` é terminal. */
-const PERIOD_STATES = ['open', 'assessed', 'reconciled', 'confirmed'] as const;
 
 /** Status do CNPJ na carteira. É a base da cobrança: só `active` é faturado. */
 const CLIENT_STATUSES = ['active', 'inactive'] as const;
