@@ -16,6 +16,8 @@ export interface ItemResumo {
   ncm: string | null;
   nbs: string | null;
   health: Health;
+  /** Nunca classificado. `health` vem `warning`, que é o mais próximo dos três. */
+  never_classified: boolean;
   health_reasons: string[];
   effective_from: string | null;
   documents_affected: number;
@@ -27,6 +29,18 @@ export interface CatalogHealth {
   ok: number;
   warning: number;
   error: number;
+  /**
+   * Itens que nunca foram classificados.
+   *
+   * Ficava somado a `warning`, e são coisas diferentes: aviso é trabalho feito
+   * com pendência, nunca classificado é trabalho que não começou. Num CNPJ
+   * recém-importado os dois números são idênticos, e o escritório precisa saber
+   * qual dos dois está vendo para decidir o que fazer.
+   *
+   * Com o campo separado, `ok + warning + error + never_classified` fecha em
+   * `items_total`.
+   */
+  never_classified: number;
   /** Notas **emitidas** contaminadas por item com problema. É o diferencial. */
   outbound_documents_affected: number;
   inbound_documents_affected: number;
@@ -172,7 +186,7 @@ export class CatalogService {
 
   async listItems(
     scope: EventScope,
-    filtro: { health?: Health; page: number; pageSize: number },
+    filtro: { health?: Health | 'never'; page: number; pageSize: number },
   ): Promise<{ items: ItemResumo[]; total: number }> {
     const { rows } = await this.pool.query(
       `with vigente as (
@@ -193,7 +207,12 @@ export class CatalogService {
          left join vigente v on v.item_id = i.item_id
          left join propagacao p on p.item_id = i.item_id
         where i.tenant_id = $1::uuid and i.cnpj = $2::char(14)
-          and ($3::text is null or v.health = $3::text)
+          -- O filtro casa com o que a lista mostra. Antes, health=warning nao
+          -- devolvia o item nunca classificado, embora a lista o exibisse como
+          -- warning: filtrar pelo valor do proprio badge fazia a linha sumir.
+          and ($3::text is null
+               or ($3::text = 'never' and v.health is null)
+               or ($3::text <> 'never' and v.health = $3::text))
         order by
           -- Pior saúde primeiro, e dentro dela o que contamina mais notas: é a
           -- ordem em que o escritório deve atacar a fila.
@@ -217,6 +236,14 @@ export class CatalogService {
         ncm: trimOrNull(row['ncm']),
         nbs: trimOrNull(row['nbs']),
         health: (row['health'] as Health | null) ?? 'warning',
+        /**
+         * Nunca classificado, e não classificado com aviso.
+         *
+         * `health` vem `warning` para os dois porque o tipo só tem três valores;
+         * sem este booleano a tela não conseguiria dizer qual dos dois é, e a
+         * diferença decide o que o escritório faz com a linha.
+         */
+        never_classified: row['health'] === null,
         // A lista mostra mensagens; a estrutura fica no banco para as trilhas.
         health_reasons: (row['health_issues'] as { message: string }[] | null)?.map(
           (i) => i.message,
@@ -296,12 +323,11 @@ export class CatalogService {
       .reduce((total, m) => total + Number(m.total), 0);
 
     return {
-      // Item nunca classificado conta como warning: não é "ok", e omiti-lo
-      // esconderia justamente o trabalho que falta.
       items_total: Number(r.total),
       ok: Number(r.ok),
-      warning: Number(r.warning) + Number(r.nunca),
+      warning: Number(r.warning),
       error: Number(r.error),
+      never_classified: Number(r.nunca),
       outbound_documents_affected: Number(p.outbound),
       inbound_documents_affected: Number(p.inbound),
       amount_at_stake_cents: Number(p.valor),
