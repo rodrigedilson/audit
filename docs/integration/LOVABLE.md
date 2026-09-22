@@ -307,7 +307,7 @@ Esta é a tabela de decisão. Cada linha é um commit.
 |---|---|---|---|
 | `hooks/useAuth.tsx`, `hooks/useProfile.tsx` | 2 | **feito** — `GET /v1/me` como fonte de papel e escritório | 0h |
 | `hooks/useFileUpload.tsx`, `hooks/useFileList.tsx` | 2 | **feito** — `useDocumentIngestion` + `ClientSelector`, com o 207 | 0h |
-| `features/xml-import/hooks/useXmlImport` | 1 | Substituído por `/fiscal/ingestao`. O antigo grava em `xml_documents` sem passar pelas 7 camadas — **aposentar** | 2–3h |
+| `features/xml-import/hooks/useXmlImport` | 1 | **feito, mas não como estava escrito** — ver a correção abaixo | 0h |
 | `features/xml-import/` cross-reference | 8 | **fica** — compara XML × SPED em ICMS, IPI, PIS e Cofins; o `audit` não tem isso | 0h |
 | `features/sped-upload/` EFD-Contribuições | — | **feito** — `/fiscal/dossie` importa e monta o dossiê de saldo credor | 0h |
 | `features/sped-upload/` EFD ICMS/IPI | 6 | **fica** — o `audit` não parseia esse layout | 0h |
@@ -315,6 +315,24 @@ Esta é a tabela de decisão. Cada linha é um commit.
 | `features/knowledge-graph/` | 2 | **fica como está** | 0h |
 | `features/cfop-manual/` | 2 | **fica como está** por ora; ver a nota abaixo | 0h |
 | `pages/AuthTest.tsx` | 1 | **feito** — removida, era página de teste em produção | 0h |
+
+### Correção: aposentar o `useXmlImport` teria custado capacidade
+
+Esta tabela mandava **aposentar** o `useXmlImport` e, duas linhas abaixo, mandava
+o cross-reference **ficar**. As duas coisas não cabiam juntas: o cross-reference
+lê `xml_documents`, e quem popula `xml_documents` é exatamente o import que a
+tabela mandava apagar. O grafo de conhecimento depende da mesma tabela. É a
+segunda vez que esta tabela custaria capacidade — a primeira foi a
+EFD-Contribuições.
+
+O que foi feito: **um upload, dois destinos**. No detalhe da empresa, quando o
+CNPJ está na carteira fiscal, os mesmos XMLs seguem primeiro pela ingestão do
+`audit` — 7 camadas, evento com hash, recusa nomeada — e depois pelo import que
+alimenta `xml_documents`. Nenhum dado fiscal entra mais fora do event log, e o
+cruzamento continua existindo.
+
+Quando o CNPJ não está na carteira, a tela diz em cor de aviso que aqueles XMLs
+não passaram por validação nenhuma, e linka o cadastro.
 
 ### A sobreposição que sobrou, e a decisão que ela pede
 
