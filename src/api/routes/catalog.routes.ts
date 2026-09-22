@@ -37,7 +37,10 @@ interface ClassificationBody {
 export async function registerCatalogRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
   const catalog = new CatalogService(deps.pool);
 
-  app.get<{ Params: CnpjParams; Querystring: { health?: Health; page?: number; page_size?: number } }>(
+  app.get<{
+    Params: CnpjParams;
+    Querystring: { health?: Health | 'never'; page?: number; page_size?: number };
+  }>(
     '/clients/:cnpj/items',
     {
       schema: {
@@ -45,7 +48,11 @@ export async function registerCatalogRoutes(app: FastifyInstance, deps: ApiDeps)
         querystring: {
           type: 'object',
           properties: {
-            health: { type: 'string', enum: ['ok', 'warning', 'error'] },
+            // `never` isola o item nunca classificado, que é trabalho não
+            // começado — distinto de `warning`, que é trabalho feito com
+            // pendência. Os dois somados eram um número só, e a tela não
+            // conseguia dizer qual estava mostrando.
+            health: { type: 'string', enum: ['ok', 'warning', 'error', 'never'] },
             page: { type: 'integer', minimum: 1, default: 1 },
             page_size: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
           },
@@ -55,7 +62,7 @@ export async function registerCatalogRoutes(app: FastifyInstance, deps: ApiDeps)
     async (request, reply) => {
       const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
 
-      const filtro: { health?: Health; page: number; pageSize: number } = {
+      const filtro: { health?: Health | 'never'; page: number; pageSize: number } = {
         page: request.query.page ?? 1,
         pageSize: request.query.page_size ?? 50,
       };

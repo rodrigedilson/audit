@@ -366,13 +366,58 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
 
       const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();
 
-      // Nunca classificado conta como aviso: nao e "ok".
+      // Nunca classificado e um estado proprio: nao e "ok", e nao e "aviso".
+      // Aviso e trabalho feito com pendencia; nunca classificado e trabalho que
+      // nao comecou, e o escritorio faz coisas diferentes com cada um.
       expect(body.items_total).toBe(1);
-      expect(body.warning).toBe(1);
+      expect(body.never_classified).toBe(1);
+      expect(body.warning).toBe(0);
+
+      // A soma fecha: nenhum item cai em duas contagens nem em nenhuma.
+      expect(body.ok + body.warning + body.error + body.never_classified).toBe(
+        body.items_total,
+      );
 
       // E o que o defeito escondia: a nota emitida que carrega esse item.
       expect(body.outbound_documents_affected).toBe(1);
       expect(body.amount_at_stake_cents).toBe(250_000);
+    });
+
+    /**
+     * O filtro tem de casar com o que a lista mostra.
+     *
+     * `health=warning` nao devolvia o item nunca classificado, embora a lista o
+     * exibisse com badge de aviso: filtrar pelo valor do proprio badge fazia a
+     * linha sumir, e o contador concluia que tinha resolvido o item.
+     */
+    it('o filtro never isola o item nunca classificado', async () => {
+      await pool.query(
+        `insert into items (tenant_id, cnpj, item_id, description)
+         values ($1::uuid, $2::char(14), 'SKU-NUNCA', 'Item sem classificacao')`,
+        [tenantId, cnpj],
+      );
+      await call('PUT', `/v1/clients/${cnpj}/items/SKU-CLASSIFICADO/classification`, owner, {
+        effective_from: '2027-09',
+        ncm: '12345678',
+      });
+
+      const nunca = (await call('GET', `/v1/clients/${cnpj}/items?health=never`, owner)).json();
+      expect(nunca.items.map((i: { item_id: string }) => i.item_id)).toEqual(['SKU-NUNCA']);
+      expect(nunca.items[0].never_classified).toBe(true);
+
+      // Filtrar pelo badge que a lista mostra tem de devolver a linha. Descobre
+      // o badge do item classificado e filtra por ele.
+      const todos = (await call('GET', `/v1/clients/${cnpj}/items`, owner)).json()
+        .items as { item_id: string; health: string; never_classified: boolean }[];
+      const classificado = todos.find((i) => i.item_id === 'SKU-CLASSIFICADO')!;
+      expect(classificado.never_classified).toBe(false);
+
+      const porBadge = (
+        await call('GET', `/v1/clients/${cnpj}/items?health=${classificado.health}`, owner)
+      ).json();
+      const ids = porBadge.items.map((i: { item_id: string }) => i.item_id);
+      expect(ids).toContain('SKU-CLASSIFICADO');
+      expect(ids).not.toContain('SKU-NUNCA');
     });
 
     it('carteira sem item classificado devolve zeros sem erro', async () => {

@@ -495,7 +495,12 @@ paths:
         - $ref: "#/components/parameters/PageSize"
         - in: query
           name: health
-          schema: { type: string, enum: [ok, warning, error] }
+          schema: { type: string, enum: [ok, warning, error, never] }
+          description: |
+            `never` isola o item **nunca classificado** — trabalho que não
+            começou, distinto de `warning`, que é trabalho feito com pendência.
+            O item nunca classificado responde só a `never`: filtrar pelo badge
+            que a lista mostra tem de devolver a linha.
       responses:
         "200":
           description: OK
@@ -1599,6 +1604,17 @@ components:
         nbs: { type: string, nullable: true }
         classification: { $ref: "#/components/schemas/Classification" }
         health: { type: string, enum: [ok, warning, error] }
+        never_classified:
+          type: boolean
+          description: |
+            Nunca classificado. `health` vem `warning` para estes, que é o mais
+            próximo dos três valores — sem este booleano a tela não distingue
+            "aviso" de "nem começou", e a diferença decide o que fazer com a
+            linha.
+        effective_from:
+          type: string
+          nullable: true
+          description: Vigência da classificação vigente. `null` se nunca classificado.
         health_reasons:
           type: array
           items: { type: string }
@@ -1622,8 +1638,31 @@ components:
       properties:
         items_total: { type: integer }
         ok: { type: integer }
-        warning: { type: integer }
+        warning:
+          type: integer
+          description: Classificados, com pendência. **Não** inclui os nunca classificados.
         error: { type: integer }
+        never_classified:
+          type: integer
+          description: |
+            Itens que nunca foram classificados. Ficava somado a `warning`, e são
+            coisas diferentes: aviso é trabalho feito com pendência, nunca
+            classificado é trabalho que não começou. `ok + warning + error +
+            never_classified` fecha em `items_total`.
+        not_verified:
+          type: integer
+          description: |
+            Itens que não puderam ser verificados por falta das tabelas oficiais.
+            Campo próprio para não se confundir com "está tudo certo".
+        reference_tables_loaded: { type: boolean }
+        notice:
+          type: string
+          description: |
+            Presente somente quando `reference_tables_loaded` é `false`. A tela
+            deve exibi-lo com destaque: sem as tabelas, "nenhum erro" não
+            significa "correto".
+        inbound_documents_affected: { type: integer }
+        amount_at_stake_cents: { type: integer }
         outbound_documents_affected: { type: integer }
         top_reasons:
           type: array
