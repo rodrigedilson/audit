@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import pg from 'pg';
+import { ignorarErroDeClienteOcioso } from '../infrastructure/persistence/pool-errors.js';
 import type { Env } from '../config/env.js';
 import { JwtVerifier } from './auth/jwt-verifier.js';
 import { TenantResolver, type TenantContext } from './auth/tenant-resolver.js';
@@ -87,7 +88,14 @@ export interface BuildServerOptions {
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
   const { env } = options;
-  const pool = options.pool ?? new pg.Pool({ connectionString: env.databaseUrl });
+  let pool = options.pool;
+  if (pool === undefined) {
+    pool = new pg.Pool({ connectionString: env.databaseUrl });
+    // Sem isto, o Supabase encerrar uma conexão ociosa derruba o servidor.
+    // Só no pool que criamos: anexar a um pool injetado acumularia um listener
+    // por `buildServer`, e os testes constroem vários sobre o mesmo pool.
+    ignorarErroDeClienteOcioso(pool, 'ApiPool');
+  }
 
   // O contrato de agentes é carregado uma vez, no start: relê-lo por requisição
   // seria I/O de disco no caminho quente, e ele não muda em runtime.

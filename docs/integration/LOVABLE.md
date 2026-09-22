@@ -397,13 +397,13 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | ~~8 Apuração dual~~ | `/assessments/{period}`, `/trace`, `/adjustments`, `/confirm` | **feita** |
 | ~~9 Trilhas + Book~~ | `/audit-trails`, `/books/{period}`, `/download` | **feita** |
 | ~~10 Contra-apuração e calendário~~ | `/fisco-assessments/{period}`, `/deadlines` | **feita** |
-| 11 Assistente fiscal | `/assistant/threads`, `/messages` | 6–8h |
+| ~~11 Assistente fiscal~~ | `/assistant/threads`, `/messages`, `/usage`, `/capabilities` | **feita** |
 | 12 Crédito em risco | `/bank-statements`, `/credits/at-risk` | 5–7h |
 | 13 Simulador | `/simulations`, `/methodology` | 6–8h |
 | 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
 | 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-**Esforço restante: 22–30h.** A ordem é a da tabela: a carteira primeiro, porque
+**Esforço restante: 16–22h.** A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
 
 A carteira rendeu duas correções no backend, que valem como aviso para as telas
@@ -446,6 +446,13 @@ A tela 10 foi a primeira **sem divergência**: os schemas de `FiscoComparison`,
 `Divergence`, `ComparisonSummary`, `Deadline` e `Pendency` descrevem exatamente
 o que as rotas devolvem. Foram escritos junto da Onda 8, e não antes dela — que
 é o que explica a diferença para os schemas das Ondas 2 e 6.
+
+A tela 11 também não achou divergência — o assistente já distinguia `403` de
+`429` e já devolvia `X-Assistant-Remaining`. Mas ela acrescentou uma trava que
+não existia: o executor de `suggested[]` recusa endpoint fora de
+`/clients/{cnpj}/`. A sugestão vem da nossa própria API, e ainda assim uma tela
+que dispara qualquer endereço que a resposta mandar confia em dado remoto para
+escolher o que escrever no event log.
 
 ---
 
