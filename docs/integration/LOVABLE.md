@@ -294,16 +294,43 @@ configurar as variáveis na Vercel).
 
 Esta é a tabela de decisão. Cada linha é um commit.
 
+> **Revisão desta tabela, feita ao executá-la.** A versão anterior mandava
+> migrar `features/xml-import` e `features/sped-upload` por inteiro, e isso
+> **perderia capacidade**. Conferido no código: o parser do front cobre
+> `efd-icms-ipi` **e** `efd-contribuicoes`, e o cross-reference compara ICMS,
+> IPI, PIS e Cofins campo a campo entre XML e SPED. O `audit` cobre só
+> EFD-Contribuições, e o dossiê confere só PIS/Cofins. Então o que migra é a
+> **ingestão de XML** e o **saldo credor**; o cross-reference e o EFD ICMS/IPI
+> ficam, porque não têm equivalente.
+
 | Feature / hook | Arquivos | Destino | Esforço |
 |---|---|---|---|
-| `hooks/useAuth.tsx`, `hooks/useProfile.tsx` | 2 | `GET /v1/me` como fonte de papel e escritório; login segue no Supabase Auth | 3–4h |
-| `hooks/useFileUpload.tsx`, `hooks/useFileList.tsx` | 2 | `POST /v1/clients/{cnpj}/documents` (207 Multi-Status), `GET .../documents` | 5–7h |
-| `features/xml-import/` | 9 | Ingestão (Onda 4) + contra-apuração `POST/GET /fisco-assessments/{period}` (Onda 8) | 10–14h |
-| `features/sped-upload/` | 6 | `POST /v1/clients/{cnpj}/sped` + `GET /credit-dossier/{period}` (Onda 12) | 8–12h |
+| `hooks/useAuth.tsx`, `hooks/useProfile.tsx` | 2 | **feito** — `GET /v1/me` como fonte de papel e escritório | 0h |
+| `hooks/useFileUpload.tsx`, `hooks/useFileList.tsx` | 2 | **feito** — `useDocumentIngestion` + `ClientSelector`, com o 207 | 0h |
+| `features/xml-import/hooks/useXmlImport` | 1 | Substituído por `/fiscal/ingestao`. O antigo grava em `xml_documents` sem passar pelas 7 camadas — **aposentar** | 2–3h |
+| `features/xml-import/` cross-reference | 8 | **fica** — compara XML × SPED em ICMS, IPI, PIS e Cofins; o `audit` não tem isso | 0h |
+| `features/sped-upload/` EFD-Contribuições | — | **feito** — `/fiscal/dossie` importa e monta o dossiê de saldo credor | 0h |
+| `features/sped-upload/` EFD ICMS/IPI | 6 | **fica** — o `audit` não parseia esse layout | 0h |
 | `features/entity-extraction/` | 8 | **fica como está** — o `audit` não tem equivalente | 0h |
 | `features/knowledge-graph/` | 2 | **fica como está** | 0h |
 | `features/cfop-manual/` | 2 | **fica como está** por ora; ver a nota abaixo | 0h |
-| `pages/AuthTest.tsx` | 1 | Apagar — é página de teste em produção | 15min |
+| `pages/AuthTest.tsx` | 1 | **feito** — removida, era página de teste em produção | 0h |
+
+### A sobreposição que sobrou, e a decisão que ela pede
+
+Com a EFD-Contribuições indo para o `audit` e o EFD ICMS/IPI ficando no front,
+o mesmo tipo de arquivo passa a ter dois destinos possíveis. Há duas saídas, e a
+escolha é de produto, não técnica:
+
+- **Importar a EFD-Contribuições nos dois**: o front para o cross-reference de
+  todos os tributos, o `audit` para o dossiê de saldo credor. Custa parsing
+  duplicado e ganha as duas saídas.
+- **Estender o `audit` para EFD ICMS/IPI** e aposentar o parser do front. É onda
+  nova, não migração — e aí o cross-reference também migraria, virando uma
+  extensão do dossiê para todos os tributos.
+
+Enquanto não houver decisão, as duas entradas ficam separadas e rotuladas na
+sidebar, que é o que já está feito.
 
 > **Nota sobre CFOP:** o `audit` tem `fiscal_codes` e `cclasstrib_cst` (Onda 5),
 > que são as tabelas oficiais usadas pela camada 3 de validação, e elas **nascem
@@ -335,7 +362,8 @@ Não é refatoração por gosto. O que muda para o usuário:
 
 Depois de cada um: rode o passo 6.
 
-**Esforço total do passo: 26–37h.**
+**Esforço restante do passo: 2–3h** (era 26–37h; sobrou aposentar o
+`useXmlImport` antigo).
 
 ---
 
@@ -470,11 +498,11 @@ event log.
 | **2** | Migrar o dado fiscal — simulação **feita**; falta executar | **2–4h** |
 
 | **3** | Cliente de API — **feito**; falta configurar a Vercel | **1–2h** |
-| **4** | Migrar as 4 features acopladas | **26–37h** |
+| **4** | Migrar as features acopladas — quase tudo **feito** | **2–3h** |
 | **5** | As 13 telas que faltam | **55–77h** |
 | **6** | Auditoria das cinco regras — 2h × 6 rodadas | **12h** |
 | **7** | Verificação e roteiro funcional | **4–6h** |
-| | **Total** | **~102–141h** |
+| | **Total** | **~78–110h** |
 
 Para uma pessoa em tempo integral: **3 a 4 semanas**. Em meio período, dobre.
 
