@@ -3,7 +3,7 @@ import type { ApiDeps } from '../server.js';
 import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { syncPortfolioReadModel } from '../../fiscal/portfolio/portfolio-read-model.js';
-import { REGIMES } from '../../fiscal/shared/fiscal-vocabulary.js';
+import { PERIOD_STATES, REGIMES } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 
 const CNPJ_PARAM = {
@@ -23,9 +23,6 @@ interface ListQuery {
   status?: string;
   state?: string;
 }
-
-/** Estados da competência, na ordem do fechamento. `confirmed` é terminal. */
-const PERIOD_STATES = ['open', 'assessed', 'reconciled', 'confirmed'] as const;
 
 /** Status do CNPJ na carteira. É a base da cobrança: só `active` é faturado. */
 const CLIENT_STATUSES = ['active', 'inactive'] as const;
@@ -162,10 +159,14 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
       const { rows } = await deps.pool.query(
         `select c.cnpj, c.legal_name, c.trade_name, c.regime, c.uf,
                 c.municipality_ibge, c.cnae_primary, c.status, c.created_at,
+                -- Do cofre, e não do log: o log é append-only, então
+                -- "existe certificate.stored" continua verdadeiro depois de
+                -- remover o certificado. O cabeçalho do cliente diria que há
+                -- certificado guardado quando não há, e a coleta de DF-e
+                -- falharia sem ninguém entender por quê.
                 exists (
-                  select 1 from events e
-                   where e.tenant_id = c.tenant_id and e.cnpj = c.cnpj
-                     and e.action = 'certificate.stored'
+                  select 1 from certificates cert
+                   where cert.tenant_id = c.tenant_id and cert.cnpj = c.cnpj
                 ) as has_certificate
            from clients c
           where c.tenant_id = $1::uuid and c.cnpj = $2::char(14)`,

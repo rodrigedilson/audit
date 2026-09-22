@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -93,6 +93,17 @@ describe('bootstrap', () => {
   let dir: string;
 
   beforeEach(async () => {
+    /**
+     * Força o caminho JSONL.
+     *
+     * `bootstrap` escolhe o Postgres quando há `DATABASE_URL` no ambiente, e
+     * estes testes usam o `TEST_SCOPE` fixo. Com o `.env` carregado eles
+     * gravavam eventos de verdade no banco de desenvolvimento, sob um escopo
+     * estável — e como o log é append-only, a contagem crescia a cada execução:
+     * passavam na primeira e falhavam da segunda em diante. O que se está
+     * testando aqui é a montagem do grafo, não o backend de persistência.
+     */
+    vi.stubEnv('DATABASE_URL', '');
     dir = await mkdtemp(join(tmpdir(), 'esaa-boot-'));
     await mkdir(join(dir, 'config'), { recursive: true });
     await mkdir(join(dir, '.roadmap'), { recursive: true });
@@ -102,6 +113,7 @@ describe('bootstrap', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await rm(dir, { recursive: true });
   });
 

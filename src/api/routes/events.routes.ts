@@ -70,6 +70,50 @@ export async function registerEventRoutes(app: FastifyInstance, deps: ApiDeps): 
   );
 
   /**
+   * Resumo da trilha: quais ações existem neste log, e quantas.
+   *
+   * Existe para o filtro da trilha oferecer **só o que está no log**. A
+   * alternativa era a tela listar o vocabulário fiscal inteiro — 30 ações, das
+   * quais a maioria nunca ocorreu naquele CNPJ — e o contador escolher um
+   * filtro que devolve vazio sem saber se é porque não houve ou porque errou.
+   *
+   * Também responde de relance o que aconteceu no CNPJ: 578 `doc.received` e 4
+   * `output.rejected` é uma frase inteira sobre o mês.
+   */
+  app.get<{ Params: CnpjParams }>(
+    '/clients/:cnpj/events/summary',
+    { schema: { params: CNPJ_PARAM } },
+    async (request, reply) => {
+      const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
+
+      const { rows } = await deps.pool.query<{
+        action: string;
+        count: string;
+        last_seq: string;
+        last_ts: Date;
+      }>(
+        `select action, count(*) as count,
+                max(event_seq) as last_seq, max(ts) as last_ts
+           from events
+          where tenant_id = $1::uuid and cnpj = $2::char(14)
+          group by action
+          order by count(*) desc, action`,
+        [scope.tenantId, scope.cnpj],
+      );
+
+      return reply.code(200).send({
+        actions: rows.map((row) => ({
+          action: row.action,
+          count: Number(row.count),
+          last_seq: Number(row.last_seq),
+          last_ts: row.last_ts,
+        })),
+        total: rows.reduce((soma, row) => soma + Number(row.count), 0),
+      });
+    },
+  );
+
+  /**
    * `POST /clients/{cnpj}/verify` — INV-006. Reprojeta o log do zero, de
    * propósito: é o único caminho que não confia em snapshot nenhum, e por isso o
    * único que serve como prova.

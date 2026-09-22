@@ -391,7 +391,7 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 |---|---|---|
 | ~~2 Carteira de CNPJs~~ | `GET /v1/clients` | **feita** |
 | ~~3 Cadastro de empresa~~ | `POST /v1/clients` | **feita** |
-| 4 Detalhe do cliente | `GET /v1/clients/{cnpj}` | 3–4h |
+| ~~4 Detalhe do cliente~~ | `GET /v1/clients/{cnpj}`, `/periods`, `/events` | **feita** |
 | 5 Cofre de certificados A1 | `/certificate`, `/certificates/expiring` | 3–4h |
 | 7 Saúde do cadastro | `GET /items/health` | 5–7h |
 | 8 Apuração dual | `/assessments/{period}`, `/trace`, `/confirm` | 7–10h |
@@ -403,7 +403,7 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
 | 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-**Esforço restante: 49–68h.** A ordem é a da tabela: a carteira primeiro, porque
+**Esforço restante: 46–64h.** A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
 
 A carteira rendeu duas correções no backend, que valem como aviso para as telas
@@ -412,8 +412,14 @@ implementava como status do CNPJ — filtrar por `open` devolvia `200` com zero
 itens, indistinguível de um escritório sem clientes. Agora há `state` (estado da
 competência) e `status` (`active`/`inactive`, base da cobrança), valor fora do
 enumerado é `400`, e a listagem devolve o `status` para a tela não presumir
-ativo. **Ao escrever cada tela, confira a rota contra o contrato antes de
-confiar nele.**
+ativo.
+
+A tela 4 rendeu outras duas: `has_certificate` vinha de "existe evento
+`certificate.stored`" e, como o log é append-only, continuava verdadeiro depois
+de remover o certificado — o cabeçalho afirmaria que há um guardado e a coleta
+de DF-e falharia sem explicação. E o schema `Client` declarava `current_period`,
+que nunca foi implementado. **Ao escrever cada tela, confira a rota contra o
+contrato antes de confiar nele** — em quatro telas, quatro divergências.
 
 ---
 
