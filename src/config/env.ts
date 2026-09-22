@@ -28,6 +28,15 @@ export interface Env {
    */
   certificateMasterKey: string;
   /**
+   * Chave anterior, durante a janela de rotação.
+   *
+   * Existe só entre trocar a chave e terminar a recifragem: o cofre cifra com a
+   * atual e decifra com qualquer uma das duas. Sem ela, rotacionar tornaria
+   * ilegível todo PFX já guardado — e não há recuperação, porque a senha do
+   * certificado não é guardada em lugar nenhum.
+   */
+  certificateMasterKeyPrevious?: string;
+  /**
    * Ausente até a cobrança entrar no ar. Sem ela a API sobe e a cobrança roda em
    * modo "só cálculo": planos, calculadora e prévia de fatura funcionam, nada é
    * enviado ao gateway. Falhar o start por falta de credencial de pagamento
@@ -67,6 +76,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const supabaseUrl = required('SUPABASE_URL');
   const anonKey = required('SUPABASE_ANON_KEY');
   const certificateMasterKey = required('CERTIFICATE_MASTER_KEY');
+  const certificateMasterKeyPrevious = source['CERTIFICATE_MASTER_KEY_PREVIOUS']?.trim();
 
   const jwtSecret = source['SUPABASE_JWT_SECRET']?.trim();
   const jwksUrl = source['SUPABASE_JWKS_URL']?.trim();
@@ -93,6 +103,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     },
     logLevel: source['LOG_LEVEL'] ?? 'info',
     certificateMasterKey,
+    ...(certificateMasterKeyPrevious === undefined || certificateMasterKeyPrevious === ''
+      ? {}
+      : { certificateMasterKeyPrevious }),
   };
 
   const webhookToken = source['ASAAS_WEBHOOK_TOKEN']?.trim();

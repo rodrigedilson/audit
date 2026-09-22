@@ -27,7 +27,10 @@ export async function registerCertificateRoutes(
   app: FastifyInstance,
   deps: ApiDeps,
 ): Promise<void> {
-  const vault = new CertificateVault(deps.env.certificateMasterKey);
+  const vault = new CertificateVault(
+    deps.env.certificateMasterKey,
+    deps.env.certificateMasterKeyPrevious,
+  );
 
   /** Metadados. **Nunca** devolve o PFX — a coluna nem é selecionada. */
   app.get<{ Params: CnpjParams }>(
@@ -132,12 +135,13 @@ export async function registerCertificateRoutes(
 
       await deps.pool.query(
         `insert into certificates (
-           tenant_id, cnpj, encrypted_pfx, fingerprint, subject, issuer, serial,
+           tenant_id, cnpj, encrypted_pfx, fingerprint, key_id, subject, issuer, serial,
            valid_from, valid_to, stored_by
-         ) values ($1::uuid, $2::char(14), $3, $4, $5, $6, $7, $8::timestamptz, $9::timestamptz, $10::uuid)
+         ) values ($1::uuid, $2::char(14), $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11::uuid)
          on conflict (tenant_id, cnpj) do update set
            encrypted_pfx = excluded.encrypted_pfx,
            fingerprint = excluded.fingerprint,
+           key_id = excluded.key_id,
            subject = excluded.subject,
            issuer = excluded.issuer,
            serial = excluded.serial,
@@ -150,6 +154,7 @@ export async function registerCertificateRoutes(
           scope.cnpj,
           encrypted.ciphertext,
           encrypted.fingerprint,
+          encrypted.keyId,
           metadata.subject,
           metadata.issuer,
           metadata.serial,
