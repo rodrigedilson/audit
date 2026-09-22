@@ -324,6 +324,70 @@ describe.skipIf(!DATABASE_URL)('API — apuração dual', () => {
     });
   });
 
+  describe('prontidão para confirmar', () => {
+    /**
+     * O `confirm` compara o hash enviado com o **atual** do log, e o hash que a
+     * apuração guarda é o de quando ela foi calculada. Sem dizer se o guardado
+     * ainda vale, a tela mandava um hash inevitavelmente recusado e o contador
+     * lia `verification_mismatch` como defeito do sistema.
+     */
+    beforeEach(async () => {
+      await subir([nfeXml(cnpj, fornecedor, '000000015', true)]);
+      await apurar();
+    });
+
+    it('recém-apurada está pronta para confirmar', async () => {
+      const body = (await call('GET', `/v1/clients/${cnpj}/assessments/${PERIODO}`)).json();
+
+      expect(body.is_current).toBe(true);
+    });
+
+    it('depois de um ajuste, a apuração deixa de estar atual', async () => {
+      const antes = (await call('GET', `/v1/clients/${cnpj}/assessments/${PERIODO}`)).json();
+
+      await call('POST', `/v1/clients/${cnpj}/assessments/${PERIODO}/adjustments`, {
+        tax: 'icms',
+        amount_cents: -5_000,
+        reason: 'Devolução recebida depois da apuração',
+      });
+
+      const depois = (await call('GET', `/v1/clients/${cnpj}/assessments/${PERIODO}`)).json();
+
+      expect(depois.is_current).toBe(false);
+      // O hash guardado não muda: ele é o da apuração, não o do log.
+      expect(depois.projection_hash).toBe(antes.projection_hash);
+    });
+
+    /**
+     * Confirmar com o hash guardado, depois de um ajuste, é recusado — e é o
+     * comportamento correto. `is_current` existe para a tela dizer isso antes
+     * do clique, não para contorná-lo: o caminho é reprojetar e revisar.
+     */
+    it('o hash guardado é recusado depois do ajuste', async () => {
+      const body = (await call('GET', `/v1/clients/${cnpj}/assessments/${PERIODO}`)).json();
+
+      await call('POST', `/v1/clients/${cnpj}/assessments/${PERIODO}/adjustments`, {
+        tax: 'icms',
+        amount_cents: -5_000,
+        reason: 'Devolução recebida depois da apuração',
+      });
+
+      const r = await call('POST', `/v1/clients/${cnpj}/assessments/${PERIODO}/confirm`, {
+        projection_hash: body.projection_hash,
+      });
+
+      expect(r.statusCode).toBe(422);
+      expect(r.json()).toMatchObject({ reason: 'verification_mismatch' });
+    });
+
+    /** A resposta não entrega o hash atual: entregá-lo convidaria a reenviá-lo. */
+    it('não devolve o hash atual do log', async () => {
+      const body = (await call('GET', `/v1/clients/${cnpj}/assessments/${PERIODO}`)).json();
+
+      expect(body).not.toHaveProperty('current_projection_hash');
+    });
+  });
+
   describe('confirmação da competência', () => {
     const conciliar = () =>
       pool.query(

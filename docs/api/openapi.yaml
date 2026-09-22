@@ -1674,56 +1674,132 @@ components:
 
     Assessment:
       type: object
+      description: |
+        Apuração de uma competência, como `GET /clients/{cnpj}/assessments/{period}`
+        devolve. Valores em **centavos**, inteiros — nunca reais em ponto
+        flutuante, porque um centavo de arredondamento numa apuração é uma
+        divergência com o Fisco.
       properties:
-        cnpj: { type: string }
         period: { $ref: "#/components/schemas/PeriodId" }
         regime: { $ref: "#/components/schemas/Regime" }
-        state: { $ref: "#/components/schemas/PeriodState" }
-        projection_hash: { type: string }
-        last_event_seq: { type: integer }
-        legacy:
+        totals:
           type: object
-          description: Apuração dos tributos atuais
+          description: |
+            Um `TaxTotals` por tributo, num mapa plano. As chaves atuais são
+            `icms`, `ipi`, `pis`, `cofins` (sistema atual) e `ibs_uf`,
+            `ibs_mun`, `cbs` (reforma).
           additionalProperties: { $ref: "#/components/schemas/TaxTotals" }
-          example:
-            icms: { debits_brl: 1000, credits_brl: 400, due_brl: 600 }
-            pis: { debits_brl: 100, credits_brl: 0, due_brl: 100 }
-        reform:
+        total_due_cents:
+          type: integer
+          nullable: true
+          description: |
+            Soma dos `dueCents`. **`null` quando qualquer tributo não é
+            determinável** — somar tratando o indeterminável como zero daria um
+            total que parece calculado e não é.
+        not_computable:
+          type: array
+          description: "O que não foi possível calcular, e por quê. Ver NotComputable."
+          items: { $ref: "#/components/schemas/NotComputable" }
+        coverage:
           type: object
+          description: "Prontidão para a reforma: itens que já trazem o grupo IBS/CBS."
           properties:
-            cbs: { $ref: "#/components/schemas/TaxTotals" }
-            ibs_uf: { $ref: "#/components/schemas/TaxTotals" }
-            ibs_mun: { $ref: "#/components/schemas/TaxTotals" }
-            credits_by_state:
-              type: object
-              description: Créditos por estado (expected / conditioned / released / at_risk)
-              additionalProperties: { type: number }
+            itemsWithReformGroup: { type: integer }
+            itemsTotal: { type: integer }
+        documents_count: { type: integer }
+        items_count: { type: integer }
+        projection_hash:
+          type: string
+          description: |
+            Hash da projeção **no momento em que esta apuração foi calculada** —
+            não o hash atual do log.
+        is_current:
+          type: boolean
+          description: |
+            O `projection_hash` acima ainda é o hash atual do log. Qualquer
+            evento posterior (um ajuste, um documento novo) o torna `false`, e
+            então `POST .../confirm` com esse hash é recusado com
+            `verification_mismatch`, corretamente. A tela deve exigir nova
+            projeção e revisão em vez de tentar confirmar.
+
+            A resposta **não** devolve o hash atual, de propósito: entregá-lo
+            convidaria a tela a reenviá-lo, que é exatamente o que anularia a
+            proteção.
+        event_seq: { type: integer }
+        computed_at: { type: string, format: date-time }
         adjustments:
           type: array
           items: { $ref: "#/components/schemas/Adjustment" }
-        open_issues: { type: integer }
-        calculation_trace_url:
-          type: string
-          description: Link para memória de cálculo completa (nota a nota)
 
     TaxTotals:
       type: object
+      description: |
+        Quatro números diferentes, e a tela **não deve colapsá-los em um
+        "total"**: os dois primeiros saem dos documentos e são certos; os dois
+        últimos dependem de norma publicada.
       properties:
-        debits_brl: { type: number }
-        credits_brl: { type: number }
-        due_brl: { type: number }
-        carryover_brl: { type: number, description: Saldo credor a transportar }
+        debitsCents:
+          type: integer
+          description: "Tributo destacado nas saídas. Sempre calculável."
+        potentialCreditsCents:
+          type: integer
+          description: "Tributo destacado nas entradas, antes do juízo de creditamento."
+        creditableCents:
+          type: integer
+          nullable: true
+          description: |
+            Crédito aproveitável. **`null` quando a regra de creditamento não
+            está publicada** para o regime e a competência — ausência de regra
+            significa "não sei", não "não credita".
+        dueCents:
+          type: integer
+          nullable: true
+          description: |
+            `debitsCents - creditableCents`. `null` quando o crédito não é
+            determinável. Renderizar como *"não determinável"* com o motivo de
+            `not_computable` ao lado: um `—` sem explicação parece defeito, e um
+            `0` seria mentira.
+        ruleId:
+          type: string
+          description: "Regra aplicada, para a memória de cálculo."
+
+    NotComputable:
+      type: object
+      description: |
+        Por que um tributo ou item não pôde ser calculado. É o que sustenta o
+        `null` em `dueCents` — sem isso, o `null` seria só um vazio.
+      properties:
+        scope: { type: string, enum: [tributo, item] }
+        subject: { type: string, description: "O tributo ou o código do item" }
+        reason:
+          type: string
+          enum: [rule_not_published, missing_reform_group]
+          description: |
+            `rule_not_published`: nenhuma regra de creditamento vigente para o
+            regime e a competência. `missing_reform_group`: o item não traz o
+            grupo IBS/CBS, o que é o esperado em documento de 2025.
+        message: { type: string, description: "Explicação em PT-BR, pronta para exibir." }
 
     Adjustment:
       type: object
-      required: [tax, amount_brl, reason]
+      required: [tax, amount_cents, reason]
+      description: |
+        Ajuste manual justificado. **Não sobrescreve a apuração**: entra como
+        linha própria, e a diferença entre o apurado e o ajustado é informação.
       properties:
         id: { type: string, readOnly: true }
-        tax: { type: string, example: "cbs" }
-        amount_brl: { type: number, description: Positivo aumenta débito; negativo reduz }
-        reason: { type: string }
+        tax:
+          type: string
+          enum: [icms, ipi, pis, cofins, ibs_uf, ibs_mun, cbs]
+        amount_cents:
+          type: integer
+          description: "Positivo aumenta o débito; negativo reduz."
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 1000
+          description: "Obrigatória. Vai para o event log junto do ajuste."
         reference_access_key: { type: string, nullable: true }
-        created_by: { type: string, readOnly: true }
         created_at: { type: string, format: date-time, readOnly: true }
 
     PaymentMatch:

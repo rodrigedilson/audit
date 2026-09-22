@@ -61,7 +61,24 @@ export async function registerAssessmentRoutes(
         );
       }
 
-      return reply.code(200).send(apuracao);
+      /**
+       * `is_current` diz se o `projection_hash` guardado ainda vale.
+       *
+       * O hash da apuração é o de quando ela foi calculada; o `confirm` compara
+       * com o hash **atual** do log. Qualquer evento posterior — um ajuste, um
+       * documento novo — deixa o guardado velho, e a tela enviava um hash
+       * inevitavelmente recusado com `verification_mismatch`. O contador lia
+       * isso como defeito do sistema, porque nada na tela dizia que a apuração
+       * tinha ficado para trás.
+       *
+       * Só o booleano, e **não** o hash atual: expor o hash novo convidaria a
+       * tela a reenviá-lo, que é exatamente o que anularia a proteção. Quando
+       * `is_current` é falso, o caminho é reprojetar e revisar.
+       */
+      const orchestrator = await deps.orchestratorFor(scope);
+      const atual = (await orchestrator.getProjection()).projection_hash_sha256;
+
+      return reply.code(200).send({ ...apuracao, is_current: apuracao.projection_hash === atual });
     },
   );
 
