@@ -260,7 +260,10 @@ export class CatalogService {
                 coalesce(sum(inbound_documents_affected), 0)::text  as inbound,
                 coalesce(sum(total_cents_affected), 0)::text        as valor
            from item_propagation($1::uuid, $2::char(14))
-          where health <> 'ok'`,
+          -- "is distinct from" e nao "<>": item nunca classificado vem com
+          -- health nulo, e null <> 'ok' e nulo, nao verdadeiro — filtraria fora
+          -- justamente quem representa o trabalho que falta.
+          where health is distinct from 'ok'`,
         [scope.tenantId, scope.cnpj],
       ),
       this.pool.query<{ reason: string; total: string }>(

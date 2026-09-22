@@ -38,6 +38,7 @@ const TITULOS: Record<string, string> = {
   '20260921170000_supplier_credit.sql': 'credito-por-fornecedor',
   '20260921180000_simulation.sql': 'simulador-de-regime',
   '20260921190000_credit_dossier.sql': 'dossie-saldo-credor',
+  '20260922100000_propagacao_de_item_nao_classificado.sql': 'correcao-propagacao',
 };
 
 const DESCRICOES: Record<string, string> = {
@@ -69,6 +70,10 @@ const DESCRICOES: Record<string, string> = {
     '-- executa, e não uma lista de verificações da RFB. Os bytes do PDF ficam\n' +
     '-- guardados: o Book carrega um hash no rodapé e regerá-lo depois de uma\n' +
     '-- regra mudar produziria outro arquivo com o mesmo número.',
+  '20260922100000_propagacao_de_item_nao_classificado.sql':
+    'Correção: a propagação ignorava o item nunca classificado, e o número que\n' +
+    '-- sustenta o diferencial #1 lia zero exatamente no estado em que mais\n' +
+    '-- importa — o do escritório que ingeriu e ainda não classificou nada.',
   '20260921190000_credit_dossier.sql':
     'EFD-Contribuições importada e a janela de cobertura documental. O dossiê de\n' +
     '-- saldo credor NÃO é gravado: é derivado da escrituração mais a base de\n' +

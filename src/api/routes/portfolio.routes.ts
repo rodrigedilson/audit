@@ -75,7 +75,7 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
                        from item_classifications ic
                       where ic.tenant_id = c.tenant_id and ic.cnpj = c.cnpj
                       order by ic.item_id, ic.effective_from desc
-                   ) vigente where vigente.health <> 'ok') as open_issues,
+                   ) vigente where vigente.health is distinct from 'ok') as open_issues,
                   d.due_date as next_deadline
              from clients c
              left join lateral (

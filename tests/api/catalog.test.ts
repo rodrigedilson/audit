@@ -328,6 +328,53 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
       expect(body.top_reasons.length).toBeGreaterThan(0);
     });
 
+    /**
+     * O defeito que o dado real expos. `item_propagation()` partia de
+     * `item_classifications`, entao item NUNCA classificado nao aparecia na
+     * propagacao — e a resposta dizia "474 itens com aviso" ao lado de
+     * "0 notas afetadas, R$ 0,00 em jogo".
+     *
+     * O numero que sustenta o diferencial #1 lia zero exatamente no estado em
+     * que mais importa: o do escritorio que acabou de ingerir e ainda nao
+     * classificou nada. Medido em producao: 474 itens em 578 linhas de
+     * documento, R$ 1.420.745,30, propagacao zero.
+     */
+    it('item nunca classificado propaga para as notas que o usam', async () => {
+      const chave = '35270999888777000166550010000000019876543210';
+
+      await pool.query(
+        `insert into items (tenant_id, cnpj, item_id, description)
+         values ($1::uuid, $2::char(14), 'SKU-SEM-CLASSIFICACAO', 'Produto ainda nao classificado')`,
+        [tenantId, cnpj],
+      );
+
+      await pool.query(
+        `insert into documents (
+           tenant_id, cnpj, access_key, model, direction, issued_at, period,
+           issuer_cnpj, total_cents, event_seq
+         ) values ($1::uuid, $2::char(14), $3::char(44), 'nfe', 'outbound',
+                   '2027-09-15T10:00:00Z', '2027-09', $2::char(14), 250000, 0)`,
+        [tenantId, cnpj, chave],
+      );
+
+      await pool.query(
+        `insert into document_items (
+           tenant_id, cnpj, access_key, line, code, total_cents
+         ) values ($1::uuid, $2::char(14), $3::char(44), 1, 'SKU-SEM-CLASSIFICACAO', 250000)`,
+        [tenantId, cnpj, chave],
+      );
+
+      const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();
+
+      // Nunca classificado conta como aviso: nao e "ok".
+      expect(body.items_total).toBe(1);
+      expect(body.warning).toBe(1);
+
+      // E o que o defeito escondia: a nota emitida que carrega esse item.
+      expect(body.outbound_documents_affected).toBe(1);
+      expect(body.amount_at_stake_cents).toBe(250_000);
+    });
+
     it('carteira sem item classificado devolve zeros sem erro', async () => {
       const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();
 
