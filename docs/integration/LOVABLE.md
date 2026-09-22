@@ -396,14 +396,14 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | ~~7 Saúde do cadastro~~ | `GET /items/health`, `/items`, `PUT .../classification` | **feita** |
 | ~~8 Apuração dual~~ | `/assessments/{period}`, `/trace`, `/adjustments`, `/confirm` | **feita** |
 | ~~9 Trilhas + Book~~ | `/audit-trails`, `/books/{period}`, `/download` | **feita** |
-| 10 Calendário | `GET /v1/deadlines` | 3–4h |
+| ~~10 Contra-apuração e calendário~~ | `/fisco-assessments/{period}`, `/deadlines` | **feita** |
 | 11 Assistente fiscal | `/assistant/threads`, `/messages` | 6–8h |
 | 12 Crédito em risco | `/bank-statements`, `/credits/at-risk` | 5–7h |
 | 13 Simulador | `/simulations`, `/methodology` | 6–8h |
 | 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
 | 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-**Esforço restante: 25–34h.** A ordem é a da tabela: a carteira primeiro, porque
+**Esforço restante: 22–30h.** A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
 
 A carteira rendeu duas correções no backend, que valem como aviso para as telas
@@ -441,6 +441,11 @@ A tela 9 achou uma de outra natureza: `white_label` estava documentado como
 entitlement de plano e **não era verificado em lugar nenhum** — a tela seria a
 única tranca, e qualquer cliente HTTP geraria Book sem a nossa marca num CNPJ de
 MEI. Agora é `403` no servidor.
+
+A tela 10 foi a primeira **sem divergência**: os schemas de `FiscoComparison`,
+`Divergence`, `ComparisonSummary`, `Deadline` e `Pendency` descrevem exatamente
+o que as rotas devolvem. Foram escritos junto da Onda 8, e não antes dela — que
+é o que explica a diferença para os schemas das Ondas 2 e 6.
 
 ---
 
