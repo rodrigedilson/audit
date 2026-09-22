@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { ignorarErroDeClienteOcioso } from '../persistence/pool-errors.js';
 import { loadEnv, EnvError, type Env } from '../../config/env.js';
 
 /**
@@ -160,6 +161,10 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     max: 1,
     connectionTimeoutMillis: 8_000,
   });
+  // O doutor existe para diagnosticar banco com problema: morrer com exceção
+  // não capturada quando o banco encerra a conexão seria falhar exatamente na
+  // situação para a qual ele foi feito.
+  ignorarErroDeClienteOcioso(pool, 'DoctorPool');
 
   try {
     const conexao = await checarConexao(pool);

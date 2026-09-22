@@ -117,6 +117,10 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
 
   beforeAll(async () => {
     admin = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+    // Ver `ignorarErroDeClienteOcioso`: sem listener, um cliente ocioso que o
+    // banco encerra vira exceção não capturada e derruba a suíte inteira, com
+    // todos os testes passando.
+    admin.on('error', () => undefined);
 
     // Nome único: os arquivos de teste rodam em paralelo, e um nome fixo faria
     // um arquivo derrubar a base do outro.
@@ -126,6 +130,22 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
   });
 
   afterAll(async () => {
+    /**
+     * Encerra as conexões da base temporária **antes** do drop.
+     *
+     * `with (force)` derruba o que sobrou, e é aí que o Postgres emite 57P01
+     * para clientes que ainda existam. Fechar antes remove a corrida em vez de
+     * só tolerá-la; os listeners de `error` cobrem o resto, porque o
+     * encerramento do socket ainda pode chegar depois do `end()` resolver.
+     */
+    await admin
+      .query(
+        `select pg_terminate_backend(pid) from pg_stat_activity
+          where datname = $1 and pid <> pg_backend_pid()`,
+        [baseVazia],
+      )
+      .catch(() => undefined);
+
     await admin.query(`drop database if exists ${baseVazia} with (force)`).catch(() => undefined);
     await admin.end();
   });
@@ -190,6 +210,7 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
 
     beforeAll(async () => {
       pool = new pg.Pool({ connectionString: urlVazia, max: 1 });
+      pool.on('error', () => undefined);
       await applyMigrations(pool);
     });
 

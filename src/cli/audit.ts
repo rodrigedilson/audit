@@ -5,6 +5,7 @@ import { EventScope } from '../esaa/core/event-store/value-objects/event-scope.v
 import type { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { loadEnv, EnvError } from '../config/env.js';
 import pg from 'pg';
+import { ignorarErroDeClienteOcioso } from '../infrastructure/persistence/pool-errors.js';
 import { buildServer } from '../api/server.js';
 import { diagnosticar, type Checagem } from '../infrastructure/diagnostics/environment-doctor.js';
 import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
@@ -127,6 +128,7 @@ async function resolverTenant(cnpj: string): Promise<string> {
   }
 
   const pool = new pg.Pool({ connectionString, max: 1, connectionTimeoutMillis: 8000 });
+  ignorarErroDeClienteOcioso(pool, 'CliPool');
 
   try {
     const { rows } = await pool.query<{ tenant_id: string; name: string }>(

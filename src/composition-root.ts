@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { JsonlEventStoreRepository } from './esaa/core/event-store/jsonl-event-store.repository.js';
 import { PostgresEventStoreRepository } from './infrastructure/persistence/postgres-event-store.repository.js';
+import { ignorarErroDeClienteOcioso } from './infrastructure/persistence/pool-errors.js';
 import type { IEventStoreRepository } from './esaa/core/event-store/event-store.repository.js';
 import { EventScope } from './esaa/core/event-store/value-objects/event-scope.vo.js';
 import { ContractLoaderService } from './esaa/core/contracts/contract-loader.service.js';
@@ -65,6 +66,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Runtime
 
   if (connectionString !== undefined && connectionString.trim().length > 0) {
     pool = new pg.Pool({ connectionString, max: 2, connectionTimeoutMillis: 15_000 });
+    ignorarErroDeClienteOcioso(pool, 'CompositionRootPool');
     eventStore = new PostgresEventStoreRepository(pool, scope);
     backend = 'postgres';
   } else {
