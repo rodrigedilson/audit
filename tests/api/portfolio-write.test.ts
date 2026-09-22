@@ -515,5 +515,83 @@ describe.skipIf(!DATABASE_URL)('API — carteira e cofre de certificados', () =>
 
       expect(response.json()).toMatchObject({ items: [], total: 0 });
     });
+
+    /**
+     * Conta os usos deste certificado, e não uma janela que ninguém calcula.
+     *
+     * O campo se chamava `usage_count_30d` e devolvia a contagem inteira da
+     * projeção — nenhum filtro de 30 dias em lugar algum. O nome afirmava um
+     * recorte que não existia.
+     */
+    it('devolve usage_count, e não uma janela de 30 dias inexistente', async () => {
+      await upload(owner);
+
+      const metadados = (await call('GET', `/v1/clients/${cnpj}/certificate`, owner)).json();
+
+      expect(metadados).toMatchObject({ usage_count: 0 });
+      expect(metadados).not.toHaveProperty('usage_count_30d');
+    });
+
+    describe('com usos registrados no log', () => {
+      /**
+       * Semeia `certificate.used` direto no log.
+       *
+       * Nenhum código de produção emite essa ação ainda — a coleta por
+       * certificado (distribuição DF-e) não está implementada, então pela API
+       * não há como produzi-la. O que se testa aqui é a rota de leitura, e para
+       * isso o envelope semeado é suficiente: ele é exatamente o que o appender
+       * gravaria.
+       */
+      const semearUsos = async (quantidade: number, primeiroSeq: number): Promise<void> => {
+        await pool.query(
+          `insert into events (
+             tenant_id, cnpj, event_seq, event_id, action, task_id, actor,
+             ts, schema_version, payload
+           )
+           select $1::uuid, $2::char(14), $3::bigint + i, gen_random_uuid(),
+                  'certificate.used', $2::text,
+                  case when i = 0 then $4::text else 'collector' end,
+                  now() - (i || ' minutes')::interval, '0.4.0',
+                  jsonb_build_object(
+                    'purpose', 'dfe_distribution',
+                    'target', 'https://www1.nfe.fazenda.gov.br',
+                    'outcome', 'success',
+                    'ip', '203.0.113.7'
+                  )
+             from generate_series(0, $5::int - 1) as i`,
+          [tenantId, cnpj, primeiroSeq, owner, quantidade],
+        );
+      };
+
+      /** O total contava a página. Trilha de uso do A1 com total errado não é trilha. */
+      it('o total conta todos os usos, e não os 200 da página', async () => {
+        await upload(owner);
+        await semearUsos(205, 100);
+
+        const resposta = (await call('GET', `/v1/clients/${cnpj}/certificate/usage`, owner)).json();
+
+        expect(resposta.items).toHaveLength(200);
+        expect(resposta.total).toBe(205);
+      });
+
+      /**
+       * O log de uso existe para dizer quem agiu em nome do cliente perante o
+       * Fisco. A rota afirmava `type: 'agent'` para todo uso, inclusive o
+       * disparado por uma pessoa.
+       */
+      it('distingue uso por pessoa de uso por agente', async () => {
+        await upload(owner);
+        await semearUsos(2, 100);
+
+        const itens = (await call('GET', `/v1/clients/${cnpj}/certificate/usage`, owner)).json()
+          .items as { actor: { type: string; id: string } }[];
+
+        const porPessoa = itens.find((item) => item.actor.id === owner);
+        const porAgente = itens.find((item) => item.actor.id === 'collector');
+
+        expect(porPessoa?.actor.type).toBe('user');
+        expect(porAgente?.actor.type).toBe('agent');
+      });
+    });
   });
 });

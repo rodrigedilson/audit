@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ApiDeps } from '../server.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
+import { inferActorType } from '../actor-type.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import {
   CertificateError,
@@ -69,7 +70,15 @@ export async function registerCertificateRoutes(
         stored_at: certificate.stored_at.toISOString(),
         stored_by: certificate.stored_by,
         last_used_at: projection.certificate?.last_used_at ?? null,
-        usage_count_30d: projection.certificate?.usage_count ?? 0,
+        /**
+         * Usos desde que **este** certificado foi guardado.
+         *
+         * O campo se chamava `usage_count_30d` e contava tudo: a projeção
+         * incrementa a cada `certificate.used` e zera quando um novo PFX
+         * substitui o anterior. Nenhuma janela de 30 dias em lugar algum — o
+         * nome afirmava um recorte que ninguém calculava.
+         */
+        usage_count: projection.certificate?.usage_count ?? 0,
       });
     },
   );
@@ -198,7 +207,11 @@ export async function registerCertificateRoutes(
       const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
 
       const { rows } = await deps.pool.query(
-        `select event_seq, ts as used_at, actor, payload
+        `select event_seq, ts as used_at, actor, payload,
+                -- A janela conta antes do limit: rows.length devolvia 200 num
+                -- CNPJ com 500 usos, e a tela diria que sao 200. Trilha de uso
+                -- do A1 com total errado nao serve de trilha.
+                count(*) over () as total
            from events
           where tenant_id = $1::uuid and cnpj = $2::char(14)
             and action = 'certificate.used'
@@ -213,14 +226,17 @@ export async function registerCertificateRoutes(
           return {
             event_seq: Number(row['event_seq']),
             used_at: row['used_at'],
-            actor: { type: 'agent', id: row['actor'] },
+            // Inferido, e não fixo em 'agent': o uso disparado por uma pessoa
+            // aparecia como uso de agente, e este log existe exatamente para
+            // dizer quem agiu em nome do cliente perante o Fisco.
+            actor: { type: inferActorType(String(row['actor'])), id: row['actor'] },
             purpose: payload['purpose'],
             target: payload['target'],
             outcome: payload['outcome'],
             ip: payload['ip'] ?? null,
           };
         }),
-        total: rows.length,
+        total: Number(rows[0]?.['total'] ?? 0),
       });
     },
   );

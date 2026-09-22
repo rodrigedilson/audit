@@ -4,6 +4,7 @@ import { PostgresEventStoreRepository } from '../../infrastructure/persistence/p
 import { EventReplayerService } from '../../esaa/core/event-store/event-replayer.service.js';
 import { FiscalProjectorService } from '../../fiscal/projection/fiscal-projector.service.js';
 import { FiscalHashVerifierService } from '../../fiscal/projection/fiscal-hash-verifier.service.js';
+import { inferActorType } from '../actor-type.js';
 
 const CNPJ_PARAM = {
   type: 'object',
@@ -139,15 +140,4 @@ export async function registerEventRoutes(app: FastifyInstance, deps: ApiDeps): 
       });
     },
   );
-}
-
-/**
- * O envelope guarda o actor como texto. Um UUID é usuário; os demais nomes são
- * agentes ou o orquestrador. Some quando o actor virar tipado, na Onda 2.
- */
-function inferActorType(actor: string): 'user' | 'agent' | 'orchestrator' | 'system' {
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actor)) {
-    return 'user';
-  }
-  return actor === 'tech-lead' || actor === 'closer' ? 'orchestrator' : 'agent';
 }
