@@ -400,10 +400,10 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | ~~11 Assistente fiscal~~ | `/assistant/threads`, `/messages`, `/usage`, `/capabilities` | **feita** |
 | ~~12 Crédito em risco~~ | `/bank-statements`, `/payment-matches`, `/credits/at-risk` | **feita** |
 | ~~13 Simulador~~ | `/simulations`, `/methodology` | **feita** |
-| 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
-| 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
+| ~~15 Planos e assinatura~~ | `/plans`, `/price-calculator`, `/subscription` | **feita** |
+| ~~16 Usuários e papéis~~ | `GET /users` (novo) | **feita, sem a gestão** |
 
-**Esforço restante: 5–7h.** A ordem é a da tabela: a carteira primeiro, porque
+**Passo 5 concluído.** As 13 telas estão no ar. A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
 
 A carteira rendeu duas correções no backend, que valem como aviso para as telas
@@ -466,6 +466,13 @@ metodologia virou página própria em `/fiscal/simulador/metodologia`, e não um
 rodapé, porque é o que impede o resultado de ser lido como cálculo. E o mapa de
 sensibilidade só existe porque `winner: null` é resposta — sem ele, "depende"
 seria um vazio.
+
+A tela 16 encontrou a maior lacuna do Passo 5: **`/users` e `/invites` nunca
+existiram** — nem no código, nem no contrato. Foram listadas como rotas novas da
+Onda 3 e não foram construídas. Feito `GET /v1/users` (leitura), que é a metade
+possível sem inventar produto; convidar, remover e trocar papel exigem token de
+convite, envio de e-mail e fluxo de aceite, e são onda nova. A resposta declara
+`management_available: false` e a tela diz onde a gestão é feita hoje.
 
 ---
 
