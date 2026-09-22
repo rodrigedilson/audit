@@ -329,8 +329,23 @@ escolha é de produto, não técnica:
   nova, não migração — e aí o cross-reference também migraria, virando uma
   extensão do dossiê para todos os tributos.
 
-Enquanto não houver decisão, as duas entradas ficam separadas e rotuladas na
-sidebar, que é o que já está feito.
+**Decisão tomada: importar nos dois.** O arquivo de EFD-Contribuições sobe no
+"Upload SPED" e no "Saldo credor"; as duas conferências ficam disponíveis desde
+já, sem trabalho novo. O custo é subir o mesmo arquivo duas vezes.
+
+Para que isso não vire perda silenciosa de conferência, cada tela **explica o que
+ela confere e aponta para a outra** (`ConferenciaComplementar`). Sem esse aviso a
+pessoa sobe numa das duas, considera o trabalho feito, e perde metade sem saber
+que existe.
+
+Dois caminhos ficam abertos, em ordem de custo:
+
+- **Um upload, dois destinos** — uma tela chama as duas rotas. Resolve o
+  incômodo de subir duas vezes. **2–4h**, reversível.
+- **Estender o `audit` para EFD ICMS/IPI** — o parser lê o outro layout e o
+  dossiê confere os quatro tributos; o cross-reference do front vira redundante.
+  É o destino certo no longo prazo, mas é onda nova: parser, reconciliação de
+  ICMS e IPI, e testes. **20–30h**.
 
 > **Nota sobre CFOP:** o `audit` tem `fiscal_codes` e `cclasstrib_cst` (Onda 5),
 > que são as tabelas oficiais usadas pela camada 3 de validação, e elas **nascem
