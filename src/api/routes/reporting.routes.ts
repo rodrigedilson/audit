@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ApiDeps } from '../server.js';
-import { NotFoundError } from '../auth/tenant-resolver.js';
+import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import {
   BookNotReadyError,
@@ -31,6 +31,16 @@ interface BookBody {
   white_label?: boolean;
   include_trace?: boolean;
 }
+
+/**
+ * Regimes cujo plano inclui Book sem a nossa marca.
+ *
+ * O white label é entitlement de plano — Lucro Presumido para cima, conforme o
+ * modelo comercial do briefing. Estava documentado e não era verificado em
+ * lugar nenhum: a tela seria a única tranca, e qualquer cliente HTTP passaria
+ * por cima dela pedindo `white_label: true` num CNPJ de MEI.
+ */
+const REGIMES_COM_WHITE_LABEL: readonly Regime[] = ['lucro_presumido', 'lucro_real'];
 
 /**
  * Trilhas de auditoria e Book de fechamento — diferencial #3.
@@ -119,6 +129,14 @@ export async function registerReportingRoutes(
       const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
       const regime = await regimeDoCliente(scope.tenantId, scope.cnpj);
       const body = request.body ?? {};
+
+      if (body.white_label === true && !REGIMES_COM_WHITE_LABEL.includes(regime)) {
+        throw new ForbiddenError(
+          `O Book sem a nossa marca faz parte dos planos de Lucro Presumido e Lucro ` +
+            `Real. Este CNPJ está em ${regime}: o Book é gerado com a marca. ` +
+            'Para retirá-la, mude o plano do CNPJ.',
+        );
+      }
 
       const options: BookOptions = {
         audience: body.audience ?? 'accountant',

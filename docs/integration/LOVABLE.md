@@ -395,7 +395,7 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | ~~5 Cofre de certificados A1~~ | `/certificate`, `/certificates/expiring` | **feita** |
 | ~~7 Saúde do cadastro~~ | `GET /items/health`, `/items`, `PUT .../classification` | **feita** |
 | ~~8 Apuração dual~~ | `/assessments/{period}`, `/trace`, `/adjustments`, `/confirm` | **feita** |
-| 9 Trilhas + Book | `/audit-trails`, `/books/{period}` | 6–9h |
+| ~~9 Trilhas + Book~~ | `/audit-trails`, `/books/{period}`, `/download` | **feita** |
 | 10 Calendário | `GET /v1/deadlines` | 3–4h |
 | 11 Assistente fiscal | `/assistant/threads`, `/messages` | 6–8h |
 | 12 Crédito em risco | `/bank-statements`, `/credits/at-risk` | 5–7h |
@@ -403,7 +403,7 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
 | 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-**Esforço restante: 31–43h.** A ordem é a da tabela: a carteira primeiro, porque
+**Esforço restante: 25–34h.** A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
 
 A carteira rendeu duas correções no backend, que valem como aviso para as telas
@@ -436,6 +436,11 @@ números por tributo. E o `GET` não dizia se o `projection_hash` guardado ainda
 valia, então a tela mandava ao `confirm` um hash inevitavelmente recusado depois
 de qualquer ajuste: `is_current` resolve, e de propósito **sem** expor o hash
 atual, que convidaria a tela a reenviá-lo.
+
+A tela 9 achou uma de outra natureza: `white_label` estava documentado como
+entitlement de plano e **não era verificado em lugar nenhum** — a tela seria a
+única tranca, e qualquer cliente HTTP geraria Book sem a nossa marca num CNPJ de
+MEI. Agora é `403` no servidor.
 
 ---
 

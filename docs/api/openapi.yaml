@@ -950,13 +950,23 @@ paths:
                 white_label:
                   type: boolean
                   default: false
-                  description: Omite a marca do produto; disponível de Lucro Presumido para cima.
+                  description: >
+                    Omite a marca do produto. Entitlement de plano: só em CNPJ de
+                    Lucro Presumido ou Lucro Real. Pedi-lo em outro regime é
+                    recusado com `403` — a verificação é do servidor, e não da
+                    tela.
       responses:
         "201":
           description: Book gerado
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Book" }
+        "403":
+          description: >
+            `white_label` pedido em CNPJ cujo regime não inclui o entitlement.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Rejected" }
 

@@ -236,6 +236,53 @@ describe.skipIf(!DATABASE_URL)('API — trilhas de auditoria e Book de fechament
   describe('Book de fechamento', () => {
     const apurar = () => call('POST', `/v1/clients/${cnpj}/assessments/${PERIODO}`);
 
+    /**
+     * O white label é entitlement de plano — Lucro Presumido para cima —, e
+     * estava documentado sem ser verificado em lugar nenhum. A tela seria a
+     * única tranca, e qualquer cliente HTTP pediria `white_label: true` num
+     * CNPJ de MEI.
+     */
+    it('recusa white label em regime cujo plano não o inclui', async () => {
+      // A fixture nasce em lucro_presumido, que tem o entitlement.
+      await pool.query(
+        `update clients set regime = 'simples_hibrido'
+          where tenant_id = $1::uuid and cnpj = $2::char(14)`,
+        [tenantId, cnpj],
+      );
+      await subir([nfeXml(cnpj, fornecedor, '000000015', true)]);
+      await apurar();
+
+      const r = await call('POST', `/v1/clients/${cnpj}/books/${PERIODO}`, {
+        white_label: true,
+      });
+
+      expect(r.statusCode).toBe(403);
+      expect(r.json().message).toMatch(/Lucro Presumido/);
+    });
+
+    it('gera com white label quando o regime do CNPJ o inclui', async () => {
+      await subir([nfeXml(cnpj, fornecedor, '000000015', true)]);
+      await apurar();
+
+      const r = await call('POST', `/v1/clients/${cnpj}/books/${PERIODO}`, {
+        white_label: true,
+      });
+
+      expect(r.statusCode).toBe(201);
+      expect(r.json().white_label).toBe(true);
+    });
+
+    /** Sem pedir white label, qualquer regime gera o Book normalmente. */
+    it('gera sem white label em qualquer regime', async () => {
+      await subir([nfeXml(cnpj, fornecedor, '000000015', true)]);
+      await apurar();
+
+      const r = await call('POST', `/v1/clients/${cnpj}/books/${PERIODO}`, {});
+
+      expect(r.statusCode).toBe(201);
+      expect(r.json().white_label).toBe(false);
+    });
+
     it('sem apuração, recusa gerar o Book com camada e motivo', async () => {
       const r = await call('POST', `/v1/clients/${cnpj}/books/${PERIODO}`, {});
 
