@@ -535,6 +535,29 @@ porque a API nunca emite uma.
 Rode ao fim de **cada feature migrada**, não no fim do projeto. **2h por
 rodada.**
 
+### Resultado da auditoria das 13 telas
+
+Uma violação, e sistemática: `variant="secondary"` estava sendo usado para os
+estados de "não verificado", e neste design system o secundário é **verde claro
+sobre o verde da marca** (`--secondary: 171.4 25.9% 94.7%`, texto `#365D5A`). A
+regra 1 diz "cor de aviso, nunca verde", e a renderização pintava de verde
+institucional tudo que significava "não conferi".
+
+Os tokens `--ejr-warning` e `--ejr-warning-bg` já existiam e não tinham variante
+nem de `Badge` nem de `Alert`. Criadas as duas e aplicadas nos quatro estados da
+regra 1 mais os que carregam o mesmo sentido: `conditioned` no crédito em risco
+(verde leria como crédito garantido), confiança média e baixa do assistente,
+casamento de pagamento que não é `exact`, premissa `provided` do simulador — que
+estava em **vermelho**, e premissa informada não está errada, só não foi medida.
+
+Segunda correção, no dossiê: o badge mostrava o enum cru (`nao_verificavel`).
+Enum não é texto — obriga o contador a traduzir e some com a distinção que o
+backend fez.
+
+As outras quatro regras passaram sem alteração. **Lição para as próximas telas:
+a regra 1 não é sobre escrever "não verificado" — é sobre a cor, e a cor errada
+aqui era a da marca.**
+
 ---
 
 ## Passo 7 — Verificação
