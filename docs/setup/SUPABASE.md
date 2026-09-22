@@ -46,19 +46,20 @@ ordem**. Cada um depende das tabelas do anterior.
 | 10 | `10-credito-por-fornecedor.sql` | extrato bancário, casamento pagamento × documento e o crédito em risco |
 | 11 | `11-simulador-de-regime.sql` | registro das simulações de regime, com as premissas usadas |
 | 12 | `12-dossie-saldo-credor.sql` | EFD-Contribuições importada e a janela de cobertura documental |
-| 13 | `13-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 13 | `13-correcao-propagacao.sql` | correção: a propagação de item ignorava o item nunca classificado |
+| 14 | `14-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
 > **Os arquivos são renumerados quando uma onda nova entra.** Se você já aplicou
 > uma versão anterior, rode os que faltam e ignore o bootstrap — ele é
 > idempotente e avisa que o usuário já pertence a um escritório. `npm run doctor`
 > diz exatamente quais tabelas faltam e de qual arquivo elas vêm.
 
-> **Já aplicou até o `11-simulador-de-regime.sql`?** Rode só o
-> `12-dossie-saldo-credor.sql`. O bootstrap é o último passo e mudou de número a
-> cada onda (agora é `13`); você já o executou, e reexecutá-lo não faria
-> diferença — é idempotente.
+> **Já aplicou até o `12-dossie-saldo-credor.sql`?** Rode só o
+> `13-correcao-propagacao.sql`. É um `create or replace` de função, seguro de
+> reaplicar. O bootstrap é o último passo e mudou de número (agora é `14`); você
+> já o executou, e reexecutá-lo não faria diferença — é idempotente.
 
-Antes de executar o passo 13, edite as duas linhas marcadas:
+Antes de executar o passo 14, edite as duas linhas marcadas:
 
 ```sql
   -- ┌──────────────────────────── CONFIGURE ────────────────────────────┐
@@ -67,7 +68,7 @@ Antes de executar o passo 13, edite as duas linhas marcadas:
   -- └───────────────────────────────────────────────────────────────────┘
 ```
 
-O passo 13 termina com uma consulta de conferência. Deve devolver **uma linha**
+O passo 14 termina com uma consulta de conferência. Deve devolver **uma linha**
 com o seu e-mail e o papel `owner`:
 
 ```

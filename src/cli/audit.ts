@@ -2,7 +2,9 @@
 import { loadDotEnv } from '../config/dotenv.js';
 import { bootstrap, DEV_TENANT_ID, DEV_CNPJ, type BootstrapOptions } from '../composition-root.js';
 import { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
+import type { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { loadEnv, EnvError } from '../config/env.js';
+import pg from 'pg';
 import { buildServer } from '../api/server.js';
 import { diagnosticar, type Checagem } from '../infrastructure/diagnostics/environment-doctor.js';
 import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
@@ -18,6 +20,8 @@ const DOTENV = loadDotEnv();
 
 const EXIT_OK = 0;
 const EXIT_ERROR = 1;
+let ESTRITO = false;
+
 const EXIT_USAGE = 2;
 /** Código próprio para integridade: deixa a CI distinguir falha de trilha de falha comum. */
 const EXIT_INTEGRITY = 3;
@@ -40,6 +44,7 @@ Comandos previstos (ainda não implementados)
 
 Opções
   --config <caminho>              Padrão: config/esaa.config.yaml
+  --strict                        verify falha (3) se não houver o que verificar
   --tenant <uuid>                 Escritório (tenant). Padrão: escopo de dev
   --cnpj <14 dígitos>             CNPJ do cliente. Padrão: escopo de dev
 `;
@@ -62,13 +67,14 @@ const PENDING: Record<string, PendingCommand> = {
 
 async function main(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
+  ESTRITO = rest.includes('--strict');
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     process.stdout.write(USAGE);
     return command ? EXIT_OK : EXIT_USAGE;
   }
 
-  const options = readBootstrapOptions(rest);
+  const options = await readBootstrapOptions(rest);
 
   switch (command) {
     case 'version':
@@ -87,16 +93,75 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 }
 
-function readBootstrapOptions(args: readonly string[]): BootstrapOptions {
+async function readBootstrapOptions(args: readonly string[]): Promise<BootstrapOptions> {
   const configPath = readOption(args, '--config');
-  const tenant = readOption(args, '--tenant') ?? DEV_TENANT_ID;
-  const cnpj = readOption(args, '--cnpj') ?? DEV_CNPJ;
+  const informadoTenant = readOption(args, '--tenant');
+  const informadoCnpj = readOption(args, '--cnpj');
+
+  const cnpj = informadoCnpj ?? DEV_CNPJ;
+  const tenant = informadoTenant ?? (await resolverTenant(cnpj));
 
   const options: BootstrapOptions = { scope: EventScope.create(tenant, cnpj) };
   if (configPath !== undefined) {
     options.configPath = configPath;
   }
   return options;
+}
+
+/**
+ * Descobre o escritório dono do CNPJ, quando `--tenant` não foi informado.
+ *
+ * Antes o padrão era o tenant de dev, e quem rodava `verify --cnpj <real>`
+ * examinava um escopo que **nunca** teria dado — a saída dizia "0 eventos" e a
+ * pessoa concluía que a ingestão falhou, quando o que falhou foi a pergunta.
+ * Aconteceu de verdade, com o CNPJ certo e o tenant zerado.
+ *
+ * Com mais de um escritório para o mesmo CNPJ a escolha não é do programa: ele
+ * lista e para. Sem banco alcançável, volta ao padrão de dev, porque `version`
+ * e `help` não precisam de banco para funcionar.
+ */
+async function resolverTenant(cnpj: string): Promise<string> {
+  const connectionString = process.env['DATABASE_URL'];
+  if (connectionString === undefined || cnpj === DEV_CNPJ) {
+    return DEV_TENANT_ID;
+  }
+
+  const pool = new pg.Pool({ connectionString, max: 1, connectionTimeoutMillis: 8000 });
+
+  try {
+    const { rows } = await pool.query<{ tenant_id: string; name: string }>(
+      `select c.tenant_id, t.name
+         from clients c join tenants t on t.id = c.tenant_id
+        where c.cnpj = $1::char(14)`,
+      [cnpj],
+    );
+
+    if (rows.length === 1) {
+      return rows[0]!.tenant_id;
+    }
+
+    if (rows.length > 1) {
+      process.stderr.write(
+        `O CNPJ ${cnpj} está em ${rows.length} escritórios. Informe qual com --tenant:\n` +
+          rows.map((r) => `  --tenant ${r.tenant_id}   ${r.name}\n`).join(''),
+      );
+      process.exit(EXIT_USAGE);
+    }
+
+    process.stderr.write(
+      `O CNPJ ${cnpj} não está na carteira de nenhum escritório deste banco.\n` +
+        '  Sem cliente cadastrado não há event log para verificar — cadastre-o\n' +
+        '  primeiro, ou confira se o DATABASE_URL aponta para o ambiente certo.\n',
+    );
+    process.exit(EXIT_USAGE);
+  } catch (causa) {
+    // Banco fora do ar não impede `version` nem `help`; o comando que precisa
+    // dele falha adiante, com a mensagem do próprio bootstrap.
+    void causa;
+    return DEV_TENANT_ID;
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
 }
 
 /**
@@ -173,12 +238,27 @@ async function runVersion(options: BootstrapOptions): Promise<number> {
 }
 
 async function runVerify(options: BootstrapOptions): Promise<number> {
-  const { orchestrator, scope } = await bootstrap(options);
-  const report = await orchestrator.verify();
+  const { orchestrator, scope, backend, pool } = await bootstrap(options);
 
+  try {
+    const report = await orchestrator.verify();
+    return relatarVerificacao(report, scope, backend);
+  } finally {
+    await pool?.end().catch(() => undefined);
+  }
+}
+
+function relatarVerificacao(
+  report: Awaited<ReturnType<FiscalOrchestratorService['verify']>>,
+  scope: EventScope,
+  backend: 'postgres' | 'jsonl',
+): number {
   process.stdout.write(
     [
       `escopo            ${scope.toKey()}`,
+      // De onde o log veio. Sem isto, verificar o arquivo de desenvolvimento e
+      // verificar o log do cliente têm a mesma cara na tela.
+      `origem do log     ${backend === 'postgres' ? 'Postgres (DATABASE_URL)' : 'arquivo JSONL local'}`,
       `eventos           ${report.eventCount}`,
       `ultimo event_seq  ${report.lastEventSeq}`,
       `hash gravado      ${report.storedHash || '(vazio)'}`,
@@ -188,8 +268,42 @@ async function runVerify(options: BootstrapOptions): Promise<number> {
     ].join('\n'),
   );
 
+  /**
+   * Log vazio não é log verificado.
+   *
+   * A projeção vazia bate consigo mesma em qualquer replay, então `valid` vem
+   * `true` e a mensagem de sucesso aparece — sobre nada. Quem roda o `verify`
+   * depois de uma ingestão lê "OK" e conclui que os documentos entraram, quando
+   * o que aconteceu foi o contrário. O `event_seq -1` estava na tela e dizia
+   * isso, mas só para quem sabe que -1 é "nenhum evento".
+   *
+   * Mesma regra do resto do produto: ausência de erro não é verificação. Ver
+   * `not_verified` no catálogo, `not_applicable` nas trilhas e
+   * `nao_verificavel` no dossiê.
+   */
+  if (report.eventCount === 0) {
+    process.stdout.write(
+      'NADA A VERIFICAR — este CNPJ não tem evento no log.\n' +
+        '  A projeção vazia fecha consigo mesma, e isso não diz nada sobre os\n' +
+        '  documentos: se você esperava que uma ingestão tivesse rodado, ela não\n' +
+        '  gravou. Confira o escopo acima — tenant e CNPJ precisam ser os certos.\n',
+    );
+
+    /**
+     * `--strict` existe para automação.
+     *
+     * Num pipeline, sair 0 aqui transforma o passo num carimbo: ele passa
+     * sempre, inclusive quando não verificou nada, e a equipe conclui que
+     * INV-006 está guardado. Interativamente o 0 é correto — não achar evento
+     * não é erro de quem perguntou.
+     */
+    return ESTRITO ? EXIT_INTEGRITY : EXIT_OK;
+  }
+
   if (report.valid) {
-    process.stdout.write('OK — a projeção fecha com o event log.\n');
+    process.stdout.write(
+      `OK — a projeção fecha com o event log (${report.eventCount} eventos).\n`,
+    );
     return EXIT_OK;
   }
 

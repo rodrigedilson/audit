@@ -65,8 +65,23 @@ jobs:
 
       # INV-006: o hash da projeção é a trilha de defesa do produto. Se o replay
       # deixar de ser determinístico, a CI falha aqui com exit code 3.
-      - name: Verifica integridade da projeção
-        run: npm run verify
+      #
+      # O passo era vácuo até aqui: rodava sem `DATABASE_URL`, sobre um
+      # `.roadmap/activity.jsonl` de zero bytes, e passava sempre — inclusive
+      # sem ter verificado nada. Um guard que passa em qualquer situação não
+      # guarda, carimba. Agora semeia um log determinístico no Postgres e
+      # verifica contra ele, com `--strict` para que "nada a verificar" seja
+      # falha e não sucesso silencioso.
+      - name: Semeia um event log determinístico
+        run: npx tsx scripts/semear-log-de-ci.ts
+
+      - name: Verifica integridade da projeção (INV-006)
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          npx tsx src/cli/audit.ts verify --strict \
+            --tenant 11111111-1111-1111-1111-111111111111 \
+            --cnpj 11222333000181
 
   contract:
     name: Contrato OpenAPI

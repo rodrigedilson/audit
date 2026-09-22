@@ -294,16 +294,58 @@ configurar as variáveis na Vercel).
 
 Esta é a tabela de decisão. Cada linha é um commit.
 
+> **Revisão desta tabela, feita ao executá-la.** A versão anterior mandava
+> migrar `features/xml-import` e `features/sped-upload` por inteiro, e isso
+> **perderia capacidade**. Conferido no código: o parser do front cobre
+> `efd-icms-ipi` **e** `efd-contribuicoes`, e o cross-reference compara ICMS,
+> IPI, PIS e Cofins campo a campo entre XML e SPED. O `audit` cobre só
+> EFD-Contribuições, e o dossiê confere só PIS/Cofins. Então o que migra é a
+> **ingestão de XML** e o **saldo credor**; o cross-reference e o EFD ICMS/IPI
+> ficam, porque não têm equivalente.
+
 | Feature / hook | Arquivos | Destino | Esforço |
 |---|---|---|---|
-| `hooks/useAuth.tsx`, `hooks/useProfile.tsx` | 2 | `GET /v1/me` como fonte de papel e escritório; login segue no Supabase Auth | 3–4h |
-| `hooks/useFileUpload.tsx`, `hooks/useFileList.tsx` | 2 | `POST /v1/clients/{cnpj}/documents` (207 Multi-Status), `GET .../documents` | 5–7h |
-| `features/xml-import/` | 9 | Ingestão (Onda 4) + contra-apuração `POST/GET /fisco-assessments/{period}` (Onda 8) | 10–14h |
-| `features/sped-upload/` | 6 | `POST /v1/clients/{cnpj}/sped` + `GET /credit-dossier/{period}` (Onda 12) | 8–12h |
+| `hooks/useAuth.tsx`, `hooks/useProfile.tsx` | 2 | **feito** — `GET /v1/me` como fonte de papel e escritório | 0h |
+| `hooks/useFileUpload.tsx`, `hooks/useFileList.tsx` | 2 | **feito** — `useDocumentIngestion` + `ClientSelector`, com o 207 | 0h |
+| `features/xml-import/hooks/useXmlImport` | 1 | Substituído por `/fiscal/ingestao`. O antigo grava em `xml_documents` sem passar pelas 7 camadas — **aposentar** | 2–3h |
+| `features/xml-import/` cross-reference | 8 | **fica** — compara XML × SPED em ICMS, IPI, PIS e Cofins; o `audit` não tem isso | 0h |
+| `features/sped-upload/` EFD-Contribuições | — | **feito** — `/fiscal/dossie` importa e monta o dossiê de saldo credor | 0h |
+| `features/sped-upload/` EFD ICMS/IPI | 6 | **fica** — o `audit` não parseia esse layout | 0h |
 | `features/entity-extraction/` | 8 | **fica como está** — o `audit` não tem equivalente | 0h |
 | `features/knowledge-graph/` | 2 | **fica como está** | 0h |
 | `features/cfop-manual/` | 2 | **fica como está** por ora; ver a nota abaixo | 0h |
-| `pages/AuthTest.tsx` | 1 | Apagar — é página de teste em produção | 15min |
+| `pages/AuthTest.tsx` | 1 | **feito** — removida, era página de teste em produção | 0h |
+
+### A sobreposição que sobrou, e a decisão que ela pede
+
+Com a EFD-Contribuições indo para o `audit` e o EFD ICMS/IPI ficando no front,
+o mesmo tipo de arquivo passa a ter dois destinos possíveis. Há duas saídas, e a
+escolha é de produto, não técnica:
+
+- **Importar a EFD-Contribuições nos dois**: o front para o cross-reference de
+  todos os tributos, o `audit` para o dossiê de saldo credor. Custa parsing
+  duplicado e ganha as duas saídas.
+- **Estender o `audit` para EFD ICMS/IPI** e aposentar o parser do front. É onda
+  nova, não migração — e aí o cross-reference também migraria, virando uma
+  extensão do dossiê para todos os tributos.
+
+**Decisão tomada: importar nos dois.** O arquivo de EFD-Contribuições sobe no
+"Upload SPED" e no "Saldo credor"; as duas conferências ficam disponíveis desde
+já, sem trabalho novo. O custo é subir o mesmo arquivo duas vezes.
+
+Para que isso não vire perda silenciosa de conferência, cada tela **explica o que
+ela confere e aponta para a outra** (`ConferenciaComplementar`). Sem esse aviso a
+pessoa sobe numa das duas, considera o trabalho feito, e perde metade sem saber
+que existe.
+
+Dois caminhos ficam abertos, em ordem de custo:
+
+- **Um upload, dois destinos** — uma tela chama as duas rotas. Resolve o
+  incômodo de subir duas vezes. **2–4h**, reversível.
+- **Estender o `audit` para EFD ICMS/IPI** — o parser lê o outro layout e o
+  dossiê confere os quatro tributos; o cross-reference do front vira redundante.
+  É o destino certo no longo prazo, mas é onda nova: parser, reconciliação de
+  ICMS e IPI, e testes. **20–30h**.
 
 > **Nota sobre CFOP:** o `audit` tem `fiscal_codes` e `cclasstrib_cst` (Onda 5),
 > que são as tabelas oficiais usadas pela camada 3 de validação, e elas **nascem
@@ -335,7 +377,8 @@ Não é refatoração por gosto. O que muda para o usuário:
 
 Depois de cada um: rode o passo 6.
 
-**Esforço total do passo: 26–37h.**
+**Esforço restante do passo: 2–3h** (era 26–37h; sobrou aposentar o
+`useXmlImport` antigo).
 
 ---
 
@@ -346,8 +389,8 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 
 | Tela | Rotas | Esforço |
 |---|---|---|
-| 2 Carteira de CNPJs | `GET /v1/clients` | 4–6h |
-| 3 Cadastro de empresa | `POST /v1/clients` | 2–3h |
+| ~~2 Carteira de CNPJs~~ | `GET /v1/clients` | **feita** |
+| ~~3 Cadastro de empresa~~ | `POST /v1/clients` | **feita** |
 | 4 Detalhe do cliente | `GET /v1/clients/{cnpj}` | 3–4h |
 | 5 Cofre de certificados A1 | `/certificate`, `/certificates/expiring` | 3–4h |
 | 7 Saúde do cadastro | `GET /items/health` | 5–7h |
@@ -360,8 +403,17 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
 | 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-**Esforço: 55–77h.** A ordem sugerida é a da tabela: a carteira primeiro, porque
+**Esforço restante: 49–68h.** A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
+
+A carteira rendeu duas correções no backend, que valem como aviso para as telas
+seguintes: `GET /v1/clients` documentava `status` como estado da competência e o
+implementava como status do CNPJ — filtrar por `open` devolvia `200` com zero
+itens, indistinguível de um escritório sem clientes. Agora há `state` (estado da
+competência) e `status` (`active`/`inactive`, base da cobrança), valor fora do
+enumerado é `400`, e a listagem devolve o `status` para a tela não presumir
+ativo. **Ao escrever cada tela, confira a rota contra o contrato antes de
+confiar nele.**
 
 ---
 
@@ -470,11 +522,11 @@ event log.
 | **2** | Migrar o dado fiscal — simulação **feita**; falta executar | **2–4h** |
 
 | **3** | Cliente de API — **feito**; falta configurar a Vercel | **1–2h** |
-| **4** | Migrar as 4 features acopladas | **26–37h** |
+| **4** | Migrar as features acopladas — quase tudo **feito** | **2–3h** |
 | **5** | As 13 telas que faltam | **55–77h** |
 | **6** | Auditoria das cinco regras — 2h × 6 rodadas | **12h** |
 | **7** | Verificação e roteiro funcional | **4–6h** |
-| | **Total** | **~102–141h** |
+| | **Total** | **~78–110h** |
 
 Para uma pessoa em tempo integral: **3 a 4 semanas**. Em meio período, dobre.
 

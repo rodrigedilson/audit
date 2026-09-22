@@ -152,7 +152,7 @@ export async function saudeDoCadastro(
             (v.health_issues->0->>'message') as mensagem
        from vigente v
        left join item_propagation($1::uuid, $2::char(14)) p on p.item_id = v.item_id
-      where v.health <> 'ok'
+      where v.health is distinct from 'ok'
       order by coalesce(p.outbound_documents_affected, 0) desc, v.item_id
       limit 10`,
     [scope.tenantId, scope.cnpj],

@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import type { Regime } from '../shared/fiscal-vocabulary.js';
 import {
@@ -43,6 +43,9 @@ export interface StoredAdjustment {
  * projeta os dois sistemas lado a lado. A memória de cálculo é persistida linha
  * por linha: é o que o contador apresenta para defender o número.
  */
+/** Linhas por `INSERT`. Ver `inserirLinhasEmLote`. */
+const LOTE_DE_LINHAS = 500;
+
 export class AssessmentService {
   constructor(private readonly pool: Pool) {}
 
@@ -144,6 +147,20 @@ export class AssessmentService {
    * misturar linhas de duas execuções daria um total que não fecha com nenhuma
    * das duas. O event log é que guarda o histórico, não esta tabela.
    */
+  /**
+   * Grava a apuração e a memória de cálculo.
+   *
+   * **Transacional, e isso não é zelo abstrato.** A versão anterior usava o pool
+   * direto: apagava as linhas antigas e inseria as novas uma a uma, sem
+   * transação. Interrompida no meio — deploy, timeout, OOM — deixava
+   * `assessments` dizendo 578 itens e `assessment_lines` com menos, e a memória
+   * de cálculo saía incompleta **sem nada indicar que estava incompleta**.
+   * Aconteceu de verdade, numa apuração real de 2.211 linhas.
+   *
+   * As linhas vão em lote. Eram 2.211 `INSERT` sequenciais, cada um uma ida ao
+   * banco: sobre a rede entre o serviço e o Postgres gerenciado isso passava de
+   * dois minutos, e a transação ficava aberta esse tempo todo segurando lock.
+   */
   async save(
     scope: EventScope,
     result: AssessmentResult,
@@ -151,69 +168,56 @@ export class AssessmentService {
     eventSeq: number,
   ): Promise<void> {
     const totals = { ...result.legacy, ...result.reform };
+    const client = await this.pool.connect();
 
-    await this.pool.query(
-      `insert into assessments (
-         tenant_id, cnpj, period, regime, totals, not_computable, coverage,
-         documents_count, items_count, projection_hash, event_seq, computed_at
-       ) values ($1::uuid, $2::char(14), $3::char(7), $4::regime, $5::jsonb, $6::jsonb,
-                 $7::jsonb, $8, $9, $10, $11, now())
-       on conflict (tenant_id, cnpj, period) do update set
-         regime = excluded.regime,
-         totals = excluded.totals,
-         not_computable = excluded.not_computable,
-         coverage = excluded.coverage,
-         documents_count = excluded.documents_count,
-         items_count = excluded.items_count,
-         projection_hash = excluded.projection_hash,
-         event_seq = excluded.event_seq,
-         computed_at = now()`,
-      [
-        scope.tenantId,
-        scope.cnpj,
-        result.period,
-        result.regime,
-        JSON.stringify(totals),
-        JSON.stringify(result.notComputable),
-        JSON.stringify(result.coverage),
-        result.documentsConsidered,
-        result.itemsConsidered,
-        projectionHash,
-        eventSeq,
-      ],
-    );
+    try {
+      await client.query('begin');
 
-    await this.pool.query(
-      `delete from assessment_lines
-        where tenant_id = $1::uuid and cnpj = $2::char(14) and period = $3::char(7)`,
-      [scope.tenantId, scope.cnpj, result.period],
-    );
-
-    for (const linha of result.trace) {
-      await this.pool.query(
-        `insert into assessment_lines (
-           tenant_id, cnpj, period, access_key, line, tax, item_code, ncm,
-           direction, cst, base_cents, rate, amount_cents, origin
-         ) values ($1::uuid, $2::char(14), $3::char(7), $4::char(44), $5, $6, $7, $8,
-                   $9, $10, $11, $12, $13, $14)
-         on conflict (tenant_id, cnpj, period, access_key, line, tax) do nothing`,
+      await client.query(
+        `insert into assessments (
+           tenant_id, cnpj, period, regime, totals, not_computable, coverage,
+           documents_count, items_count, projection_hash, event_seq, computed_at
+         ) values ($1::uuid, $2::char(14), $3::char(7), $4::regime, $5::jsonb, $6::jsonb,
+                   $7::jsonb, $8, $9, $10, $11, now())
+         on conflict (tenant_id, cnpj, period) do update set
+           regime = excluded.regime,
+           totals = excluded.totals,
+           not_computable = excluded.not_computable,
+           coverage = excluded.coverage,
+           documents_count = excluded.documents_count,
+           items_count = excluded.items_count,
+           projection_hash = excluded.projection_hash,
+           event_seq = excluded.event_seq,
+           computed_at = now()`,
         [
           scope.tenantId,
           scope.cnpj,
           result.period,
-          linha.accessKey,
-          linha.line,
-          linha.tax,
-          linha.itemCode,
-          linha.ncm,
-          linha.direction,
-          linha.cst ?? null,
-          linha.baseCents,
-          linha.rate,
-          linha.amountCents,
-          linha.origin,
+          result.regime,
+          JSON.stringify(totals),
+          JSON.stringify(result.notComputable),
+          JSON.stringify(result.coverage),
+          result.documentsConsidered,
+          result.itemsConsidered,
+          projectionHash,
+          eventSeq,
         ],
       );
+
+      await client.query(
+        `delete from assessment_lines
+          where tenant_id = $1::uuid and cnpj = $2::char(14) and period = $3::char(7)`,
+        [scope.tenantId, scope.cnpj, result.period],
+      );
+
+      await inserirLinhasEmLote(client, scope, result);
+
+      await client.query('commit');
+    } catch (causa) {
+      await client.query('rollback');
+      throw causa;
+    } finally {
+      client.release();
     }
   }
 
@@ -392,4 +396,60 @@ function normalizarReforma(
   }
 
   return saida;
+}
+
+/**
+ * Linhas da memória de cálculo em lotes de `LOTE_DE_LINHAS`.
+ *
+ * Um `INSERT` com N tuplas em vez de N `INSERT`. O tamanho do lote existe por
+ * causa do limite de 65.535 parâmetros do protocolo do Postgres: com 14 colunas
+ * por linha, 500 linhas são 7.000 parâmetros — folgado, e ainda assim reduz
+ * 2.211 idas ao banco para cinco.
+ */
+async function inserirLinhasEmLote(
+  client: PoolClient,
+  scope: EventScope,
+  result: AssessmentResult,
+): Promise<void> {
+  const COLUNAS = 14;
+
+  for (let i = 0; i < result.trace.length; i += LOTE_DE_LINHAS) {
+    const lote = result.trace.slice(i, i + LOTE_DE_LINHAS);
+    const valores: unknown[] = [];
+    const marcadores: string[] = [];
+
+    for (const [j, linha] of lote.entries()) {
+      const base = j * COLUNAS;
+      marcadores.push(
+        `($${base + 1}::uuid, $${base + 2}::char(14), $${base + 3}::char(7), ` +
+          `$${base + 4}::char(44), $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, ` +
+          `$${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13}, $${base + 14})`,
+      );
+      valores.push(
+        scope.tenantId,
+        scope.cnpj,
+        result.period,
+        linha.accessKey,
+        linha.line,
+        linha.tax,
+        linha.itemCode,
+        linha.ncm,
+        linha.direction,
+        linha.cst ?? null,
+        linha.baseCents,
+        linha.rate,
+        linha.amountCents,
+        linha.origin,
+      );
+    }
+
+    await client.query(
+      `insert into assessment_lines (
+         tenant_id, cnpj, period, access_key, line, tax, item_code, ncm,
+         direction, cst, base_cents, rate, amount_cents, origin
+       ) values ${marcadores.join(', ')}
+       on conflict (tenant_id, cnpj, period, access_key, line, tax) do nothing`,
+      valores,
+    );
+  }
 }
