@@ -2250,7 +2250,12 @@ components:
         stored_at: { type: string, format: date-time }
         stored_by: { type: string }
         last_used_at: { type: string, format: date-time, nullable: true }
-        usage_count_30d: { type: integer }
+        usage_count:
+          type: integer
+          description: |
+            Usos desde que **este** certificado foi guardado. Zera quando um novo
+            PFX substitui o anterior. O campo se chamava `usage_count_30d` e
+            contava tudo — não havia janela de 30 dias em lugar nenhum.
 
     CertificateUsage:
       type: object
