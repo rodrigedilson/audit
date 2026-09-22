@@ -399,11 +399,11 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | ~~10 Contra-apuração e calendário~~ | `/fisco-assessments/{period}`, `/deadlines` | **feita** |
 | ~~11 Assistente fiscal~~ | `/assistant/threads`, `/messages`, `/usage`, `/capabilities` | **feita** |
 | ~~12 Crédito em risco~~ | `/bank-statements`, `/payment-matches`, `/credits/at-risk` | **feita** |
-| 13 Simulador | `/simulations`, `/methodology` | 6–8h |
+| ~~13 Simulador~~ | `/simulations`, `/methodology` | **feita** |
 | 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
 | 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-**Esforço restante: 11–15h.** A ordem é a da tabela: a carteira primeiro, porque
+**Esforço restante: 5–7h.** A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
 
 A carteira rendeu duas correções no backend, que valem como aviso para as telas
@@ -460,6 +460,12 @@ botão, porque não há para onde mandar — e `TELAS.md` diz que declarar créd
 perdido é decisão do contador, não cálculo. Se a decisão for registrá-la no
 sistema, falta `POST /clients/{cnpj}/credits/{access_key}/lost` com
 justificativa obrigatória; é onda nova, não ajuste de tela.
+
+A tela 13 saiu sem divergência. Vale registrar o que ela **não** fez: a
+metodologia virou página própria em `/fiscal/simulador/metodologia`, e não um
+rodapé, porque é o que impede o resultado de ser lido como cálculo. E o mapa de
+sensibilidade só existe porque `winner: null` é resposta — sem ele, "depende"
+seria um vazio.
 
 ---
 
