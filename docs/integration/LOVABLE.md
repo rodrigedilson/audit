@@ -389,8 +389,8 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 
 | Tela | Rotas | Esforço |
 |---|---|---|
-| 2 Carteira de CNPJs | `GET /v1/clients` | 4–6h |
-| 3 Cadastro de empresa | `POST /v1/clients` | 2–3h |
+| ~~2 Carteira de CNPJs~~ | `GET /v1/clients` | **feita** |
+| ~~3 Cadastro de empresa~~ | `POST /v1/clients` | **feita** |
 | 4 Detalhe do cliente | `GET /v1/clients/{cnpj}` | 3–4h |
 | 5 Cofre de certificados A1 | `/certificate`, `/certificates/expiring` | 3–4h |
 | 7 Saúde do cadastro | `GET /items/health` | 5–7h |
@@ -403,8 +403,17 @@ Depois da migração, estas ficam faltando. As regras de cada uma estão em
 | 15 Planos e assinatura | `/plans`, `/subscription` | 3–4h |
 | 16 Usuários e papéis | `/users`, `/invites` | 2–3h |
 
-**Esforço: 55–77h.** A ordem sugerida é a da tabela: a carteira primeiro, porque
+**Esforço restante: 49–68h.** A ordem é a da tabela: a carteira primeiro, porque
 todas as outras são "dentro de um CNPJ" e precisam dela para navegar.
+
+A carteira rendeu duas correções no backend, que valem como aviso para as telas
+seguintes: `GET /v1/clients` documentava `status` como estado da competência e o
+implementava como status do CNPJ — filtrar por `open` devolvia `200` com zero
+itens, indistinguível de um escritório sem clientes. Agora há `state` (estado da
+competência) e `status` (`active`/`inactive`, base da cobrança), valor fora do
+enumerado é `400`, e a listagem devolve o `status` para a tela não presumir
+ativo. **Ao escrever cada tela, confira a rota contra o contrato antes de
+confiar nele.**
 
 ---
 

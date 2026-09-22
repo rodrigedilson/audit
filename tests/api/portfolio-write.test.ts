@@ -27,7 +27,7 @@ function makePfx(password: string): Buffer {
   return Buffer.from(forge.asn1.toDer(asn1).getBytes(), 'binary');
 }
 
-describe.skipIf(!DATABASE_URL)('API — escrita da carteira e cofre de certificados', () => {
+describe.skipIf(!DATABASE_URL)('API — carteira e cofre de certificados', () => {
   let pool: pg.Pool;
   let app: FastifyInstance;
   let tenantId: string;
@@ -166,6 +166,87 @@ describe.skipIf(!DATABASE_URL)('API — escrita da carteira e cofre de certifica
       expect((await call('GET', `/v1/clients/${cnpj}`, owner)).json().regime).toBe(
         'lucro_presumido',
       );
+    });
+  });
+
+  describe('filtros da carteira', () => {
+    /**
+     * Os filtros da tela da carteira.
+     *
+     * Existem estes testes porque o contrato e a implementação divergiam:
+     * `status` estava documentado como estado da competência e implementado
+     * como status do CNPJ. Filtrar por `open` devolvia `200` com zero itens —
+     * indistinguível de um escritório sem nenhum CNPJ cadastrado.
+     */
+    let outro: string;
+
+    beforeEach(async () => {
+      outro = randomCnpj();
+      // Cadastro pela API, e não pelo helper de banco: `client.updated` só tem
+      // efeito sobre uma projeção que já tem cliente, e a projeção só tem
+      // cliente se houve `client.enrolled`. Semear a tabela direto criaria um
+      // CNPJ que o log não explica — exatamente o que o produto promete não ter.
+      await call('POST', '/v1/clients', owner, {
+        cnpj,
+        legal_name: 'Alfa Comercio LTDA',
+        regime: 'lucro_real',
+      });
+      await call('POST', '/v1/clients', owner, {
+        cnpj: outro,
+        legal_name: 'Beta Servicos LTDA',
+        regime: 'simples_hibrido',
+      });
+      await call('POST', `/v1/clients/${cnpj}/periods`, accountant, { period: '2027-01' });
+    });
+
+    const cnpjsDe = async (query: string): Promise<string[]> =>
+      (await call('GET', `/v1/clients${query}`, owner))
+        .json()
+        .items.map((item: { cnpj: string }) => item.cnpj);
+
+    it('ordena por razão social, e não pela ordem de cadastro', async () => {
+      expect(await cnpjsDe('')).toEqual([cnpj, outro]);
+    });
+
+    it('filtra por regime', async () => {
+      expect(await cnpjsDe('?regime=lucro_real')).toEqual([cnpj]);
+      expect(await cnpjsDe('?regime=simples_hibrido')).toEqual([outro]);
+    });
+
+    it('filtra pelo estado da competência corrente', async () => {
+      expect(await cnpjsDe('?state=open')).toEqual([cnpj]);
+      // O CNPJ sem competência não casa com nenhum estado — inclusive não
+      // aparece como se estivesse aberto.
+      expect(await cnpjsDe('?state=confirmed')).toEqual([]);
+    });
+
+    it('filtra por status do CNPJ, que é a base da cobrança', async () => {
+      await call('PATCH', `/v1/clients/${outro}`, owner, { status: 'inactive' });
+
+      expect(await cnpjsDe('?status=active')).toEqual([cnpj]);
+      expect(await cnpjsDe('?status=inactive')).toEqual([outro]);
+    });
+
+    it('devolve o status na listagem, para a tela não presumir ativo', async () => {
+      const itens = (await call('GET', '/v1/clients', owner)).json().items;
+
+      expect(itens).toEqual([
+        expect.objectContaining({ cnpj, status: 'active', state: 'open' }),
+        expect.objectContaining({ cnpj: outro, status: 'active', state: null }),
+      ]);
+    });
+
+    /** Filtro inválido é 400: carteira vazia mentiria sobre o escritório. */
+    it('recusa valor fora do enumerado em vez de devolver lista vazia', async () => {
+      expect((await call('GET', '/v1/clients?regime=lucro_arbitrado', owner)).statusCode).toBe(400);
+      expect((await call('GET', '/v1/clients?state=fechada', owner)).statusCode).toBe(400);
+      expect((await call('GET', '/v1/clients?status=ativo', owner)).statusCode).toBe(400);
+    });
+
+    it('o total reflete o filtro, não a carteira inteira', async () => {
+      const resposta = (await call('GET', '/v1/clients?regime=lucro_real', owner)).json();
+
+      expect(resposta.total).toBe(1);
     });
   });
 

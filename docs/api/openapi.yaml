@@ -106,8 +106,16 @@ paths:
           schema: { $ref: "#/components/schemas/Regime" }
         - in: query
           name: status
+          schema: { type: string, enum: [active, inactive] }
+          description: |
+            Filtra pelo status do CNPJ na carteira. É a base da cobrança: só
+            `active` é faturado.
+        - in: query
+          name: state
           schema: { $ref: "#/components/schemas/PeriodState" }
-          description: Filtra pelo estado do período corrente
+          description: |
+            Filtra pelo estado da competência corrente. CNPJ sem competência
+            aberta não aparece em nenhum valor deste filtro.
       responses:
         "200":
           description: Página de clientes com resumo do período corrente
@@ -1433,11 +1441,19 @@ components:
         cnpj: { type: string }
         legal_name: { type: string }
         regime: { $ref: "#/components/schemas/Regime" }
+        status: { type: string, enum: [active, inactive] }
         period: { $ref: "#/components/schemas/PeriodId" }
         state: { $ref: "#/components/schemas/PeriodState" }
         documents: { type: integer }
         open_issues: { type: integer }
-        credit_at_risk_brl: { type: number }
+        credit_at_risk_brl:
+          type: number
+          nullable: true
+          description: |
+            Sempre `null` nesta listagem. O estado do crédito é derivado na
+            leitura, e derivá-lo por linha custaria uma classificação por
+            cliente; `0` afirmaria "não tem crédito em risco". O número está em
+            `GET /clients/{cnpj}/credits/at-risk`.
         next_deadline: { type: string, format: date, nullable: true }
 
     Period:

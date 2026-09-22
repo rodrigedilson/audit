@@ -21,7 +21,14 @@ interface ListQuery {
   page_size?: number;
   regime?: string;
   status?: string;
+  state?: string;
 }
+
+/** Estados da competência, na ordem do fechamento. `confirmed` é terminal. */
+const PERIOD_STATES = ['open', 'assessed', 'reconciled', 'confirmed'] as const;
+
+/** Status do CNPJ na carteira. É a base da cobrança: só `active` é faturado. */
+const CLIENT_STATUSES = ['active', 'inactive'] as const;
 
 /**
  * Carteira do escritório: leitura e escrita.
@@ -40,8 +47,12 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
           properties: {
             page: { type: 'integer', minimum: 1, default: 1 },
             page_size: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
-            regime: { type: 'string' },
-            status: { type: 'string' },
+            // Enumerados de propósito. Um valor fora da lista antes devolvia
+            // carteira vazia com `200`, indistinguível de "nenhum CNPJ
+            // cadastrado" — um filtro errado parecia um escritório vazio.
+            regime: { type: 'string', enum: [...REGIMES] },
+            status: { type: 'string', enum: [...CLIENT_STATUSES] },
+            state: { type: 'string', enum: [...PERIOD_STATES] },
           },
         },
       },
@@ -57,13 +68,14 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
         regime: string;
         period: string | null;
         state: string | null;
+        status: string;
         documents: string;
         open_issues: string;
         next_deadline: string | null;
         total: string;
       }>(
         `with carteira as (
-           select c.cnpj, c.legal_name, c.regime,
+           select c.cnpj, c.legal_name, c.regime, c.status,
                   p.period, p.state,
                   (select count(*) from events e
                     where e.tenant_id = c.tenant_id and e.cnpj = c.cnpj
@@ -94,9 +106,20 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
          )
          select *, count(*) over () as total
            from carteira
+           -- O estado filtra a competência corrente, e é o filtro da tela.
+           -- Fica fora do where de cima porque p.state vem do lateral: um CNPJ
+           -- sem competência aberta tem estado nulo e não casa com nada.
+          where ($6::text is null or state::text = $6::text)
           order by legal_name
           limit $4 offset $5`,
-        [tenantId, request.query.regime ?? null, request.query.status ?? null, pageSize, (page - 1) * pageSize],
+        [
+          tenantId,
+          request.query.regime ?? null,
+          request.query.status ?? null,
+          pageSize,
+          (page - 1) * pageSize,
+          request.query.state ?? null,
+        ],
       );
 
       return reply.code(200).send({
@@ -104,6 +127,7 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
           cnpj: row.cnpj,
           legal_name: row.legal_name,
           regime: row.regime,
+          status: row.status,
           period: row.period,
           state: row.state,
           documents: Number(row.documents),
@@ -249,7 +273,7 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
             trade_name: { type: 'string' },
             regime: { type: 'string', enum: [...REGIMES] },
             regime_effective_from: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$' },
-            status: { type: 'string', enum: ['active', 'inactive'] },
+            status: { type: 'string', enum: [...CLIENT_STATUSES] },
           },
         },
       },
