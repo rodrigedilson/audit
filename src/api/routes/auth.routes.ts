@@ -85,4 +85,70 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: ApiDeps): P
       },
     });
   });
+
+  /**
+   * Quem tem acesso a este escritório, e com que papel.
+   *
+   * Leitura, e só. Convidar, remover e trocar papel não existem na API — hoje
+   * isso se faz direto no banco. A tela precisa dizer isso em vez de mostrar
+   * botões que não levam a lugar nenhum.
+   *
+   * Qualquer membro lista: saber quem mais tem acesso ao escritório não é
+   * informação sensível dentro dele, e é o que permite a um `viewer` saber a
+   * quem pedir uma operação que ele não pode fazer.
+   */
+  app.get('/users', async (request, reply) => {
+    const context = request.tenant;
+
+    /**
+     * O e-mail mora em `auth.users`, que é do Supabase.
+     *
+     * O schema `auth` não existe num Postgres puro — CI e desenvolvimento local
+     * —, e por isso o join é condicional: `to_regclass` devolve nulo lá, e a
+     * consulta cai no ramo sem e-mail em vez de quebrar. Sem isso, esta rota
+     * funcionaria em produção e derrubaria a suíte.
+     */
+    const { rows: existe } = await deps.pool.query<{ tem: boolean }>(
+      "select to_regclass('auth.users') is not null as tem",
+    );
+    const comEmail = existe[0]?.tem === true;
+
+    const { rows } = await deps.pool.query<{
+      user_id: string;
+      role: string;
+      created_at: Date;
+      email: string | null;
+    }>(
+      comEmail
+        ? `select m.user_id, m.role::text as role, m.created_at, u.email
+             from memberships m
+             left join auth.users u on u.id = m.user_id
+            where m.tenant_id = $1::uuid
+            order by m.created_at`
+        : `select m.user_id, m.role::text as role, m.created_at, null::text as email
+             from memberships m
+            where m.tenant_id = $1::uuid
+            order by m.created_at`,
+      [context.tenantId],
+    );
+
+    return reply.code(200).send({
+      users: rows.map((row) => ({
+        user_id: row.user_id,
+        email: row.email,
+        role: row.role,
+        created_at: row.created_at.toISOString(),
+        /** Quem está lendo. A tela marca a própria linha. */
+        is_you: row.user_id === context.user.userId,
+      })),
+      total: rows.length,
+      /**
+       * `false` diz que a lista não traz e-mail porque a fonte não está
+       * disponível — e não que os usuários não têm e-mail.
+       */
+      emails_available: comEmail,
+      /** Nenhuma rota de convite, remoção ou troca de papel existe ainda. */
+      management_available: false,
+    });
+  });
 }
