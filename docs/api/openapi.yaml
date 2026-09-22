@@ -94,6 +94,54 @@ paths:
                   tenant: { $ref: "#/components/schemas/Tenant" }
 
   # ----------------------------------------------------------- portfolio
+  /users:
+    get:
+      tags: [auth]
+      summary: Quem tem acesso a este escritório, e com que papel
+      description: |
+        **Leitura, e só.** Convidar, remover e trocar papel não existem na API:
+        hoje isso se faz direto no banco, e a resposta declara esse estado em
+        `management_available` para a tela não oferecer botões que não levam a
+        lugar nenhum.
+
+        Qualquer membro lista — saber quem mais tem acesso não é informação
+        sensível dentro do escritório, e é o que permite a um `viewer` saber a
+        quem pedir uma operação que ele não pode fazer.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, total, emails_available, management_available]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id: { type: string, format: uuid }
+                        email:
+                          type: string
+                          nullable: true
+                          description: |
+                            `null` quando `emails_available` é `false`. Não
+                            significa que o usuário não tem e-mail.
+                        role: { type: string, enum: [owner, accountant, viewer] }
+                        created_at: { type: string, format: date-time }
+                        is_you: { type: boolean }
+                  total: { type: integer }
+                  emails_available:
+                    type: boolean
+                    description: |
+                      O e-mail mora em `auth.users`, do Supabase. Em Postgres
+                      puro — CI e desenvolvimento — o schema não existe, e a
+                      rota responde sem e-mail em vez de falhar.
+                  management_available:
+                    type: boolean
+                    description: Sempre `false` hoje. Não há rota de convite nem de remoção.
+
   /clients:
     get:
       tags: [portfolio]

@@ -168,6 +168,57 @@ describe.skipIf(!DATABASE_URL)('API HTTP', () => {
       expect((await authGet('/v1/me', USER_B)).json().tenant.id).toBe(TENANT_B);
       expect((await authGet('/v1/me', USER_B)).json().user.role).toBe('accountant');
     });
+
+    describe('GET /users', () => {
+      it('lista quem tem acesso ao escritório, com papel', async () => {
+        const contador = await createMembership(pool, TENANT_A, 'accountant');
+
+        const body = (await authGet('/v1/users', USER_A)).json();
+
+        expect(body.total).toBe(2);
+        expect(body.users).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ user_id: USER_A, role: 'owner', is_you: true }),
+            expect.objectContaining({ user_id: contador, role: 'accountant', is_you: false }),
+          ]),
+        );
+      });
+
+      /** Mesma regra de todo o resto: o escopo é o escritório do token. */
+      it('não vaza usuário de outro escritório', async () => {
+        const body = (await authGet('/v1/users', USER_A)).json();
+
+        expect(body.users.map((u: { user_id: string }) => u.user_id)).not.toContain(USER_B);
+      });
+
+      /**
+       * `viewer` também lista: saber quem mais tem acesso não é sensível dentro
+       * do escritório, e é o que permite a ele pedir a operação que não pode
+       * fazer a quem pode.
+       */
+      it('viewer também lista', async () => {
+        const leitor = await createMembership(pool, TENANT_A, 'viewer');
+
+        expect((await authGet('/v1/users', leitor)).statusCode).toBe(200);
+      });
+
+      /**
+       * O e-mail vem de `auth.users`, que só existe no Supabase. Em Postgres
+       * puro a rota responde sem e-mail e diz que não tem — em vez de quebrar,
+       * e em vez de deixar a tela concluir que os usuários não têm e-mail.
+       */
+      it('diz que os e-mails não estão disponíveis sem o schema auth', async () => {
+        const body = (await authGet('/v1/users', USER_A)).json();
+
+        expect(body.emails_available).toBe(false);
+        expect(body.users[0].email).toBeNull();
+      });
+
+      /** Convidar, remover e trocar papel não existem. A resposta declara isso. */
+      it('declara que a gestão de usuários não está disponível', async () => {
+        expect((await authGet('/v1/users', USER_A)).json().management_available).toBe(false);
+      });
+    });
   });
 
   /**
