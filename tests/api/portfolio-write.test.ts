@@ -314,6 +314,60 @@ describe.skipIf(!DATABASE_URL)('API — carteira e cofre de certificados', () =>
     });
   });
 
+  describe('trilha do cliente', () => {
+    beforeEach(async () => {
+      await call('POST', '/v1/clients', owner, {
+        cnpj,
+        legal_name: 'Padaria do Bairro LTDA',
+        regime: 'simples_hibrido',
+      });
+      await call('POST', `/v1/clients/${cnpj}/periods`, accountant, { period: '2027-01' });
+      // Rejeitada: reabrir competência aberta é recusado na camada 4, e a
+      // recusa também é um evento no log.
+      await call('POST', `/v1/clients/${cnpj}/periods`, accountant, { period: '2027-01' });
+    });
+
+    it('resume a trilha por ação, com contagem e último evento', async () => {
+      const resumo = (await call('GET', `/v1/clients/${cnpj}/events/summary`, accountant)).json();
+
+      expect(resumo.total).toBe(3);
+      expect(resumo.actions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: 'client.enrolled', count: 1, last_seq: 0 }),
+          expect.objectContaining({ action: 'period.opened', count: 1, last_seq: 1 }),
+          expect.objectContaining({ action: 'output.rejected', count: 1, last_seq: 2 }),
+        ]),
+      );
+    });
+
+    /**
+     * O resumo lista só o que ocorreu.
+     *
+     * É o ponto do endpoint: o filtro da tela oferece estas ações e nada mais.
+     * Oferecer o vocabulário inteiro faria o contador escolher um filtro que
+     * devolve vazio sem saber se é porque não houve ou porque ele errou.
+     */
+    it('não lista ação que não ocorreu neste CNPJ', async () => {
+      const resumo = (await call('GET', `/v1/clients/${cnpj}/events/summary`, accountant)).json();
+
+      expect(resumo.actions.map((a: { action: string }) => a.action)).not.toContain(
+        'assessment.confirmed',
+      );
+    });
+
+    it('a trilha pagina por after_seq e mantém a ordem do log', async () => {
+      const primeira = (
+        await call('GET', `/v1/clients/${cnpj}/events?page_size=2`, accountant)
+      ).json();
+      expect(primeira.map((e: { event_seq: number }) => e.event_seq)).toEqual([0, 1]);
+
+      const segunda = (
+        await call('GET', `/v1/clients/${cnpj}/events?after_seq=1`, accountant)
+      ).json();
+      expect(segunda.map((e: { event_seq: number }) => e.event_seq)).toEqual([2]);
+    });
+  });
+
   describe('cofre de certificados A1', () => {
     const upload = async (userId: string, password = 'senha-do-pfx') => {
       const form = new FormData();
@@ -416,6 +470,27 @@ describe.skipIf(!DATABASE_URL)('API — carteira e cofre de certificados', () =>
       expect(response.statusCode).toBe(200);
       expect(response.json().action).toBe('certificate.removed');
       expect((await call('GET', `/v1/clients/${cnpj}/certificate`, owner)).statusCode).toBe(404);
+    });
+
+    /**
+     * O cabeçalho do cliente lê o cofre, não o log.
+     *
+     * O log é append-only: "existe `certificate.stored`" continua verdadeiro
+     * para sempre. Derivar dali faria o detalhe do cliente afirmar que há
+     * certificado guardado depois de removido — e a coleta de DF-e falharia sem
+     * ninguém entender por quê.
+     */
+    it('has_certificate acompanha o cofre, e volta a false depois de remover', async () => {
+      const detalhe = async (): Promise<boolean> =>
+        (await call('GET', `/v1/clients/${cnpj}`, owner)).json().has_certificate;
+
+      expect(await detalhe()).toBe(false);
+
+      await upload(owner);
+      expect(await detalhe()).toBe(true);
+
+      await call('DELETE', `/v1/clients/${cnpj}/certificate`, owner);
+      expect(await detalhe()).toBe(false);
     });
 
     it('lista certificados vencendo na carteira', async () => {

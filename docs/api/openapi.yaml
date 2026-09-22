@@ -1287,6 +1287,35 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Event" }
 
+  /clients/{cnpj}/events/summary:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [events]
+      summary: Ações presentes no log deste CNPJ, com contagem
+      description: |
+        Alimenta o filtro da trilha com **apenas o que ocorreu**. Listar o
+        vocabulário inteiro faria escolher um filtro que devolve vazio sem
+        distinguir "não houve" de "errei o filtro".
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        action: { type: string }
+                        count: { type: integer }
+                        last_seq: { type: integer }
+                        last_ts: { type: string, format: date-time }
+                  total: { type: integer }
+
   /clients/{cnpj}/verify:
     parameters:
       - $ref: "#/components/parameters/Cnpj"
@@ -1432,8 +1461,16 @@ components:
         - type: object
           properties:
             created_at: { type: string, format: date-time }
-            has_certificate: { type: boolean }
-            current_period: { $ref: "#/components/schemas/Period" }
+            status: { type: string, enum: [active, inactive] }
+            has_certificate:
+              type: boolean
+              description: |
+                Vem do cofre, não do log. O log é append-only: "existe
+                `certificate.stored`" continua verdadeiro depois de remover o
+                certificado, e o cabeçalho afirmaria que há um guardado.
+          # `current_period` saiu: nunca foi implementado, e as competências vêm
+          # de `GET /clients/{cnpj}/periods`, que é a lista inteira com hash e
+          # quem confirmou. Duas fontes para a mesma pergunta divergiriam.
 
     ClientSummary:
       type: object
