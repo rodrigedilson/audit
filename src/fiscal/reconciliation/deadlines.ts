@@ -189,6 +189,22 @@ function daPropostaDoFisco(periodo: PeriodSnapshot, hoje: Date): Pendency[] {
 
 // --------------------------------------------------- prazos normativos
 
+/**
+ * Como o dia do mês se transforma em data.
+ *
+ * Existe porque os dois prazos que mais importam **não são dia de calendário**,
+ * e datá-los como se fossem colocaria data errada ao lado de uma citação legal:
+ *
+ * - `exact` — o dia é o dia. Prazo que não se move.
+ * - `nth_business_day` — o N-ésimo dia útil do mês. É o caso da
+ *   EFD-Contribuições: décimo dia útil do segundo mês subsequente.
+ * - `anticipate_to_business_day` — o dia fixo, **antecipado** para o dia útil
+ *   anterior quando cai em fim de semana ou feriado. É o caso do DAS: dia 20,
+ *   antecipado. Aqui errar para frente é perigoso — diria ao contador que ele
+ *   tem até dia 20 quando o pagamento venceu no 18.
+ */
+export type DayRule = 'exact' | 'nth_business_day' | 'anticipate_to_business_day';
+
 export interface DeadlineRule {
   ruleId: string;
   name: string;
@@ -196,6 +212,8 @@ export interface DeadlineRule {
   appliesToRegimes: readonly Regime[] | null;
   monthsAfter: number | null;
   dayOfMonth: number | null;
+  /** Como `dayOfMonth` vira data. Ver `DayRule`. */
+  dayRule: DayRule;
   fixedDate: string | null;
   warnDays: number;
   severity: Severity;
@@ -267,16 +285,145 @@ function dataDaRegra(regra: DeadlineRule, period: string): string | null {
 
   const [ano, mes] = period.split('-').map(Number) as [number, number];
   const alvo = new Date(Date.UTC(ano, mes - 1 + regra.monthsAfter, 1));
+  const anoAlvo = alvo.getUTCFullYear();
+  const mesAlvo = alvo.getUTCMonth();
+
+  if (regra.dayRule === 'nth_business_day') {
+    return iso(nEsimoDiaUtil(anoAlvo, mesAlvo, regra.dayOfMonth));
+  }
 
   // Dia 31 num mês de 30 cai no último dia do mês, e não escorrega para o mês
   // seguinte: prazo do mês X não vence no mês X+1.
-  const ultimoDia = new Date(
-    Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0),
-  ).getUTCDate();
-
+  const ultimoDia = new Date(Date.UTC(anoAlvo, mesAlvo + 1, 0)).getUTCDate();
   alvo.setUTCDate(Math.min(regra.dayOfMonth, ultimoDia));
 
-  return alvo.toISOString().slice(0, 10);
+  return iso(
+    regra.dayRule === 'anticipate_to_business_day' ? diaUtilAnterior(alvo) : alvo,
+  );
+}
+
+// --------------------------------------------------------- dias úteis
+
+/**
+ * Feriados considerados no cálculo de dia útil.
+ *
+ * São os **nacionais**, e o conjunto inclui Carnaval e Corpus Christi, que
+ * legalmente são ponto facultativo e não feriado. A razão é prática e está do
+ * lado seguro: a rede bancária não opera nesses dias, e para prazo de pagamento
+ * é a operação bancária que manda. Contá-los antecipa a data calculada, e
+ * antecipar é o erro tolerável — o intolerável é dizer que ainda há prazo
+ * quando não há.
+ *
+ * **O que este cálculo não sabe:** feriado estadual e municipal. Um prazo pode
+ * na prática cair um dia antes do que sai daqui, numa praça com feriado local.
+ * O alerta dispara cedo nesse caso, nunca tarde.
+ *
+ * Base dos nacionais: Lei 662/1949, Lei 6.802/1980 (Aparecida) e Lei
+ * 14.759/2023 (Consciência Negra). Os móveis derivam da Páscoa.
+ */
+const FERIADOS_FIXOS: readonly [number, number][] = [
+  [0, 1], // Confraternização Universal
+  [3, 21], // Tiradentes
+  [4, 1], // Dia do Trabalho
+  [8, 7], // Independência
+  [9, 12], // Nossa Senhora Aparecida
+  [10, 2], // Finados
+  [10, 15], // Proclamação da República
+  [10, 20], // Consciência Negra
+  [11, 25], // Natal
+];
+
+/** Domingo de Páscoa pelo algoritmo de Meeus/Jones/Butcher. */
+function pascoa(ano: number): Date {
+  const a = ano % 19;
+  const b = Math.floor(ano / 100);
+  const c = ano % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31);
+  const dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(ano, mes - 1, dia));
+}
+
+function somarDias(data: Date, dias: number): Date {
+  return new Date(data.getTime() + dias * 86_400_000);
+}
+
+const feriadosPorAno = new Map<number, Set<string>>();
+
+function feriadosDe(ano: number): Set<string> {
+  const cache = feriadosPorAno.get(ano);
+  if (cache !== undefined) {
+    return cache;
+  }
+
+  const datas = new Set<string>();
+  for (const [mes, dia] of FERIADOS_FIXOS) {
+    datas.add(iso(new Date(Date.UTC(ano, mes, dia))));
+  }
+
+  const domingoDePascoa = pascoa(ano);
+  // Carnaval (terça), Sexta-feira Santa e Corpus Christi.
+  for (const deslocamento of [-47, -2, 60]) {
+    datas.add(iso(somarDias(domingoDePascoa, deslocamento)));
+  }
+
+  feriadosPorAno.set(ano, datas);
+  return datas;
+}
+
+function ehDiaUtil(data: Date): boolean {
+  const diaDaSemana = data.getUTCDay();
+  if (diaDaSemana === 0 || diaDaSemana === 6) {
+    return false;
+  }
+  return !feriadosDe(data.getUTCFullYear()).has(iso(data));
+}
+
+/**
+ * O N-ésimo dia útil do mês.
+ *
+ * Quando o mês não tem N dias úteis — não acontece com N até 18, mas a função
+ * não presume —, devolve o último dia útil do mês em vez de escorregar para o
+ * mês seguinte: prazo do mês X não vence em X+1.
+ */
+function nEsimoDiaUtil(ano: number, mes: number, n: number): Date {
+  const ultimo = new Date(Date.UTC(ano, mes + 1, 0)).getUTCDate();
+  let contados = 0;
+  let ultimoUtil = new Date(Date.UTC(ano, mes, 1));
+
+  for (let dia = 1; dia <= ultimo; dia += 1) {
+    const candidato = new Date(Date.UTC(ano, mes, dia));
+    if (ehDiaUtil(candidato)) {
+      ultimoUtil = candidato;
+      contados += 1;
+      if (contados === n) {
+        return candidato;
+      }
+    }
+  }
+
+  return ultimoUtil;
+}
+
+/** A própria data, ou o dia útil imediatamente anterior. */
+function diaUtilAnterior(data: Date): Date {
+  let candidato = data;
+  while (!ehDiaUtil(candidato)) {
+    candidato = somarDias(candidato, -1);
+  }
+  return candidato;
+}
+
+function iso(data: Date): string {
+  return data.toISOString().slice(0, 10);
 }
 
 // ------------------------------------------------------------ utilidades
