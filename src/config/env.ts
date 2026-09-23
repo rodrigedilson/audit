@@ -2,7 +2,20 @@
  * Configuração vinda do ambiente. Nada aqui tem default de produção: uma chave
  * ausente falha no start, não na primeira requisição. Ver `.env.example`.
  */
+/**
+ * Em qual ambiente esta instância roda. Não há padrão: um esquecimento aqui,
+ * se virasse `dev`, deixaria produção cobrar pelo sandbox; se virasse `prod`,
+ * esconderia do desenvolvedor que ele está apontando para o banco real.
+ */
+export type AuditEnvironment = 'dev' | 'prod';
+
+const AUDIT_ENVIRONMENTS: readonly AuditEnvironment[] = ['dev', 'prod'];
+
+export const ASAAS_PRODUCTION_URL = 'https://api.asaas.com/v3';
+export const ASAAS_SANDBOX_URL = 'https://api-sandbox.asaas.com/v3';
+
 export interface Env {
+  environment: AuditEnvironment;
   port: number;
   host: string;
   databaseUrl: string;
@@ -51,17 +64,22 @@ export interface Env {
 }
 
 export class EnvError extends Error {
-  constructor(missing: readonly string[]) {
-    super(
-      `Variáveis de ambiente obrigatórias ausentes: ${missing.join(', ')}. ` +
-        'Ver .env.example.',
-    );
+  constructor(missing: readonly string[], invalid: readonly string[] = []) {
+    const partes: string[] = [];
+    if (missing.length > 0) {
+      partes.push(`Variáveis de ambiente obrigatórias ausentes: ${missing.join(', ')}.`);
+    }
+    if (invalid.length > 0) {
+      partes.push(`Configuração inválida: ${invalid.join('; ')}.`);
+    }
+    super(`${partes.join(' ')} Ver .env.example.`);
     this.name = 'EnvError';
   }
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const missing: string[] = [];
+  const invalid: string[] = [];
 
   const required = (key: string): string => {
     const value = source[key]?.trim();
@@ -71,6 +89,12 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     }
     return value;
   };
+
+  const environmentRaw = required('AUDIT_ENV');
+  const environment = AUDIT_ENVIRONMENTS.find((e) => e === environmentRaw);
+  if (environmentRaw !== '' && environment === undefined) {
+    invalid.push(`AUDIT_ENV deve ser 'dev' ou 'prod', veio '${environmentRaw}'`);
+  }
 
   const databaseUrl = required('DATABASE_URL');
   const supabaseUrl = required('SUPABASE_URL');
@@ -87,15 +111,46 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     missing.push('SUPABASE_JWT_SECRET (ou SUPABASE_JWKS_URL)');
   }
 
-  if (missing.length > 0) {
-    throw new EnvError(missing);
+  const corsRaw = source['CORS_ORIGINS'];
+  const webhookToken = source['ASAAS_WEBHOOK_TOKEN']?.trim();
+  const asaasApiKey = source['ASAAS_API_KEY']?.trim();
+  const asaasBaseUrlRaw = source['ASAAS_BASE_URL']?.trim();
+
+  if (environment === 'prod') {
+    // O padrão de CORS é o frontend local; em produção ele não serviria a
+    // ninguém e a falha apareceria só no navegador do cliente.
+    if (!corsRaw || corsRaw.trim().length === 0) {
+      missing.push('CORS_ORIGINS');
+    }
+    // Com a chave de produção e a URL em branco, a cobrança ia para o sandbox:
+    // nenhuma fatura real, e nenhum erro dizendo isso.
+    if (asaasApiKey) {
+      if (!asaasBaseUrlRaw) {
+        missing.push('ASAAS_BASE_URL');
+      } else if (asaasBaseUrlRaw !== ASAAS_PRODUCTION_URL) {
+        invalid.push(`em prod, ASAAS_BASE_URL deve ser ${ASAAS_PRODUCTION_URL}`);
+      }
+      if (!webhookToken) {
+        missing.push('ASAAS_WEBHOOK_TOKEN');
+      }
+    }
+  }
+  // Dev cobrando cliente de verdade é pior do que dev sem cobrança. O banco é o
+  // mesmo nos dois ambientes; o que dev não pode é falar com o gateway real.
+  if (environment === 'dev' && asaasBaseUrlRaw === ASAAS_PRODUCTION_URL) {
+    invalid.push('em dev, ASAAS_BASE_URL não pode apontar para o Asaas de produção');
+  }
+
+  if (missing.length > 0 || invalid.length > 0 || environment === undefined) {
+    throw new EnvError(missing, invalid);
   }
 
   const env: Env = {
+    environment,
     port: Number(source['API_PORT'] ?? 3000),
     host: source['API_HOST'] ?? '0.0.0.0',
     databaseUrl,
-    corsOrigins: parseOrigins(source['CORS_ORIGINS']),
+    corsOrigins: parseOrigins(corsRaw),
     supabase: {
       url: supabaseUrl,
       anonKey,
@@ -108,16 +163,15 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       : { certificateMasterKeyPrevious }),
   };
 
-  const webhookToken = source['ASAAS_WEBHOOK_TOKEN']?.trim();
   if (webhookToken) {
     env.asaasWebhookToken = webhookToken;
   }
 
-  const asaasApiKey = source['ASAAS_API_KEY']?.trim();
   if (asaasApiKey) {
     env.asaas = {
       apiKey: asaasApiKey,
-      baseUrl: source['ASAAS_BASE_URL']?.trim() ?? 'https://api-sandbox.asaas.com/v3',
+      // Só chega aqui sem URL em dev: em prod a ausência já falhou acima.
+      baseUrl: asaasBaseUrlRaw || ASAAS_SANDBOX_URL,
     };
   }
 

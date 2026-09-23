@@ -13,6 +13,7 @@ const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 
 /** Variáveis mínimas para o doctor passar da primeira checagem. */
 const ENV_BASE = {
+  AUDIT_ENV: 'dev',
   SUPABASE_URL: 'https://projeto-de-teste.supabase.co',
   SUPABASE_ANON_KEY: 'chave-anon-de-teste',
   SUPABASE_JWT_SECRET: 'segredo-de-teste',

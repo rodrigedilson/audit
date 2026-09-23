@@ -140,6 +140,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
       nome: 'variáveis de ambiente',
       estado: 'ok',
       detalhe: [
+        `ambiente ${env.environment}`,
         `banco configurado`,
         env.supabase.jwksUrl ? 'JWT por JWKS' : 'JWT por segredo HS256',
         `cofre A1 com chave de ${env.certificateMasterKey.length} caracteres`,

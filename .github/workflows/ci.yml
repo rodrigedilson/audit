@@ -131,6 +131,7 @@ jobs:
       - name: O contêiner atende
         run: |
           docker run -d --name api --network host \
+            -e AUDIT_ENV=dev \
             -e DATABASE_URL="postgres://audit:audit@localhost:5432/audit_test" \
             -e SUPABASE_URL="https://projeto-de-ci.supabase.co" \
             -e SUPABASE_ANON_KEY="chave-de-ci" \
