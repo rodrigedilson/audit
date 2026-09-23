@@ -72,12 +72,25 @@ chave que a cifrou, derivado por HMAC e sem nada de secreto.
 
 ### Passo 1 — medir o acervo
 
+```bash
+npm run doctor
+```
+
+A checagem **cofre de certificados A1** diz quantos há e quantos estão fora da
+chave atual. É a verificação que não depende do secret manager: um comando
+responde se sobrou certificado na chave antiga, em vez de a resposta aparecer no
+dia em que a coleta de DF-e falha.
+
+Ou, direto no banco:
+
 ```sql
 select coalesce(key_id, '(anterior à rotação)') as chave, count(*)
   from certificates group by 1 order by 2 desc;
 ```
 
-Zero certificados: troque a chave e pule para o passo 5.
+Zero certificados: troque a chave e pule para o passo 5. **É o estado de hoje em
+produção** — a rotação agora custa nada, e depois de haver certificado passa a
+exigir a recifragem do acervo.
 
 ### Passo 2 — gerar a nova chave
 
@@ -107,7 +120,8 @@ O script é idempotente, usa uma transação por linha e **confere o fingerprint
 antes de regravar** — uma linha cujo conteúdo não confere é pulada e reportada,
 em vez de ser carimbada com a chave nova.
 
-Repita o passo 1 até `key_id` ser um só.
+Repita o passo 1 até `key_id` ser um só — `npm run doctor` volta a dizer
+"todos na chave X".
 
 ### Passo 5 — remover a anterior
 
