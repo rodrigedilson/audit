@@ -231,14 +231,36 @@ export async function registerCatalogRoutes(app: FastifyInstance, deps: ApiDeps)
   );
 }
 
+/**
+ * Normaliza código que a fonte oficial escreve com separadores.
+ *
+ * NCM e NBS são publicados pontuados — `7318.15.00`, `1.1502.10.00` — e é
+ * assim que a pessoa copia da tabela. As tabelas de referência guardam só
+ * dígitos. Sem normalizar, colar o código na forma oficial produzia
+ * `unknown_code` com severidade alta **sobre um código correto**: o sistema
+ * acusaria o contador de erro que não existe, que é o oposto do que ele serve
+ * para fazer.
+ */
+function soDigitos(valor: string): string {
+  return valor.replace(/\D/g, '');
+}
+
 function toClassification(body: ClassificationBody): Classification {
   const opcional = <K extends string>(chave: K, valor: string | undefined) =>
     valor === undefined || valor.trim().length === 0 ? {} : { [chave]: valor.trim() };
 
+  const numerico = <K extends string>(chave: K, valor: string | undefined) => {
+    if (valor === undefined) {
+      return {};
+    }
+    const digitos = soDigitos(valor);
+    return digitos.length === 0 ? {} : { [chave]: digitos };
+  };
+
   return {
     effectiveFrom: body.effective_from,
-    ...opcional('ncm', body.ncm),
-    ...opcional('nbs', body.nbs),
+    ...numerico('ncm', body.ncm),
+    ...numerico('nbs', body.nbs),
     ...opcional('cstIbsCbs', body.cst_ibs_cbs),
     ...opcional('cclasstrib', body.cclasstrib),
     ...opcional('cstIcms', body.cst_icms),

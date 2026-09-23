@@ -396,6 +396,40 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
      * exibisse com badge de aviso: filtrar pelo valor do proprio badge fazia a
      * linha sumir, e o contador concluia que tinha resolvido o item.
      */
+    /**
+     * A tabela oficial publica NCM e NBS pontuados, e e assim que a pessoa
+     * copia. Sem normalizar, colar o codigo na forma oficial produzia
+     * `unknown_code` de severidade alta sobre um codigo correto — o sistema
+     * acusando erro que nao existe.
+     */
+    it('aceita NCM e NBS na forma pontuada da tabela oficial', async () => {
+      await pool.query(
+        `insert into fiscal_codes (kind, code) values ('nbs','115021000')
+         on conflict do nothing`,
+      );
+
+      const resposta = await call(
+        'PUT',
+        `/v1/clients/${cnpj}/items/SKU-PONTUADO/classification`,
+        owner,
+        { effective_from: '2027-09', ncm: '7318.15.00', nbs: '1.1502.10.00' },
+      );
+
+      expect(resposta.statusCode).toBe(200);
+      const issues = resposta.json().issues as { field: string; reason: string }[];
+      expect(issues.filter((i) => i.field === 'ncm' && i.reason === 'unknown_code')).toEqual([]);
+      expect(issues.filter((i) => i.field === 'nbs' && i.reason === 'unknown_code')).toEqual([]);
+
+      // E o que ficou guardado sao os digitos, iguais aos da tabela oficial.
+      const { rows } = await pool.query<{ ncm: string; nbs: string }>(
+        `select ncm, nbs from item_classifications
+          where tenant_id = $1::uuid and cnpj = $2::char(14) and item_id = 'SKU-PONTUADO'`,
+        [tenantId, cnpj],
+      );
+      expect(rows[0]?.ncm?.trim()).toBe('73181500');
+      expect(rows[0]?.nbs?.trim()).toBe('115021000');
+    });
+
     it('o filtro never isola o item nunca classificado', async () => {
       await pool.query(
         `insert into items (tenant_id, cnpj, item_id, description)

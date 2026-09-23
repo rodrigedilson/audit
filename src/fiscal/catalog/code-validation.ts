@@ -95,6 +95,11 @@ export function emptyCodeTables(): CodeTables {
  */
 const FORMATOS: Partial<Record<keyof Classification, { padrao: RegExp; descricao: string }>> = {
   ncm: { padrao: /^[0-9]{8}$/, descricao: '8 dígitos' },
+  // 9 dígitos, como `1.1502.10.00` sem os pontos. A rota normaliza a entrada;
+  // aqui o formato existe para que NBS de tamanho errado seja erro de formato e
+  // não `unknown_code` — que acusaria o código de não existir quando o problema
+  // é ele estar truncado.
+  nbs: { padrao: /^[0-9]{9}$/, descricao: '9 dígitos' },
   cfopDefault: { padrao: /^[0-9]{4}$/, descricao: '4 dígitos' },
   cclasstrib: { padrao: /^[0-9]{6}$/, descricao: '6 dígitos' },
   cstIbsCbs: { padrao: /^[0-9]{3}$/, descricao: '3 dígitos' },
