@@ -1,6 +1,7 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { UnauthorizedError } from '../auth/jwt-verifier.js';
 import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
+import { BillingSettingsMissingError } from '../../billing/billing.service.js';
 import {
   ESAAError,
   IntegrityViolationError,
@@ -25,6 +26,13 @@ export function registerErrorHandler(app: FastifyInstance): void {
 
     if (error instanceof NotFoundError) {
       return reply.code(404).send({ code: 'not_found', message: error.message });
+    }
+
+    // Configuração do servidor, não erro do cliente: 503 diz "tente depois" e
+    // não esconde a causa atrás de um 500 genérico.
+    if (error instanceof BillingSettingsMissingError) {
+      request.log.error({ err: error }, 'billing_settings ausente');
+      return reply.code(503).send({ code: 'billing_not_configured', message: error.message });
     }
 
     // Intenção barrada por uma das 7 camadas: 422, com a camada e o motivo, para

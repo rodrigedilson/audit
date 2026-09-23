@@ -51,19 +51,23 @@ export async function registerAssistantRoutes(
   const assistant = new AssistantService(deps.pool);
 
   /** O catálogo de perguntas, sem CNPJ: serve de ajuda e de material de venda. */
-  app.get('/assistant/capabilities', async () => ({
-    supported: Object.entries(PERGUNTAS_SUPORTADAS).map(([intent, description]) => ({
-      intent,
-      description,
-    })),
+  app.get('/assistant/capabilities', async () => {
     /**
      * Declarado no contrato porque muda o que o usuário pode esperar: camada 1
-     * é consulta determinística e reproduzível; a 3 dependeria de modelo de
-     * linguagem, que não está configurado.
+     * é consulta determinística e reproduzível; a 3 depende de modelo de
+     * linguagem. Derivado do serviço, e não escrito aqui, para a resposta não
+     * continuar dizendo "sem modelo" no dia em que um for ligado.
      */
-    deterministic_only: true,
-    language_model_configured: false,
-  }));
+    const configured = assistant.languageModelName !== undefined;
+    return {
+      supported: Object.entries(PERGUNTAS_SUPORTADAS).map(([intent, description]) => ({
+        intent,
+        description,
+      })),
+      deterministic_only: !configured,
+      language_model_configured: configured,
+    };
+  });
 
   app.get<{ Params: CnpjParams }>(
     '/clients/:cnpj/assistant/usage',
