@@ -1,10 +1,16 @@
 /**
  * Verifica — e opcionalmente remove — as tabelas órfãs de produção.
  *
- * Há tabelas no banco de produção que **nenhuma migration cria** e **nenhum
- * código referencia**: seis `interop_*` e `analysis_groups`. Elas apareceram num
- * levantamento anterior com zero linhas. Vieram de alguma feature planejada e
- * abandonada, provavelmente criada pelo painel do Supabase.
+ * Há tabelas no banco de produção que **nenhuma migration deste repositório
+ * cria** e **nenhum código referencia**: seis `interop_*` e `analysis_groups`.
+ *
+ * Origem, achada depois: a branch `feature/backend-implementation` do
+ * `sped-genius-hub`, parada desde março de 2026, cuja migration foi aplicada em
+ * produção sem a branch ter sido mergeada. Ver o comentário em
+ * `supabase/migrations/20260922210000_remove_tabelas_orfas.sql`.
+ *
+ * O script continua útil depois disso: ele é a checagem de que **continuam
+ * vazias** no momento da remoção, e serve para qualquer tabela órfã futura.
  *
  * O risco aqui não é apagar: é apagar **sem descobrir por que existiam**, e sem
  * confirmar que continuam vazias. Por isso este script é a etapa de evidência,

@@ -10,11 +10,23 @@
 
 -- Remove as sete tabelas órfãs de produção.
 --
--- Nenhuma migration as criava e nenhum código as referenciava — conferido por
--- grep nos dois repositórios, incluindo as Edge Functions do Supabase. Vieram de
--- uma feature de "interoperabilidade" planejada e abandonada, provavelmente
--- criada pelo painel. Todas com zero linhas, medidas com `count(*)` e não com a
+-- Nenhuma migration **deste repositório** as criava e nenhum código as
+-- referenciava — conferido por grep nos dois repositórios, incluindo as Edge
+-- Functions. Todas com zero linhas, medidas com `count(*)` e não com a
 -- estatística do planejador, que fica velha.
+--
+-- **De onde vieram:** da branch `feature/backend-implementation` do
+-- `sped-genius-hub`, arquivo
+-- `supabase/migrations/20260301000001_create_interop_tables.sql`. É uma feature
+-- de interoperabilidade entre grafos de empresas — análise inter-CNPJ, detecção
+-- de padrões suspeitos, motor de regras customizadas, export em PDF: 28
+-- arquivos e ~8.500 linhas, última atividade em 2026-03-02. A migration foi
+-- aplicada em produção e a branch nunca foi mergeada.
+--
+-- Por isso remover é seguro **e** reversível no sentido que importa: se a
+-- feature for retomada, é a migration dela que recria as tabelas, com o schema
+-- que o código espera. O que não podia continuar é produção carregando sete
+-- tabelas que nenhuma migration do repositório explica.
 --
 -- Elas formam uma hierarquia, e não sete tabelas soltas:
 --
