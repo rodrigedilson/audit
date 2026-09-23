@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { ignorarErroDeClienteOcioso } from '../persistence/pool-errors.js';
 import { loadEnv, EnvError, type Env } from '../../config/env.js';
+import { CertificateVault } from '../../fiscal/portfolio/certificate-vault.js';
 
 /**
  * Diagnóstico do ambiente: responde "por que a API não está funcionando" com
@@ -195,6 +196,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await checarTrilhas(pool));
     checagens.push(await checarVisibilidadePublica(pool));
     checagens.push(await checarTabelasOficiais(pool));
+    checagens.push(await checarCofreDeCertificados(pool, env));
     checagens.push(await checarRegrasPublicadas(pool));
     checagens.push(await checarPrazosNormativos(pool));
     checagens.push(await checarCotaDoAssistente(pool));
@@ -538,32 +540,120 @@ async function checarVisibilidadePublica(pool: pg.Pool): Promise<Checagem> {
  * contra tabela vazia aprovaria qualquer código — o que é pior do que não
  * validar. O aviso existe para que essa lacuna não passe por aprovação.
  */
+/** Os tipos que a camada 3 confere. A validação é por tipo, e o relato também. */
+const TIPOS_DE_CODIGO = [
+  'ncm',
+  'nbs',
+  'cfop',
+  'cst_icms',
+  'cst_pis_cofins',
+  'cst_ibs_cbs',
+  'cclasstrib',
+] as const;
+
+/**
+ * Tabelas oficiais, por tipo.
+ *
+ * Relatava só dois números — total de códigos e de pares — e com a tabela de
+ * CFOP carregada isso virou inútil: "238 códigos" não diz de quais tipos, e o
+ * `aviso` pedia carregar tudo sem dizer o que falta. A validação é por tipo, e o
+ * `not_verified` também: quem roda o doutor quer saber qual tipo ainda não
+ * confere nada.
+ */
 async function checarTabelasOficiais(pool: pg.Pool): Promise<Checagem> {
-  const { rows } = await pool.query<{ codigos: string; pares: string; flags: string }>(
-    `select (select count(*)::text from fiscal_codes)   as codigos,
-            (select count(*)::text from cclasstrib_cst) as pares,
-            (select count(*)::text from ncm_flags)      as flags`,
+  const { rows } = await pool.query<{ kind: string; n: string }>(
+    `select kind, count(*)::text as n from fiscal_codes group by kind
+     union all
+     select 'cclasstrib_cst_pares', count(*)::text from cclasstrib_cst
+     union all
+     select 'ncm_flags', count(*)::text from ncm_flags`,
   );
 
-  const codigos = Number(rows[0]!.codigos);
-  const pares = Number(rows[0]!.pares);
+  const contagem = new Map(rows.map((linha) => [linha.kind, Number(linha.n)]));
+  const carregados = TIPOS_DE_CODIGO.filter((tipo) => (contagem.get(tipo) ?? 0) > 0);
+  const vazios = TIPOS_DE_CODIGO.filter((tipo) => (contagem.get(tipo) ?? 0) === 0);
+  const pares = contagem.get('cclasstrib_cst_pares') ?? 0;
 
-  if (codigos > 0 && pares > 0) {
-    return {
-      nome: 'tabelas oficiais de códigos',
-      estado: 'ok',
-      detalhe: `${codigos} códigos, ${pares} pares cClassTrib×CST, ${rows[0]!.flags} NCM marcados`,
-    };
+  const detalhe =
+    `${carregados.length} de ${TIPOS_DE_CODIGO.length} tipos carregados` +
+    (carregados.length > 0
+      ? ` (${carregados.map((t) => `${t}: ${contagem.get(t)}`).join(', ')})`
+      : '') +
+    ` · ${pares} pares cClassTrib×CST · ${contagem.get('ncm_flags') ?? 0} NCM marcados`;
+
+  if (vazios.length === 0 && pares > 0) {
+    return { nome: 'tabelas oficiais de códigos', estado: 'ok', detalhe };
   }
 
   return {
     nome: 'tabelas oficiais de códigos',
     estado: 'aviso',
-    detalhe: `${codigos} códigos, ${pares} pares cClassTrib×CST`,
+    detalhe,
     acao:
-      'Sem elas a saúde do cadastro reporta "não verificado" em vez de "ok" —\n' +
-      '  de propósito, porque validar contra tabela vazia aprovaria qualquer\n' +
-      '  código. Carregue a IT RT 2025.002 em fiscal_codes e cclasstrib_cst.',
+      `Sem tabela, o tipo reporta "não verificado" em vez de "ok" — de propósito,\n` +
+      `  porque validar contra tabela vazia aprovaria qualquer código.\n` +
+      `  Falta: ${[...vazios, ...(pares === 0 ? ['pares cClassTrib×CST'] : [])].join(', ')}.\n` +
+      '  CFOP sai da tabela `cfops`: npx tsx scripts/carregar-cfop-oficial.ts',
+  };
+}
+
+/**
+ * Cofre de certificados e a chave que os cifra.
+ *
+ * É a verificação pós-rotação que não depende do secret manager: um comando diz
+ * se sobrou certificado na chave antiga. Sem ela, a única forma de descobrir
+ * seria tentar usar o certificado — e descobrir no momento em que a coleta de
+ * DF-e falha.
+ */
+async function checarCofreDeCertificados(pool: pg.Pool, env: Env): Promise<Checagem> {
+  const { rows } = await pool.query<{ key_id: string | null; n: string }>(
+    'select key_id, count(*)::text as n from certificates group by key_id',
+  );
+
+  const total = rows.reduce((soma, linha) => soma + Number(linha.n), 0);
+
+  if (total === 0) {
+    return {
+      nome: 'cofre de certificados A1',
+      estado: 'ok',
+      detalhe:
+        'nenhum certificado guardado — rotacionar a chave mestra agora é sem custo, ' +
+        'e depois não é',
+    };
+  }
+
+  let atual: string;
+  try {
+    atual = new CertificateVault(env.certificateMasterKey, env.certificateMasterKeyPrevious).keyId;
+  } catch (erro) {
+    return {
+      nome: 'cofre de certificados A1',
+      estado: 'falha',
+      detalhe: erro instanceof Error ? erro.message : String(erro),
+      acao: 'Corrija CERTIFICATE_MASTER_KEY antes de qualquer operação com certificado.',
+    };
+  }
+
+  const foraDaAtual = rows
+    .filter((linha) => linha.key_id !== atual)
+    .reduce((soma, linha) => soma + Number(linha.n), 0);
+
+  if (foraDaAtual === 0) {
+    return {
+      nome: 'cofre de certificados A1',
+      estado: 'ok',
+      detalhe: `${total} certificado(s), todos na chave ${atual}`,
+    };
+  }
+
+  return {
+    nome: 'cofre de certificados A1',
+    estado: 'aviso',
+    detalhe: `${total} certificado(s), ${foraDaAtual} fora da chave atual (${atual})`,
+    acao:
+      'Rotação incompleta. Rode `npx tsx scripts/recifrar-certificados.ts --executar`\n' +
+      '  e NÃO remova CERTIFICATE_MASTER_KEY_PREVIOUS enquanto sobrar linha aqui:\n' +
+      '  esses certificados só abrem com ela.',
   };
 }
 

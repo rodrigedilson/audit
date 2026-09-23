@@ -330,7 +330,77 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
 
       expect(oficiais?.estado).toBe('aviso');
       expect(oficiais?.acao).toMatch(/aprovaria qualquer/);
-      expect(oficiais?.acao).toMatch(/IT RT 2025\.002/);
+      // A ação nomeia o que falta, por tipo. "Carregue a IT RT 2025.002" não
+      // dizia qual tipo ainda não confere nada, e com CFOP carregado e o resto
+      // vazio essa era a única informação que importava.
+      expect(oficiais?.acao).toMatch(/Falta: .*cfop/);
+      expect(oficiais?.acao).toMatch(/pares cClassTrib/);
+      expect(oficiais?.detalhe).toMatch(/0 de 7 tipos carregados/);
+    });
+
+    /**
+     * Cofre vazio é o melhor momento para rotacionar a chave mestra, e o doutor
+     * diz isso: depois de haver certificado, a rotação passa a exigir recifragem
+     * do acervo.
+     */
+    it('reporta o cofre de certificados vazio como ok, e diz o que isso permite', async () => {
+      const cofre = checagem(
+        await diagnosticar({ ...ENV_BASE, DATABASE_URL: urlVazia } as NodeJS.ProcessEnv),
+        'cofre de certificados A1',
+      );
+
+      expect(cofre?.estado).toBe('ok');
+      expect(cofre?.detalhe).toMatch(/sem custo/);
+    });
+
+    /**
+     * A verificação pós-rotação que não depende do secret manager: um comando
+     * diz se sobrou certificado na chave antiga. Sem ela, descobrir exigiria
+     * tentar usar o certificado — no momento em que a coleta de DF-e falha.
+     */
+    it('acusa certificado fora da chave atual como aviso, sem reprovar o ambiente', async () => {
+      // `certificates` tem FK para `clients`, que tem FK para `tenants`.
+      await pool.query(
+        `insert into tenants (id, name)
+         values ('44444444-4444-4444-4444-444444444444', 'Escritório do cofre')
+         on conflict do nothing`,
+      );
+      await pool.query(
+        `insert into clients (tenant_id, cnpj, legal_name, regime)
+         values ('44444444-4444-4444-4444-444444444444'::uuid, '11122233300011',
+                 'Cliente do cofre', 'simples_hibrido'::regime)
+         on conflict do nothing`,
+      );
+      await pool.query(
+        `insert into certificates (
+           tenant_id, cnpj, encrypted_pfx, fingerprint, key_id,
+           subject, issuer, serial, valid_from, valid_to, stored_by
+         ) values (
+           '44444444-4444-4444-4444-444444444444'::uuid, '11122233300011',
+           'cifrado-de-teste', repeat('a', 64), 'chavedeoutrotempo',
+           'CN=TESTE', 'AC Teste', 'A1B2', now(), now() + interval '90 days',
+           '55555555-5555-5555-5555-555555555555'::uuid
+         ) on conflict do nothing`,
+      );
+
+      try {
+        const resultado = await diagnosticar({
+          ...ENV_BASE,
+          DATABASE_URL: urlVazia,
+        } as NodeJS.ProcessEnv);
+        const cofre = checagem(resultado, 'cofre de certificados A1');
+
+        expect(cofre?.estado).toBe('aviso');
+        expect(cofre?.detalhe).toMatch(/1 fora da chave atual/);
+        expect(cofre?.acao).toMatch(/recifrar-certificados/);
+        // Aviso, e não falha: a API sobe e o certificado antigo continua
+        // abrindo enquanto a chave anterior estiver no ambiente. A asserção é
+        // sobre esta checagem, e não sobre o ambiente inteiro — este banco de
+        // teste tem outras falhas legítimas, como a ausência de escritório.
+        expect(cofre?.estado).not.toBe('falha');
+      } finally {
+        await pool.query(`delete from certificates where cnpj = '11122233300011'`);
+      }
     });
 
     it('aprova o ambiente quando só restam avisos', async () => {
@@ -373,8 +443,14 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
     });
 
     it('dá tudo ok com as tabelas oficiais e as regras carregadas', async () => {
+      // Os sete tipos: o doutor passou a exigir que nenhum esteja vazio, porque
+      // um tipo carregado não autoriza dizer que a conferência aconteceu.
       await pool.query(
-        `insert into fiscal_codes (kind, code) values ('ncm','73181500') on conflict do nothing`,
+        `insert into fiscal_codes (kind, code) values
+           ('ncm','73181500'),('nbs','123456789'),('cfop','5102'),
+           ('cst_icms','00'),('cst_pis_cofins','01'),('cst_ibs_cbs','000'),
+           ('cclasstrib','000001')
+         on conflict do nothing`,
       );
       await pool.query(
         `insert into cclasstrib_cst (cclasstrib, cst_ibs_cbs) values ('000001','000')
