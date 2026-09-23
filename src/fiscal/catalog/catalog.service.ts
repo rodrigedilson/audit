@@ -51,7 +51,22 @@ export interface CatalogHealth {
    * Fica em campo próprio para não se confundir com "está tudo certo".
    */
   not_verified: number;
+  /**
+   * `true` só quando **tudo** que a validação precisa está carregado.
+   *
+   * Continua tudo-ou-nada de propósito: é a resposta para "posso confiar que
+   * ausência de erro significa correto?", e essa resposta é sim ou não.
+   */
   reference_tables_loaded: boolean;
+  /**
+   * Quantos códigos há por tipo, e quantos pares cClassTrib × CST.
+   *
+   * Existe porque o booleano acima virou grosseiro: com a tabela de CFOP
+   * carregada e as outras vazias, ele diz "nada carregado" — e a tela repetiria
+   * que nenhuma conferência aconteceu, quando a de CFOP aconteceu. Zero num tipo
+   * é o que sustenta o `not_verified` daquele tipo, e só daquele.
+   */
+  reference_tables: Record<string, number>;
 }
 
 /**
@@ -307,17 +322,38 @@ export class CatalogService {
           limit 5`,
         [scope.tenantId, scope.cnpj],
       ),
-      this.pool.query<{ codigos: string; pares: string }>(
-        `select (select count(*)::text from fiscal_codes)   as codigos,
-                (select count(*)::text from cclasstrib_cst) as pares`,
+      this.pool.query<{ kind: string; n: string }>(
+        `select kind, count(*)::text as n from fiscal_codes group by kind
+         union all
+         select 'cclasstrib_cst_pares', count(*)::text from cclasstrib_cst`,
       ),
     ]);
 
     const r = resumo.rows[0]!;
     const p = propagacao.rows[0]!;
-    const ref = referencia.rows[0]!;
 
-    const tabelasCarregadas = Number(ref.codigos) > 0 && Number(ref.pares) > 0;
+    const porTipo: Record<string, number> = {
+      ncm: 0,
+      nbs: 0,
+      cfop: 0,
+      cst_icms: 0,
+      cst_pis_cofins: 0,
+      cst_ibs_cbs: 0,
+      cclasstrib: 0,
+      cclasstrib_cst_pares: 0,
+    };
+    for (const linha of referencia.rows) {
+      porTipo[linha.kind] = Number(linha.n);
+    }
+
+    /**
+     * Carregado é **tudo** carregado.
+     *
+     * Um tipo carregado não autoriza dizer que a ausência de erro significa
+     * correto: o item pode estar errado justamente no tipo que ninguém
+     * verificou. O detalhe por tipo fica em `reference_tables`.
+     */
+    const tabelasCarregadas = Object.values(porTipo).every((n) => n > 0);
     const naoVerificados = motivos.rows
       .filter((m) => m.reason.includes('não verificado') || m.reason.includes('não verificada'))
       .reduce((total, m) => total + Number(m.total), 0);
@@ -334,6 +370,7 @@ export class CatalogService {
       top_reasons: motivos.rows.map((m) => ({ reason: m.reason, count: Number(m.total) })),
       not_verified: naoVerificados,
       reference_tables_loaded: tabelasCarregadas,
+      reference_tables: porTipo,
     };
   }
 

@@ -1712,7 +1712,24 @@ components:
           description: |
             Itens que não puderam ser verificados por falta das tabelas oficiais.
             Campo próprio para não se confundir com "está tudo certo".
-        reference_tables_loaded: { type: boolean }
+        reference_tables_loaded:
+          type: boolean
+          description: |
+            `true` só quando **tudo** que a validação precisa está carregado.
+            Tudo-ou-nada de propósito: é a resposta para "ausência de erro
+            significa correto?", e essa resposta é sim ou não. Um tipo carregado
+            não autoriza o sim, porque o item pode estar errado justamente no
+            tipo que ninguém verificou.
+        reference_tables:
+          type: object
+          additionalProperties: { type: integer }
+          description: |
+            Quantos códigos há por tipo — `ncm`, `nbs`, `cfop`, `cst_icms`,
+            `cst_pis_cofins`, `cst_ibs_cbs`, `cclasstrib` — e quantos pares em
+            `cclasstrib_cst_pares`. Zero num tipo é o que sustenta o
+            `not_verified` daquele tipo, **e só daquele**: a validação é por
+            tipo, e a tela deve dizer o que foi e o que não foi conferido em vez
+            de um aviso único.
         notice:
           type: string
           description: |

@@ -61,10 +61,16 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
   /** Carrega um punhado de códigos oficiais, para as checagens saírem do "não verificado". */
   const carregarTabelas = async (): Promise<void> => {
     await pool.query(
+      // Todos os sete tipos: `reference_tables_loaded` passou a exigir que
+      // nenhum esteja vazio, porque um tipo carregado não autoriza dizer que
+      // ausência de erro significa correto — o item pode estar errado
+      // justamente no tipo que ninguém verificou.
       `insert into fiscal_codes (kind, code) values
          ('ncm','73181500'),('ncm','84713012'),
+         ('nbs','123456789'),
          ('cfop','5102'),('cst_icms','00'),('cst_pis_cofins','01'),
-         ('cst_ibs_cbs','000'),('cst_ibs_cbs','200')
+         ('cst_ibs_cbs','000'),('cst_ibs_cbs','200'),
+         ('cclasstrib','000001'),('cclasstrib','200001')
        on conflict do nothing`,
     );
     await pool.query(
@@ -418,6 +424,30 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
       const ids = porBadge.items.map((i: { item_id: string }) => i.item_id);
       expect(ids).toContain('SKU-CLASSIFICADO');
       expect(ids).not.toContain('SKU-NUNCA');
+    });
+
+    /**
+     * A validação é por tipo, e o resumo tem de dizer por tipo.
+     *
+     * Com a tabela de CFOP carregada e as outras vazias, um booleano único diria
+     * "nada carregado" — e a tela repetiria que nenhuma conferência aconteceu,
+     * quando a de CFOP aconteceu.
+     */
+    it('reference_tables conta por tipo, e o booleano segue exigindo tudo', async () => {
+      const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();
+
+      expect(body.reference_tables).toMatchObject({
+        cfop: expect.any(Number),
+        ncm: expect.any(Number),
+        cclasstrib_cst_pares: expect.any(Number),
+      });
+
+      // Neste arquivo as tabelas de código estão carregadas; o que decide o
+      // booleano é não haver nenhum tipo em zero.
+      const algumVazio = Object.values(body.reference_tables as Record<string, number>).some(
+        (n) => n === 0,
+      );
+      expect(body.reference_tables_loaded).toBe(!algumVazio);
     });
 
     it('carteira sem item classificado devolve zeros sem erro', async () => {
