@@ -17,51 +17,150 @@ não é como uma chave de API, que se troca e pronto:
   comercial**, não luxo. A primeira pergunta de uma auditoria é "quem leu a
   chave, e quando" — e variável de ambiente no painel do provedor não responde.
 
+## Ambientes dev e prod
+
+Os dois ambientes usam a **mesma infraestrutura**: um repositório git por
+aplicação (`audit` e `sped-genius-hub`), um projeto Supabase, um projeto no
+Doppler, um serviço no Render e um projeto na Vercel. O que muda entre eles é o
+config do Doppler e a variável `AUDIT_ENV`.
+
+| | dev | prod |
+|---|---|---|
+| Onde roda | máquina local: API em `:3000`, front em `:5173` | Render (API) e Vercel (front) |
+| Branch | qualquer uma | `main` |
+| Projeto Supabase | `uflputiyytswvagrrzzn` | o mesmo |
+| Config no Doppler | `audit` / `dev` | `audit` / `prd` |
+| `AUDIT_ENV` | `dev` | `prod` |
+| Asaas | sem chave | produção |
+| `CORS_ORIGINS` | opcional (padrão: Vite local) | obrigatória |
+
+### O banco é compartilhado
+
+Tudo o que se faz em dev grava no banco de produção. Consequências:
+
+- **A suíte de testes nunca roda contra ele.** `TEST_DATABASE_URL` é o Postgres
+  local (`localhost:55432`), e `tests/setup/global-db.ts` se recusa a rodar se
+  `DATABASE_URL` for outra coisa. Já houve evento de teste gravado no log de
+  produção antes dessa trava existir.
+- **Em dev, trabalhe num escritório de teste**, nunca na carteira de um cliente.
+  O log é append-only: um evento gravado por engano não se apaga.
+- **A chave do cofre é a mesma nos dois configs.** Com chaves diferentes, o
+  certificado enviado em dev ficaria ilegível em produção, e vice-versa. O `dev`
+  referencia o valor do `prd` (`${prd.CERTIFICATE_MASTER_KEY}`) em vez de
+  copiá-lo, então uma rotação não deixa os dois divergindo.
+- **Asaas fica sem chave em dev.** Uma chave de sandbox gravaria IDs de cliente e
+  de assinatura do sandbox nas tabelas de cobrança de produção.
+- **Cargas de referência e migrations rodam uma vez só**: valem para os dois.
+
+### O que `AUDIT_ENV` confere no start
+
+Não há padrão: se a variável faltar, a API e a CLI não sobem
+(`src/config/env.ts`).
+
+- **prod** exige `CORS_ORIGINS`. Se houver `ASAAS_API_KEY`, exige também
+  `ASAAS_BASE_URL=https://api.asaas.com/v3` e `ASAAS_WEBHOOK_TOKEN`: sem a URL, a
+  chave de produção ia para o sandbox sem erro nenhum.
+- **dev** recusa `ASAAS_BASE_URL` de produção.
+
+`npm run doctor` mostra o ambiente detectado na primeira linha.
+
 ## Doppler
 
 O critério para escolher não foi preço: é ter **log de acesso** e **rotação
 versionada**. O painel do Render guarda o valor e não diz quem o leu.
 
-### Configuração inicial
+## Passo a passo
+
+O projeto `audit` no Doppler, o serviço no Render e o projeto na Vercel já
+existem. O que falta é marcar o ambiente em cada um.
+
+> **A ordem importa.** O passo 1 vem antes de fazer merge da branch que introduz
+> `AUDIT_ENV`. Se a variável não estiver no `prd` quando o Render fizer o deploy,
+> a API não sobe.
+
+### 1. Doppler: marcar os dois configs
 
 ```bash
-# 1. Instale e autentique
-curl -Ls https://cli.doppler.com/install.sh | sh
-doppler login
+doppler secrets set AUDIT_ENV=prod --project audit --config prd
+doppler secrets set CORS_ORIGINS=https://sped-genius-hub.vercel.app --project audit --config prd
 
-# 2. Crie o projeto e os ambientes
-doppler projects create audit
-doppler environments create prd producao --project audit
+doppler secrets set AUDIT_ENV=dev --project audit --config dev
 
-# 3. Importe o que já existe, conferindo item a item.
-#    NÃO faça `doppler secrets upload .env`: o .env local tem a URL do banco de
-#    produção e variáveis de teste, e subir o arquivo inteiro leva junto o que
-#    não devia estar lá.
-doppler secrets set CERTIFICATE_MASTER_KEY --project audit --config prd
-doppler secrets set DATABASE_URL --project audit --config prd
-doppler secrets set SUPABASE_URL SUPABASE_ANON_KEY --project audit --config prd
+# O dev referencia o prd em vez de copiar: mesmo banco, mesma chave do cofre, e
+# uma rotação no prd já vale para os dois.
+doppler secrets set --project audit --config dev \
+  'DATABASE_URL=${prd.DATABASE_URL}' \
+  'SUPABASE_URL=${prd.SUPABASE_URL}' \
+  'SUPABASE_ANON_KEY=${prd.SUPABASE_ANON_KEY}' \
+  'SUPABASE_JWKS_URL=${prd.SUPABASE_JWKS_URL}' \
+  'SUPABASE_JWT_AUDIENCE=${prd.SUPABASE_JWT_AUDIENCE}' \
+  'CERTIFICATE_MASTER_KEY=${prd.CERTIFICATE_MASTER_KEY}' \
+  'LOG_LEVEL=debug'
 ```
 
-### No Render
-
-Use a integração nativa do Doppler, e não copiar e colar: a integração sincroniza
-e mantém o log de leitura. No Doppler, *Integrations → Render → Sync*, apontando
-para o serviço da API e o config `prd`.
-
-Depois de sincronizar, **remova as variáveis do painel do Render**. Duas fontes
-para o mesmo segredo é como uma fica velha sem ninguém notar.
-
-### Localmente
+Confira que os dois têm as obrigatórias (`DATABASE_URL`, `SUPABASE_URL`,
+`SUPABASE_ANON_KEY`, `SUPABASE_JWKS_URL`, `CERTIFICATE_MASTER_KEY`) e que o `dev`
+não tem `ASAAS_API_KEY`:
 
 ```bash
-doppler run --project audit --config dev -- npm run dev
+doppler secrets --project audit --config prd --only-names
+doppler secrets --project audit --config dev --only-names
 ```
 
-O `.env` continua existindo para desenvolvimento offline. Ele **não** deve ter a
-chave de produção — e não deve ter `DATABASE_URL` de produção junto de
-`TEST_DATABASE_URL`, porque a suíte se recusa a rodar assim (ver
-`tests/setup/global-db.ts`, e a razão: já houve evento de teste gravado no log de
-produção por causa disso).
+Nunca rode `doppler secrets upload` com o arquivo local: ele tem variáveis de
+teste, e subir tudo leva junto o que não devia estar lá.
+
+### 2. Render: API em produção
+
+O serviço recebe os segredos pela integração nativa do Doppler (*Integrations →
+Render → Sync*, config `prd`). Não copie e cole: a integração sincroniza e mantém
+o log de leitura. Se ainda houver variável definida direto no painel do Render,
+remova-a. Duas fontes para o mesmo segredo é como uma fica velha sem ninguém
+notar.
+
+Depois do sync, o Render faz o deploy a partir de `main`. Para conferir:
+
+```bash
+doppler run --project audit --config prd -- npm run doctor
+```
+
+A primeira linha tem de dizer `ambiente prod`.
+
+### 3. Vercel: front em produção
+
+No projeto `sped-genius-hub`, em *Settings → Environment Variables*, ambiente
+**Production**:
+
+```bash
+VITE_AUDIT_API_URL=https://<servico-da-api>.onrender.com
+VITE_SUPABASE_URL=https://uflputiyytswvagrrzzn.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<anon key do projeto>
+```
+
+Os *preview deploys* da Vercel não funcionam contra a API. Cada preview tem uma
+URL nova, e `CORS_ORIGINS` só aceita origens exatas, sem curinga. Para testar uma
+branch do front, rode-o localmente (passo 4).
+
+### 4. Local: dev
+
+```bash
+# API (este repo)
+doppler run --project audit --config dev -- npm run serve
+
+# Front (../sped-genius-hub), com VITE_AUDIT_API_URL=http://localhost:3000
+npm run dev
+```
+
+Para trabalhar offline, o arquivo de ambiente local substitui o Doppler. Ele
+precisa ter `AUDIT_ENV=dev`. E não pode ter `TEST_DATABASE_URL` junto da
+`DATABASE_URL` de produção: a suíte de testes se recusa a rodar assim.
+
+### 5. Conferir
+
+```bash
+doppler run --project audit --config dev -- npm run doctor   # ambiente dev
+doppler run --project audit --config prd -- npm run doctor   # ambiente prod
+```
 
 ## Rotação da chave mestra
 

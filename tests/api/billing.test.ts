@@ -60,6 +60,7 @@ describe.skipIf(!DATABASE_URL)('API — planos e cobrança', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: DATABASE_URL });
     const env = loadEnv({
+      AUDIT_ENV: 'dev',
       DATABASE_URL,
       SUPABASE_URL: 'https://projeto-de-teste.supabase.co',
       SUPABASE_ANON_KEY: 'chave-anon-de-teste',

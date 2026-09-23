@@ -123,9 +123,10 @@ Documento item a item, com `legacy_taxes` (ICMS, IPI, PIS, COFINS) e
 Esta é a tela que materializa o diferencial: os dois sistemas no mesmo item.
 Valores vêm em centavos inteiros — divida por 100 na apresentação, nunca antes.
 
-`POST /sync`, `/sped`, `/bank-statements` respondem **501** por enquanto e
-apontam o upload manual: enfileirar sem consumidor deixaria o escritório
-esperando um job que nunca sai de `queued`.
+`POST /clients/{cnpj}/sync` (DF-e da SEFAZ) responde **501** por enquanto e
+aponta o upload manual: enfileirar sem consumidor deixaria o escritório
+esperando um job que nunca sai de `queued`. O SPED (`/sped`) e o extrato
+(`/bank-statements`) já têm rota própria, por upload.
 
 ### 7. Saúde do cadastro de itens (Onda 5)
 `GET /v1/clients/{cnpj}/items?health` · `PUT .../items/{item_id}/classification` · `GET .../items/health`

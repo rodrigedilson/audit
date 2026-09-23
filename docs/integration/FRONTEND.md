@@ -109,17 +109,18 @@ npx openapi-typescript ../audit/docs/api/openapi.yaml -o src/api/schema.d.ts
 
 ### Variáveis de Ambiente
 
-No **frontend**, uma só:
+No **frontend**, três (as mesmas no arquivo local e na Vercel):
 
 ```bash
-VITE_API_URL=http://localhost:3000
+VITE_AUDIT_API_URL=http://localhost:3000        # prod: URL do serviço no Render
+VITE_SUPABASE_URL=https://uflputiyytswvagrrzzn.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<anon key do projeto>
 ```
 
-O frontend **não recebe chave do Supabase**. A autenticação passa pela nossa API
-(`POST /v1/auth/login`, que repassa o grant ao Supabase Auth e devolve o token
-junto do escritório resolvido), e os dados fiscais só saem por rota autenticada.
-Dar a chave anon ao frontend abriria um caminho de leitura que não passa pelo
-orquestrador nem pelas 7 camadas de validação.
+O front usa o Supabase só para login e para as funcionalidades que não têm
+equivalente no backend (ver [`LOVABLE.md`](LOVABLE.md)). O token vem de
+`supabase.auth.getSession()` e vai no `Authorization` de cada chamada à API. Os
+dados fiscais só saem por rota autenticada da API.
 
 No **backend**:
 
@@ -156,7 +157,8 @@ O plano de migração do frontend está em [`LOVABLE.md`](LOVABLE.md). O
 dado fiscal, não construir telas do zero.
 
 ### 2. Integração Contínua
-- Backend: push para `main` → deploy (ainda a configurar; ver `LOVABLE.md`, passo 1)
+- Backend: push para `main` → deploy no Render, com os segredos sincronizados do
+  Doppler `prd` (ver [`SEGREDOS.md`](../setup/SEGREDOS.md#passo-a-passo))
 - Frontend: Lovable publica no repo `sped-genius-hub` → deploy nativo da Vercel
   em <https://sped-genius-hub.vercel.app>
 

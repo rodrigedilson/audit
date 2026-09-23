@@ -96,6 +96,7 @@ Copie `.env.example` para `.env` se ainda não existir. O `.env` é ignorado pel
 git — nunca comite.
 
 ```bash
+AUDIT_ENV=dev
 DATABASE_URL=postgresql://postgres.SEU-REF:SENHA@aws-0-SUA-REGIAO.pooler.supabase.com:5432/postgres
 SUPABASE_URL=https://SEU-REF.supabase.co
 SUPABASE_ANON_KEY=sua-chave-anon
@@ -103,6 +104,12 @@ SUPABASE_JWKS_URL=https://SEU-REF.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_JWT_AUDIENCE=authenticated
 CERTIFICATE_MASTER_KEY=gere-com-openssl-rand-base64-48
 ```
+
+**`AUDIT_ENV`** — `dev` ou `prod`, obrigatória e sem padrão. Os dois ambientes
+usam o mesmo projeto Supabase e o mesmo banco. Com `prod`, `CORS_ORIGINS` passa a
+ser obrigatória, e a cobrança exige a URL de produção do Asaas e o token do
+webhook. Com `dev`, o Asaas de produção é recusado. Ver
+[SEGREDOS.md](SEGREDOS.md#ambientes-dev-e-prod).
 
 **`DATABASE_URL`** — copie do painel em **Connect**. Prefira **Session pooler**
 ou **Transaction pooler**; evite *Direct connection* (motivo abaixo, em
