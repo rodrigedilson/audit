@@ -480,6 +480,18 @@ describe.skipIf(!DATABASE_URL)('API — carteira e cofre de certificados', () =>
      * certificado guardado depois de removido — e a coleta de DF-e falharia sem
      * ninguém entender por quê.
      */
+    /** O id da chave vai para a linha: é o que torna a rotação conferível. */
+    it('grava qual chave cifrou o certificado', async () => {
+      await upload(owner);
+
+      const { rows } = await pool.query<{ key_id: string | null }>(
+        'select key_id from certificates where tenant_id = $1::uuid and cnpj = $2::char(14)',
+        [tenantId, cnpj],
+      );
+
+      expect(rows[0]?.key_id).toMatch(/^[0-9a-f]{16}$/);
+    });
+
     it('has_certificate acompanha o cofre, e volta a false depois de remover', async () => {
       const detalhe = async (): Promise<boolean> =>
         (await call('GET', `/v1/clients/${cnpj}`, owner)).json().has_certificate;

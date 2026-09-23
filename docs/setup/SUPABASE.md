@@ -456,3 +456,9 @@ o escritório. Também é idempotente.
 - Telas do painel: [`docs/integration/TELAS.md`](../integration/TELAS.md)
 - Decisões de arquitetura: [`docs/adr/`](../adr/)
 - Briefing de produto: [`docs/product/BRIEFING-SAAS-FISCAL.md`](../product/BRIEFING-SAAS-FISCAL.md)
+
+## Segredos e a chave do cofre
+
+`CERTIFICATE_MASTER_KEY` não mora aqui. Ver [`SEGREDOS.md`](SEGREDOS.md): onde os
+segredos ficam (Doppler), como rotacionar a chave sem perder o acervo de
+certificados, e o que fazer se ela for perdida.
