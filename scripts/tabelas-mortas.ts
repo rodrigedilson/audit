@@ -97,24 +97,77 @@ async function main(): Promise<void> {
       });
     }
 
-    console.log('\nTabelas suspeitas encontradas:\n');
-    for (const c of candidatas) {
-      const impedimentos = [
+
+    /**
+     * FK de outra candidata é ordem, não impedimento.
+     *
+     * As sete tabelas formam uma hierarquia — `analysis_groups` ←
+     * `interop_sessions` ← as outras quatro —, e tratar qualquer FK como
+     * impedimento faria o script dizer "manter" justamente para as duas que são
+     * o topo dela. Alguém leria isso como "essas duas são usadas", quando o que
+     * as segura são tabelas igualmente mortas.
+     *
+     * FK de tabela **fora** do conjunto continua sendo impedimento de verdade:
+     * ali há algo vivo apontando para cá.
+     */
+    const nomes = new Set(candidatas.map((c) => c.tabela));
+    const impedimentoReal = (c: Candidata): string[] =>
+      [
         c.linhas > 0 ? `${c.linhas} linha(s)` : null,
         c.dependentes.length > 0 ? `views: ${c.dependentes.join(', ')}` : null,
-        c.referenciada_por.length > 0 ? `FK de: ${c.referenciada_por.join(', ')}` : null,
-      ].filter((x) => x !== null);
+        ...c.referenciada_por
+          .filter((origem) => !nomes.has(origem.replace(/^public\./, '')))
+          .map((origem) => `FK de ${origem}, que está fora do conjunto`),
+      ].filter((x): x is string => x !== null);
+
+    const removiveis = candidatas.filter((c) => impedimentoReal(c).length === 0);
+    const mantidas = candidatas.filter((c) => impedimentoReal(c).length > 0);
+
+    /**
+     * Ordem de remoção: quem é apontado sai depois de quem aponta.
+     *
+     * Sem ordenar, o `drop` da tabela-pai falha com violação de dependência — e
+     * a alternativa, `cascade`, apagaria em silêncio o que o script existe para
+     * conferir um por um.
+     */
+    const ordenadas: Candidata[] = [];
+    const restantes = [...removiveis];
+    while (restantes.length > 0) {
+      const livre = restantes.findIndex((c) =>
+        c.referenciada_por.every((origem) => {
+          const nome = origem.replace(/^public\./, '');
+          return !restantes.some((r) => r.tabela === nome) || nome === c.tabela;
+        }),
+      );
+
+      if (livre === -1) {
+        // Ciclo de FK entre as candidatas. Não deveria existir, e se existir é
+        // caso para olhar à mão em vez de o script escolher por conta própria.
+        console.error(
+          '\nCiclo de chave estrangeira entre as candidatas: ' +
+            restantes.map((r) => r.tabela).join(', '),
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      ordenadas.push(restantes.splice(livre, 1)[0]!);
+    }
+
+    console.log('\nTabelas suspeitas encontradas:\n');
+    for (const c of candidatas) {
+      const impedimentos = impedimentoReal(c);
+      const dentroDoConjunto = c.referenciada_por.filter((o) =>
+        nomes.has(o.replace(/^public\./, '')),
+      );
 
       console.log(
         `  ${c.tabela.padEnd(28)} ${c.tamanho.padStart(10)}  ` +
-          (impedimentos.length === 0 ? 'vazia e sem dependência' : `MANTER — ${impedimentos.join(' · ')}`),
+          (impedimentos.length === 0
+            ? `vazia${dentroDoConjunto.length > 0 ? ` — sai depois de ${dentroDoConjunto.join(', ')}` : ' e sem dependência'}`
+            : `MANTER — ${impedimentos.join(' · ')}`),
       );
     }
-
-    const removiveis = candidatas.filter(
-      (c) => c.linhas === 0 && c.dependentes.length === 0 && c.referenciada_por.length === 0,
-    );
-    const mantidas = candidatas.filter((c) => !removiveis.includes(c));
 
     console.log(`\n${removiveis.length} removível(is), ${mantidas.length} a manter.`);
 
@@ -129,7 +182,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    const sql = removiveis.map((c) => `drop table if exists public.${c.tabela};`).join('\n');
+    const sql = ordenadas.map((c) => `drop table if exists public.${c.tabela};`).join('\n');
 
     if (!executar) {
       console.log('\nSimulação. O que --executar rodaria, e o que vai para a migration:\n');
@@ -142,7 +195,7 @@ async function main(): Promise<void> {
       // Uma transação para o conjunto: se uma falhar, nenhuma sai. Meia remoção
       // deixaria o banco num estado que nenhuma migration descreve.
       await client.query('begin');
-      for (const c of removiveis) {
+      for (const c of ordenadas) {
         await client.query(`drop table if exists public.${c.tabela}`);
         console.log(`  removida ${c.tabela}`);
       }
