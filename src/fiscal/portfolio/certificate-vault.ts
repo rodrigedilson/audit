@@ -52,13 +52,27 @@ const KEY_ID_LABEL = 'certificate-vault-key-id';
  * normaliza o tamanho.
  */
 function deriveKey(masterKey: string): Buffer {
-  if (masterKey.trim().length < 32) {
+  /**
+   * `trim` **antes** do hash, e não só na validação.
+   *
+   * O hash era do valor cru: a mesma chave com um `\n` a mais — de um
+   * `openssl rand | pipe`, de um copiar e colar no painel do secret manager —
+   * derivava uma chave diferente. O sintoma seria "chave mestra incorreta" sobre
+   * um acervo cifrado com a chave certa, e não há recuperação.
+   *
+   * Trocar isto depois de haver certificado guardado tornaria ilegível o que foi
+   * cifrado com a chave contendo espaço nas pontas. Feito enquanto o acervo de
+   * produção está vazio, que é a única janela em que é de graça.
+   */
+  const chave = masterKey.trim();
+
+  if (chave.length < 32) {
     throw new CertificateError(
       'CERTIFICATE_MASTER_KEY deve ter ao menos 32 caracteres. ' +
         'Gere com: openssl rand -base64 48',
     );
   }
-  return createHash('sha256').update(masterKey, 'utf8').digest();
+  return createHash('sha256').update(chave, 'utf8').digest();
 }
 
 /**

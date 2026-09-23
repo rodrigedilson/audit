@@ -51,6 +51,26 @@ para o serviço da API e o config `prd`.
 Depois de sincronizar, **remova as variáveis do painel do Render**. Duas fontes
 para o mesmo segredo é como uma fica velha sem ninguém notar.
 
+> **Confira `CORS_ORIGINS` antes de virar a chave da sincronização.** Ele não
+> vive no `.env` de desenvolvimento com o valor de produção, e sem ele o padrão
+> da aplicação é só `http://localhost:5173` — o front na Vercel passaria a
+> receber erro de CORS. O valor no `prd` foi preenchido com as duas origens
+> verificadas por preflight; se o Render tiver mais alguma, acrescente.
+
+### Verificar que o Doppler está alimentando a aplicação
+
+```bash
+doppler run --project audit --config prd -- npm run doctor
+```
+
+O diagnóstico usa os segredos do Doppler e relata o estado do banco de produção,
+incluindo a checagem do cofre. É a forma de confirmar que a configuração está
+completa **antes** de apontar o Render para ela.
+
+> Rodando localmente, o `.env` do projeto ainda é lido e complementa o que o
+> Doppler entrega — o diagnóstico diz quantas variáveis vieram de cada lado. Em
+> produção não há `.env`, então lá a fonte é só o Doppler.
+
 ### Localmente
 
 ```bash
@@ -100,10 +120,24 @@ openssl rand -base64 48
 
 ### Passo 3 — subir as duas
 
+**Pelo stdin, nunca por argumento.** Valor em linha de comando fica no histórico
+do shell, na lista de processos e — se alguém estiver acompanhando por uma
+ferramenta — no registro da sessão:
+
 ```bash
-doppler secrets set CERTIFICATE_MASTER_KEY_PREVIOUS="$(doppler secrets get CERTIFICATE_MASTER_KEY --plain --project audit --config prd)" --project audit --config prd
-doppler secrets set CERTIFICATE_MASTER_KEY="<a nova>" --project audit --config prd
+# a anterior, copiada da atual antes de trocar
+doppler secrets get CERTIFICATE_MASTER_KEY --plain --project audit --config prd \
+  | doppler secrets set CERTIFICATE_MASTER_KEY_PREVIOUS --project audit --config prd --silent
+
+# a nova, gerada direto para dentro do cofre: ninguém precisa vê-la
+openssl rand -base64 48 | tr -d '\n' \
+  | doppler secrets set CERTIFICATE_MASTER_KEY --project audit --config prd --silent
 ```
+
+O `tr -d '\n'` não é zelo: `openssl` termina a saída com uma quebra de linha, e
+a chave é usada como material de derivação. O cofre faz `trim` antes de derivar
+justamente para que espaço nas pontas não produza outra chave — mas o segredo
+guardado deve ser o valor limpo de todo modo.
 
 Faça o deploy e **confirme que o cofre ainda abre** antes de seguir: abra um
 cliente com certificado no painel. A partir daqui, cada novo upload já entra com
