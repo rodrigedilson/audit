@@ -19,6 +19,7 @@ const PROD = {
   ...BASE,
   AUDIT_ENV: 'prod',
   CORS_ORIGINS: 'https://app.exemplo.com.br',
+  TRUST_PROXY: 'true',
 } as const;
 
 const erroDe = (source: NodeJS.ProcessEnv): string => {
@@ -74,6 +75,14 @@ describe('loadEnv — prod', () => {
       ASAAS_BASE_URL: ASAAS_PRODUCTION_URL,
     });
     expect(mensagem).toContain('ASAAS_WEBHOOK_TOKEN');
+  });
+
+  /** Atrás do proxy, sem isto a quota e os limites de login viram um balde único. */
+  it('exige TRUST_PROXY=true', () => {
+    const { TRUST_PROXY: _, ...semProxy } = PROD;
+    expect(erroDe(semProxy)).toMatch(/TRUST_PROXY deve ser true/);
+    expect(erroDe({ ...PROD, TRUST_PROXY: 'false' })).toMatch(/TRUST_PROXY/);
+    expect(loadEnv({ ...PROD }).trustProxy).toBe(true);
   });
 
   it('sem chave do Asaas, sobe em modo só cálculo', () => {

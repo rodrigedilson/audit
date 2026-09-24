@@ -51,9 +51,13 @@ export class BillingService {
         'select minimum_cents, cap_cents from billing_settings where id = true',
       ),
       this.pool.query<{ from_clients: number; discount_bps: number; label: string | null }>(
+        // A escada vigente é a de maior `effective_from` até hoje, inteira: uma
+        // escada futura já cadastrada não entra antes do dia dela, e degraus de
+        // escadas diferentes nunca se misturam.
         `select from_clients, discount_bps, label
            from pricing_tiers
-          where effective_from <= current_date
+          where effective_from = (
+                  select max(effective_from) from pricing_tiers where effective_from <= current_date)
           order by from_clients`,
       ),
     ]);

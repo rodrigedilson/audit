@@ -46,9 +46,13 @@ const TITULOS: Record<string, string> = {
   '20260924190000_diagnostico_publico.sql': 'diagnostico-publico',
   '20260924200000_teto_da_assinatura.sql': 'teto-da-assinatura',
   '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
+  '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260925120000_versao_das_faixas.sql':
+    'Escada de faixas versionada por data: vale a de maior effective_from até\n' +
+    '-- hoje, inteira. Agendar uma escada é inserir as faixas com data futura.',
   '20260925100000_rotulos_de_feature.sql':
     'Rótulo em PT-BR de cada feature do plano, para a tela de preço não\n' +
     '-- inventar nomes, e a função que anexa o lead a um diagnóstico já feito,\n' +

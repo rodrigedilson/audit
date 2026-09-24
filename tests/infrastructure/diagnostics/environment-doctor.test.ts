@@ -8,8 +8,11 @@ import {
   checarCotaDoAssistente,
   checarCnpjAlfanumerico,
   checarCobranca,
+  checarCertificadosParaColeta,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 
@@ -282,7 +285,7 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
       );
 
       expect(escritorio?.estado).toBe('falha');
-      expect(escritorio?.acao).toContain('05-bootstrap-escritorio.sql');
+      expect(escritorio?.acao).toContain('bootstrap-escritorio.sql');
       expect(escritorio?.acao).toMatch(/Auto Confirm User/);
     });
 
@@ -660,6 +663,51 @@ describe('checarCnpjAlfanumerico', () => {
     expect(r.estado).toBe('falha');
     expect(r.detalhe).toContain('clients, events');
     expect(r.detalhe).toContain('500');
-    expect(r.acao).toContain('19-cnpj_alfanumerico.sql');
+    expect(r.acao).toContain('20-cnpj_alfanumerico.sql');
+  });
+});
+
+/**
+ * O doctor manda rodar arquivos pelo nome, e o número de cada passo muda quando
+ * entra migration com timestamp anterior (branches em paralelo). Já apontou
+ * o passo 19 para o CNPJ alfanumérico quando o arquivo era o 20, e o bootstrap como 05
+ * quando era o 26: a ação mandava rodar um arquivo que não existe.
+ */
+describe('nomes de arquivo que o doctor cita', () => {
+  it('todo passo citado existe em scripts/sql/migracoes', () => {
+    const fonte = readFileSync(join(process.cwd(), 'src/infrastructure/diagnostics/environment-doctor.ts'), 'utf8');
+    const existentes = new Set(readdirSync(join(process.cwd(), 'scripts/sql/migracoes')));
+    const citados = [...new Set(fonte.match(/\b\d{2}-[a-z0-9_-]+\.sql/g) ?? [])];
+
+    expect(citados.length).toBeGreaterThan(10);
+    expect(citados.filter((c) => !existentes.has(c))).toEqual([]);
+  });
+});
+
+describe('checarCertificadosParaColeta', () => {
+  const pool = (existe: boolean, antigos: number, total: number): pg.Pool =>
+    ({
+      query: async (sql: string) =>
+        sql.includes('information_schema')
+          ? { rows: [{ existe }] }
+          : { rows: [{ antigos: String(antigos), total: String(total) }] },
+    }) as unknown as pg.Pool;
+
+  it('todos utilizáveis: ok', async () => {
+    expect((await checarCertificadosParaColeta(pool(true, 0, 3))).estado).toBe('ok');
+  });
+
+  /** Sem esta linha, o escritório só descobre que precisa reenviar quando pede a coleta. */
+  it('certificado guardado antes da coleta: aviso pedindo reenvio', async () => {
+    const r = await checarCertificadosParaColeta(pool(true, 2, 5));
+
+    expect(r.estado).toBe('aviso');
+    expect(r.detalhe).toContain('2 de 5');
+    expect(r.acao).toContain('reenvia');
+  });
+
+  it('sem a migration da coleta: aviso apontando o arquivo', async () => {
+    const r = await checarCertificadosParaColeta(pool(false, 0, 0));
+    expect(r.acao).toContain('19-coleta-dfe.sql');
   });
 });

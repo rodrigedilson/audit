@@ -31,7 +31,7 @@
 -- =============================================================================
 
 -- =============================================================================
--- PARTE 1 — migrations (25 arquivos, na ordem de aplicação)
+-- PARTE 1 — migrations (26 arquivos, na ordem de aplicação)
 -- =============================================================================
 
 
@@ -2705,13 +2705,20 @@ create table if not exists public.pricing_tiers (
 comment on table public.pricing_tiers is
   'Faixas marginais de desconto por volume de CNPJs faturáveis. Teto de 50% por monotonicidade.';
 
-insert into public.pricing_tiers (from_clients, discount_bps, label) values
-  (1,    0,    'Até 100 CNPJs'),
-  (101,  1500, '101 a 300 CNPJs'),
-  (301,  3000, '301 a 600 CNPJs'),
-  (601,  4000, '601 a 1.000 CNPJs'),
-  (1001, 5000, 'Acima de 1.000 CNPJs')
-on conflict (from_clients) do nothing;
+-- Só semeia tabela vazia. `on conflict (from_clients)` deixou de servir quando a
+-- chave passou a ser `(effective_from, from_clients)` (migration
+-- `20260925120000_versao_das_faixas`), e reaplicar esta semente com a data de
+-- hoje criaria uma escada nova por dia.
+insert into public.pricing_tiers (from_clients, discount_bps, label)
+select f.from_clients, f.discount_bps, f.label
+  from (values
+    (1,    0,    'Até 100 CNPJs'),
+    (101,  1500, '101 a 300 CNPJs'),
+    (301,  3000, '301 a 600 CNPJs'),
+    (601,  4000, '601 a 1.000 CNPJs'),
+    (1001, 5000, 'Acima de 1.000 CNPJs')
+  ) as f (from_clients, discount_bps, label)
+ where not exists (select 1 from public.pricing_tiers);
 
 -- Pública de propósito, como `plans` e `billing_settings`: a escada vai na
 -- página de preço, antes de qualquer contato comercial.
@@ -2953,6 +2960,44 @@ end $$;
 
 comment on function public.registrar_lead_do_diagnostico is
   'Anexa e-mail consentido a um diagnóstico já feito. Falso quando o id não existe ou já tem lead.';
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260925120000_versao_das_faixas.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Escada de faixas versionada por data
+--
+-- A chave era `from_clients`, e com ela só cabia uma escada: `effective_from`
+-- existia, mas mudar a tabela de desconto era sobrescrever a vigente, sem como
+-- anunciar a próxima antes de ela valer.
+--
+-- Agora a escada é o conjunto de faixas de um mesmo `effective_from`, e vale a
+-- de maior data até hoje. A escada inteira muda junto: escolher "a faixa mais
+-- recente de cada início" misturaria degraus de duas escadas, e uma escada nova
+-- que tira um degrau deixaria o degrau antigo valendo.
+--
+-- Para agendar uma escada: inserir as faixas completas com o `effective_from`
+-- futuro. Ela passa a valer nesse dia, sem deploy.
+-- =============================================================================
+
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.pricing_tiers'::regclass
+       and contype = 'p'
+       and pg_get_constraintdef(oid) = 'PRIMARY KEY (from_clients)'
+  ) then
+    alter table public.pricing_tiers drop constraint pricing_tiers_pkey;
+    alter table public.pricing_tiers add primary key (effective_from, from_clients);
+  end if;
+end
+$$;
+
+comment on column public.pricing_tiers.effective_from is
+  'Data em que esta escada passa a valer. Vale a escada de maior effective_from até hoje; agendar é inserir a escada completa com data futura.';
 
 
 -- =============================================================================

@@ -219,18 +219,23 @@ function hashDoIp(request: FastifyRequest, masterKey: string): string {
 }
 
 async function exigirQuotaDiaria(deps: ApiDeps, ipHash: string): Promise<void> {
-  const { rows } = await deps.pool.query<{ usadas: string }>(
-    `select count(*) as usadas
+  // O `retry_after` é o tempo até o diagnóstico mais antigo da janela vencer, e
+  // não uma hora fixa: é quando de fato abre uma vaga.
+  const { rows } = await deps.pool.query<{ usadas: string; libera_em: string | null }>(
+    `select count(*) as usadas,
+            extract(epoch from (min(created_at) + interval '1 day' - now()))::text as libera_em
        from readiness_reports
       where ip_hash = $1::char(64) and created_at > now() - interval '1 day'`,
     [ipHash],
   );
 
   if (Number(rows[0]?.usadas ?? 0) >= QUOTA_DIARIA) {
+    // O brief é explícito: o 429 não é tela de upgrade. Diz o limite e quando
+    // tentar de novo, e nada mais.
     throw new RateLimitedError(
-      3600,
-      `Limite de ${QUOTA_DIARIA} diagnósticos por dia atingido. ` +
-        'Para analisar a carteira inteira, comece o teste de 30 dias.',
+      Math.max(1, Math.ceil(Number(rows[0]?.libera_em ?? 3600))),
+      `Você fez muitos diagnósticos hoje (limite de ${QUOTA_DIARIA} por dia). ` +
+        'Tente de novo mais tarde.',
     );
   }
 }

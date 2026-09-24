@@ -92,6 +92,7 @@ const FUNCOES = [
   'portfolio_deadlines',
   'assistant_usage',
   'document_coverage',
+  'registrar_lead_do_diagnostico',
 ] as const;
 
 /** Um por migration, para dizer qual arquivo falta rodar. */
@@ -187,6 +188,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
         env.anthropic === undefined
           ? 'assistente só na camada 1'
           : `assistente camada 3 com ${env.anthropic.model}`,
+        env.trustProxy ? 'IP do visitante pelo proxy (TRUST_PROXY)' : 'IP direto, sem proxy',
       ].join(' · '),
     });
   } catch (erro) {
@@ -258,6 +260,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
       await isolar('CNPJ alfanumérico', () => checarCnpjAlfanumerico(pool)),
     );
     checagens.push(await isolar('cobrança (Asaas)', () => checarCobranca(pool, env)));
+    checagens.push(await isolar('certificados para a coleta de DF-e', () => checarCertificadosParaColeta(pool)));
     checagens.push(await isolar('escritório e usuário', () => checarEscritorio(pool)));
   } finally {
     await pool.end().catch(() => undefined);
@@ -428,7 +431,10 @@ async function checarCargaInicial(pool: pg.Pool): Promise<Checagem> {
     return {
       nome: 'carga inicial de cobrança',
       estado: 'ok',
-      detalhe: `${planos} planos, parâmetros carregados`,
+      // Os números (preço por regime, mínimo, faixas de volume e teto) são
+      // hipótese comercial de teste de preço, e não política fechada. Fica dito
+      // aqui para ninguém ler a carga como decisão.
+      detalhe: `${planos} planos, parâmetros carregados · preços, faixas e teto ainda são hipótese comercial`,
     };
   }
 
@@ -635,7 +641,7 @@ async function checarVisibilidadePublica(pool: pg.Pool): Promise<Checagem> {
               where p.schemaname = 'public' and p.tablename = c.relname) as policies
        from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relkind = 'r'
-        and c.relname in ('plans', 'billing_settings')`,
+        and c.relname in ('plans', 'billing_settings', 'pricing_tiers', 'plan_features')`,
   );
 
   const bloqueadas = rows.filter((r) => r.rls && Number(r.policies) === 0);
@@ -655,7 +661,8 @@ async function checarVisibilidadePublica(pool: pg.Pool): Promise<Checagem> {
       `${bloqueadas.map((r) => r.tabela).join(', ')} com RLS ligada e sem policy: ` +
       'a API REST devolve lista vazia, não erro',
     acao:
-      'Rode scripts/sql/reparo-planos.sql, que desliga o RLS dessas duas e concede\n' +
+      'Rode scripts/sql/reparo-planos.sql, que desliga o RLS de plans e billing_settings\n' +
+      '  (pricing_tiers e plan_features: 22-faixas-de-volume.sql e 25-rotulos-e-lead.sql) e concede\n' +
       '  select a anon. Sem isso a calculadora de preço pública mostra nada, e o\n' +
       '  sintoma não aponta a causa: seriam 403 se fosse permissão.',
   };
@@ -898,7 +905,52 @@ export async function checarCnpjAlfanumerico(pool: pg.Pool): Promise<Checagem> {
     detalhe:
       `${rows.length} tabela(s) ainda exigem CNPJ só de dígitos: ${tabelas}. ` +
       'Cadastrar empresa aberta de 31/07/2026 em diante devolve 500.',
-    acao: 'Rode scripts/sql/migracoes/19-cnpj_alfanumerico.sql.',
+    acao: 'Rode scripts/sql/migracoes/20-cnpj_alfanumerico.sql.',
+  };
+}
+
+/**
+ * Certificados guardados antes da coleta de DF-e (ADR-006), como PFX com a
+ * senha descartada: não abrem, e a coleta desse CNPJ recusa com 409. Aviso, e
+ * não falha: o resto do produto funciona. O escritório precisa saber que tem de
+ * reenviar, e sem esta linha só descobre quando pede a coleta.
+ */
+export async function checarCertificadosParaColeta(pool: pg.Pool): Promise<Checagem> {
+  const nome = 'certificados para a coleta de DF-e';
+  const { rows: coluna } = await pool.query<{ existe: boolean }>(
+    `select exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = 'certificates'
+          and column_name = 'credential_format'
+     ) as existe`,
+  );
+  if (coluna[0]?.existe !== true) {
+    return {
+      nome,
+      estado: 'aviso',
+      detalhe: 'a coluna credential_format não existe',
+      acao: 'Aplique scripts/sql/migracoes/19-coleta-dfe.sql.',
+    };
+  }
+
+  const { rows } = await pool.query<{ antigos: string; total: string }>(
+    `select count(*) filter (where credential_format = 'pfx_protected')::text as antigos,
+            count(*)::text as total
+       from certificates`,
+  );
+  const antigos = Number(rows[0]?.antigos ?? 0);
+  const total = Number(rows[0]?.total ?? 0);
+
+  if (antigos === 0) {
+    return { nome, estado: 'ok', detalhe: `${total} certificado(s), todos utilizáveis pela coleta` };
+  }
+  return {
+    nome,
+    estado: 'aviso',
+    detalhe: `${antigos} de ${total} certificado(s) guardados antes da coleta, que não abrem`,
+    acao:
+      'Esses CNPJs recebem 409 ao pedir a coleta. O owner reenvia o A1 com a senha, e o\n' +
+      '  GET /clients/{cnpj}/certificate passa a dizer usable_for_sync: true.',
   };
 }
 
@@ -924,7 +976,8 @@ async function checarEscritorio(pool: pg.Pool): Promise<Checagem> {
     estado: 'falha',
     detalhe: `${escritorios} escritório(s), ${owners} owner(s)`,
     acao:
-      'Rode scripts/sql/migracoes/05-bootstrap-escritorio.sql, editando as\n' +
+      // O bootstrap é sempre o último passo, e o número dele sobe a cada migration.
+      'Rode o último passo, scripts/sql/migracoes/NN-bootstrap-escritorio.sql, editando as\n' +
       '  duas linhas marcadas com CONFIGURE. O usuário precisa existir antes em\n' +
       '  auth.users (Authentication → Users → Add user, com "Auto Confirm User").',
   };

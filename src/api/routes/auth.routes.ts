@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { UnauthorizedError } from '../auth/jwt-verifier.js';
 import type { ApiDeps } from '../server.js';
+import { createBurstLimiter, exigirLimite } from '../plugins/rate-limit.js';
 
 interface LoginBody {
   email: string;
@@ -13,7 +14,18 @@ interface SupabaseTokenResponse {
   error_description?: string;
 }
 
+/**
+ * Tentativas de login: por IP e por e-mail, em duas janelas. Sem isto a rota,
+ * que é pública e repassa a senha ao Supabase, servia de oráculo para testar
+ * senhas. Por e-mail pega o ataque distribuído contra uma conta; por IP, o que
+ * varre muitas contas a partir de um lugar só.
+ */
+const LOGIN_POR_MINUTO = { windowMs: 60_000, max: 5 };
+const LOGIN_POR_HORA = { windowMs: 3_600_000, max: 20 };
+
 export async function registerAuthRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
+  const tentativas = [createBurstLimiter(LOGIN_POR_MINUTO), createBurstLimiter(LOGIN_POR_HORA)];
+
   /**
    * `POST /auth/login` do contrato. Repassa o grant de senha ao Supabase Auth e
    * devolve o token junto do escritório resolvido — o frontend precisa dos dois
@@ -35,6 +47,11 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: ApiDeps): P
     },
     async (request, reply) => {
       const { email, password } = request.body;
+      exigirLimite(
+        tentativas,
+        [`ip:${request.ip}`, `email:${email.trim().toLowerCase()}`],
+        'Muitas tentativas de login. Aguarde antes de tentar de novo.',
+      );
 
       const response = await fetch(`${deps.env.supabase.url}/auth/v1/token?grant_type=password`, {
         method: 'POST',
