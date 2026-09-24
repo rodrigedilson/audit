@@ -34,7 +34,7 @@ ISO 27001 ou SOC 2 Type I é a forma de responder isso sem pedir confiança.
 | Não repúdio | Event log append-only garantido por trigger no banco, não por convenção. Projeção com hash SHA-256 conferível por `POST /verify` | mesma migration, trigger `events_append_only` |
 | Integridade do dado fiscal | Replay determinístico reproduz o hash; divergência é detectada, não silenciada | [`fiscal-hash-verifier.service.ts`](../../src/fiscal/projection/fiscal-hash-verifier.service.ts) |
 | Vulnerabilidade em dependência | `npm audit --audit-level=high` falha o CI | [`ci.yml`](../../.github/workflows/ci.yml) |
-| Segredo commitado | Gitleaks no histórico completo, no CI | [`ci.yml`](../../.github/workflows/ci.yml) |
+| Segredo commitado | Gitleaks no histórico completo, em job próprio do CI (`fetch-depth: 0`), com três falsos positivos liberados um a um e justificados | [`ci.yml`](../../.github/workflows/ci.yml), [`.gitleaks.toml`](../../.gitleaks.toml) |
 | Segredo em ambiente de teste | A suíte se recusa a rodar com `DATABASE_URL` apontando para outro banco | [`global-db.ts`](../../tests/setup/global-db.ts) |
 
 ## O que não existe
