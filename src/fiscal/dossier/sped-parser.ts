@@ -22,6 +22,22 @@
  * versões os campos mudam de posição, e adivinhar trocaria base por valor.
  */
 
+import {
+  MAX_LINHAS_SPED,
+  type RejectedRecord,
+  SpedFormatError,
+  centavos,
+  competencia,
+  data,
+  digitos,
+  inteiro,
+  numero,
+  separar,
+  texto,
+} from '../shared/sped-campos.js';
+
+export { MAX_LINHAS_SPED, SpedFormatError, type RejectedRecord };
+
 /** Versões de layout cujas posições este parser conhece. */
 export const VERSOES_SUPORTADAS = new Set(['005', '006']);
 
@@ -101,21 +117,6 @@ export interface SpedResult {
   counts: Record<string, number>;
 }
 
-export interface RejectedRecord {
-  line: number;
-  record: string;
-  reason: string;
-}
-
-export class SpedFormatError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SpedFormatError';
-  }
-}
-
-/** Linhas por arquivo. Uma EFD de um CNPJ não passa disso. */
-export const MAX_LINHAS_SPED = 2_000_000;
 
 export function parseSped(conteudo: string): SpedResult {
   const linhas = conteudo.split(/\r?\n/);
@@ -200,24 +201,6 @@ export function parseSped(conteudo: string): SpedResult {
   }
 
   return { header, documents, apuredCredits, carriedCredits, rejected, counts };
-}
-
-/**
- * Linha do SPED: `|REG|campo|campo|`.
- *
- * O `split` produz vazio na primeira posição, então `REG` — que é o campo 1 do
- * layout — fica em `campos[1]`, e **o campo N do layout fica em `campos[N]`**.
- *
- * Vale escrever isto porque errar aqui por um é silencioso: a primeira versão
- * deste parser lia tudo em `N + 1`, e o teste, escrito depois, codificou o mesmo
- * deslocamento e passou. Só conferir contra o layout pegou.
- */
-function separar(linha: string): string[] | undefined {
-  const limpa = linha.trim();
-  if (limpa.length === 0 || !limpa.startsWith('|')) {
-    return undefined;
-  }
-  return limpa.split('|');
 }
 
 function lerAbertura(campos: readonly string[]): SpedHeader {
@@ -323,102 +306,4 @@ function lerSaldoCredor(
     refundedCents: centavos(campos[15], 'VL_CRED_DCOMP_EFD'),
     finalBalanceCents: centavos(campos[18], 'SLD_CRED_FIM'),
   };
-}
-
-// ----------------------------------------------------------------- campos
-
-function texto(bruto: string | undefined): string {
-  return (bruto ?? '').trim();
-}
-
-/**
- * Valor monetário, pela string.
- *
- * O SPED usa vírgula decimal e não separador de milhar. Converter por
- * `Number(x) * 100` erraria centavo em valor grande, e num dossiê de crédito
- * cada centavo errado é uma divergência falsa contra a própria escrituração do
- * cliente.
- */
-function centavos(bruto: string | undefined, campo: string): number {
-  const limpo = texto(bruto);
-  if (limpo.length === 0) {
-    return 0;
-  }
-
-  if (!/^-?\d+(,\d{1,2})?$/.test(limpo)) {
-    throw new Error(`Campo ${campo} não é valor SPED válido: '${limpo}'.`);
-  }
-
-  const negativo = limpo.startsWith('-');
-  const [inteiroParte = '0', decimal = ''] = limpo.replace('-', '').split(',');
-  const total = Number(inteiroParte) * 100 + Number(decimal.padEnd(2, '0'));
-
-  if (!Number.isSafeInteger(total)) {
-    throw new Error(`Campo ${campo} fora da faixa representável: '${limpo}'.`);
-  }
-
-  return negativo ? -total : total;
-}
-
-function numero(bruto: string | undefined, campo: string): number {
-  const limpo = texto(bruto);
-  if (limpo.length === 0) {
-    return 0;
-  }
-
-  const valor = Number(limpo.replace(',', '.'));
-  if (!Number.isFinite(valor)) {
-    throw new Error(`Campo ${campo} não é numérico: '${limpo}'.`);
-  }
-  return valor;
-}
-
-function inteiro(bruto: string | undefined, campo: string): number {
-  const valor = Number.parseInt(texto(bruto), 10);
-  if (!Number.isInteger(valor)) {
-    throw new Error(`Campo ${campo} não é inteiro: '${texto(bruto)}'.`);
-  }
-  return valor;
-}
-
-/** `DDMMAAAA`, que é o formato de data do SPED. */
-function data(bruto: string | undefined, campo: string): string {
-  const limpo = texto(bruto);
-  const achado = /^(\d{2})(\d{2})(\d{4})$/.exec(limpo);
-
-  if (!achado) {
-    throw new Error(`Campo ${campo} não é data SPED (DDMMAAAA): '${limpo}'.`);
-  }
-
-  const [, dia, mes, ano] = achado as unknown as [string, string, string, string];
-  if (Number(mes) < 1 || Number(mes) > 12 || Number(dia) < 1 || Number(dia) > 31) {
-    throw new Error(`Campo ${campo} tem data inválida: '${limpo}'.`);
-  }
-
-  return `${ano}-${mes}-${dia}`;
-}
-
-/** `MMAAAA`, que é o formato de competência do SPED. */
-function competencia(bruto: string | undefined, campo: string): string {
-  const limpo = texto(bruto);
-  const achado = /^(\d{2})(\d{4})$/.exec(limpo);
-
-  if (!achado) {
-    throw new Error(`Campo ${campo} não é competência SPED (MMAAAA): '${limpo}'.`);
-  }
-
-  const [, mes, ano] = achado as unknown as [string, string, string];
-  if (Number(mes) < 1 || Number(mes) > 12) {
-    throw new Error(`Campo ${campo} tem mês inválido: '${limpo}'.`);
-  }
-
-  return `${ano}-${mes}`;
-}
-
-function digitos(bruto: string | undefined, quantos: number, campo: string): string {
-  const so = texto(bruto).replace(/\D/g, '');
-  if (so.length !== quantos) {
-    throw new Error(`Campo ${campo} com ${so.length} dígitos; esperado ${quantos}.`);
-  }
-  return so;
 }
