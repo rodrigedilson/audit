@@ -100,6 +100,8 @@ Cada chamada à SEFAZ emite `certificate.used` (`dfe_distribution` ou
 `manifestation`, com o resultado), em nome de **quem pediu** a sincronização.
 `jobs.requested_by` guarda quem foi. O log de uso do A1 é onde mais importa
 saber quem agiu.
+A coleta agendada, por opt-in do owner, não tem quem pediu: sai em nome do
+orquestrador, com quem ligou a opção no payload ([ADR-007](ADR-007-uso-nao-assistido-do-certificado.md)).
 
 ### 5. Assinatura XMLDSig sem biblioteca
 

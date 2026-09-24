@@ -48,9 +48,13 @@ const TITULOS: Record<string, string> = {
   '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
   '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
   '20260926100000_cancelamento_de_nfe.sql': 'cancelamento-de-nfe',
+  '20260926140000_coleta_agendada.sql': 'coleta-agendada',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260926140000_coleta_agendada.sql':
+    'Coleta de DF-e agendada por opt-in do owner (ADR-007): quem ligou e quando\n' +
+    '-- ficam no cadastro, e o job do agendador é marcado como tal.',
   '20260926100000_cancelamento_de_nfe.sql':
     'Cancelamento de NF-e pela distribuição: a nota cancelada fica marcada e\n' +
     '-- sai das somas, e todo evento trazido pela SEFAZ é guardado, inclusive o\n' +
