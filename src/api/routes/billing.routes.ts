@@ -3,11 +3,15 @@ import type { ApiDeps } from '../server.js';
 import { BillingService } from '../../billing/billing.service.js';
 import { BillingActivationService } from '../../billing/billing-activation.service.js';
 import type { BillingType } from '../../billing/asaas-client.js';
-import { quote, formatBRL, serializeQuote, type BillableClient } from '../../billing/pricing.js';
+import { quoteFromCounts, formatBRL, serializeQuote } from '../../billing/pricing.js';
 import { REGIMES, type Regime } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
+import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 
 const PERIOD_PATTERN = '^[0-9]{4}-(0[1-9]|1[0-2])$';
+
+/** Teto da simulação pública. Cobre a maior carteira plausível com folga. */
+const MAX_CNPJS_SIMULADOS = 20000;
 
 interface ActivationBody {
   document: string;
@@ -40,6 +44,14 @@ export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps)
     return reply.code(200).send({
       minimum_cents: rules.minimumCents,
       minimum_formatted: formatBRL(rules.minimumCents),
+      // A escada também é pública: esconder o desconto de volume atrás de
+      // "fale com um consultor" seria a mesma opacidade que esconder o preço.
+      cap_cents: rules.capCents ?? null,
+      tiers: (rules.tiers ?? []).map((tier) => ({
+        from_clients: tier.fromClients,
+        discount_bps: tier.discountBps,
+        label: tier.label ?? null,
+      })),
       plans: rules.prices.map((price) => ({
         regime: price.regime,
         monthly_cents: price.monthlyCents,
@@ -71,9 +83,14 @@ export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps)
                 required: ['regime', 'quantity'],
                 properties: {
                   regime: { type: 'string', enum: [...REGIMES] },
-                  // 2000 cobre o público-alvo (20 a 300 CNPJs) com folga e evita
-                  // a rota ser usada para gerar carga.
-                  quantity: { type: 'integer', minimum: 0, maximum: 2000 },
+                  /**
+                   * 10.000 por regime, e a soma é conferida no handler (o schema
+                   * não soma). O custo do cálculo passou a ser O(regimes × faixas)
+                   * em vez de O(quantidade) — antes a rota materializava um objeto
+                   * por CNPJ só para contá-los de volta —, então o teto existe
+                   * para limitar o absurdo, não para conter carga.
+                   */
+                  quantity: { type: 'integer', minimum: 0, maximum: 10000 },
                 },
               },
             },
@@ -82,16 +99,22 @@ export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps)
       },
     },
     async (request, reply) => {
+      const total = request.body.clients.reduce((soma, entry) => soma + entry.quantity, 0);
+      if (total > MAX_CNPJS_SIMULADOS) {
+        throw new ValidationError(
+          1,
+          'schema_violation',
+          `A calculadora simula no máximo ${MAX_CNPJS_SIMULADOS} CNPJs por vez.`,
+        );
+      }
+
+      // Sem escritório: a calculadora pública usa o teto global de propósito.
       const rules = await billing.pricingRules();
 
-      const clients: BillableClient[] = request.body.clients.flatMap((entry) =>
-        Array.from({ length: entry.quantity }, (_, index) => ({
-          cnpj: `simulado-${entry.regime}-${index}`,
-          regime: entry.regime,
-        })),
+      const result = quoteFromCounts(
+        request.body.clients.map((entry) => ({ regime: entry.regime, quantity: entry.quantity })),
+        rules,
       );
-
-      const result = quote(clients, rules);
 
       return reply.code(200).send({
         ...serializeQuote(result),
