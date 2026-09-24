@@ -1,4 +1,5 @@
 import { ValueObject } from '../../../shared/domain/value-object.js';
+import { TAMANHO_DO_CNPJ, normalizarCnpj } from '../../../shared/domain/cnpj.js';
 
 interface EventScopeProps {
   tenantId: string;
@@ -22,10 +23,11 @@ export class EventScope extends ValueObject<EventScopeProps> {
       throw new Error('EventScope: tenant_id não pode ser vazio');
     }
 
-    const normalizedCnpj = onlyDigits(cnpj ?? '');
-    if (normalizedCnpj.length !== 14) {
+    const normalizedCnpj = normalizarCnpj(cnpj ?? '');
+    if (!FORMATO_DO_CNPJ.test(normalizedCnpj)) {
       throw new Error(
-        `EventScope: cnpj deve ter 14 dígitos sem máscara, recebido '${String(cnpj)}'`,
+        `EventScope: cnpj deve ter ${TAMANHO_DO_CNPJ} posições — 12 alfanuméricas e ` +
+          `2 dígitos verificadores numéricos. Recebido '${String(cnpj)}'`,
       );
     }
 
@@ -54,10 +56,15 @@ export class EventScope extends ValueObject<EventScopeProps> {
 }
 
 /**
- * O contrato exige CNPJ com 14 dígitos sem máscara, mas aceitar a máscara aqui e
- * normalizar evita que um `12.345.678/0001-95` colado da tela vire um escopo
- * distinto do mesmo CNPJ — o que fragmentaria o log de um cliente em dois.
+ * Formato, e **não** dígito verificador.
+ *
+ * O DV é conferido na fronteira, quando o CNPJ entra no sistema — cadastro de
+ * cliente, importação de escrituração. Aqui não: o `EventScope` também é
+ * construído ao **ler** o log, e um CNPJ que entrou torto algum dia ficaria
+ * ilegível para sempre. Seria transformar um problema de qualidade de dado em
+ * indisponibilidade, e o log é append-only: não há como corrigir o passado.
+ *
+ * Desde 31/07/2026 as 12 primeiras posições podem ter letras (CNPJ
+ * alfanumérico); as duas últimas seguem numéricas.
  */
-function onlyDigits(value: string): string {
-  return value.replace(/\D/g, '');
-}
+const FORMATO_DO_CNPJ = /^[0-9A-Z]{12}[0-9]{2}$/;

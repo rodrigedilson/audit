@@ -3,6 +3,7 @@ import type { ApiDeps } from '../server.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { IngestionService, type UploadedFile } from '../../fiscal/ingestion/ingestion.service.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 interface CnpjParams {
   cnpj: string;
@@ -27,7 +28,7 @@ export async function registerIngestionRoutes(
         params: {
           type: 'object',
           required: ['cnpj'],
-          properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+          properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
         },
       },
     },
@@ -65,7 +66,7 @@ export async function registerIngestionRoutes(
         params: {
           type: 'object',
           required: ['cnpj'],
-          properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+          properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
         },
         querystring: {
           type: 'object',
@@ -130,7 +131,7 @@ export async function registerIngestionRoutes(
           type: 'object',
           required: ['cnpj', 'access_key'],
           properties: {
-            cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+            cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
             access_key: { type: 'string', pattern: '^[0-9]{44}$' },
           },
         },
@@ -228,7 +229,7 @@ export async function registerIngestionRoutes(
           params: {
             type: 'object',
             required: ['cnpj'],
-            properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+            properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
           },
         },
       },

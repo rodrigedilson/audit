@@ -30,6 +30,7 @@ import {
   competencia,
   data,
   digitos,
+  inscricao,
   inteiro,
   numero,
   separar,
@@ -216,7 +217,7 @@ function lerAbertura(campos: readonly string[]): SpedHeader {
 
   const tipo = texto(campos[3]);
   const inicio = data(campos[6], 'DT_INI');
-  const cnpj = digitos(campos[9], 14, 'CNPJ');
+  const cnpj = inscricao(campos[9], 'CNPJ');
 
   return {
     layoutVersion: versao,

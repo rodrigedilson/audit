@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import FormData from 'form-data';
 import { buildServer } from '../../src/api/server.js';
 import { loadEnv } from '../../src/config/env.js';
-import { createClient, createMembership, createTenant, randomCnpj } from '../helpers/db.js';
+import { createClient, createMembership, createTenant, randomCnpj, randomCnpjAlfanumerico } from '../helpers/db.js';
 
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 const JWT_SECRET = 'segredo-de-teste-que-nao-vai-para-producao';
@@ -99,6 +99,56 @@ describe.skipIf(!DATABASE_URL)('API — carteira e cofre de certificados', () =>
       trade_name: 'Padaria do Bairro',
       regime: 'simples_hibrido',
       uf: 'SP',
+    });
+
+    /**
+     * CNPJ alfanumérico, emitido pela Receita desde 31/07/2026 para inscrições
+     * novas. Enquanto o sistema filtrava o campo para dígitos, o escritório não
+     * conseguia cadastrar nenhuma empresa aberta de agosto em diante — e é
+     * justamente a empresa nova que ele acabou de captar.
+     */
+    it('cadastra empresa com CNPJ alfanumérico', async () => {
+      const alfanumerico = randomCnpjAlfanumerico();
+
+      const response = await call('POST', '/v1/clients', owner, {
+        ...body(),
+        cnpj: alfanumerico,
+      });
+
+      expect(response.statusCode).toBe(201);
+
+      // O CNPJ é metade da chave do event log; se tivesse sido truncado ou
+      // filtrado, o escopo do evento não seria o do cliente cadastrado.
+      const events = (await call('GET', `/v1/clients/${alfanumerico}/events`, owner)).json();
+      expect(events).toHaveLength(1);
+      expect(events[0].action).toBe('client.enrolled');
+    });
+
+    /**
+     * O contrapeso da ampliação: com letras admitidas, `RAZAOSOCIALLT` casa com
+     * o padrão da rota. É o dígito verificador que impede um pedaço de texto de
+     * abrir um event log e entrar na fatura do escritório.
+     */
+    it('recusa texto de 14 posições que só parece CNPJ', async () => {
+      const response = await call('POST', '/v1/clients', owner, {
+        ...body(),
+        cnpj: 'RAZAOSOCIALLT',
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('recusa CNPJ com dígito verificador errado', async () => {
+      const valido = randomCnpj();
+      const trocado = valido.slice(0, 13) + ((Number(valido[13]) + 1) % 10);
+
+      const response = await call('POST', '/v1/clients', owner, {
+        ...body(),
+        cnpj: trocado,
+      });
+
+      expect(response.statusCode).toBe(422);
+      expect(JSON.stringify(response.json())).toMatch(/dígitos verificadores/);
     });
 
     it('cadastra e devolve event_seq e projection_hash', async () => {

@@ -41,6 +41,7 @@ import {
   SpedFormatError,
   centavos,
   data,
+  inscricao,
   inteiro,
   numero,
   separar,
@@ -292,7 +293,7 @@ function lerAbertura(campos: readonly string[]): EfdIcmsHeader {
 
   return {
     layoutVersion: versao,
-    cnpj: inscricao(campos[7]),
+    cnpj: inscricao(campos[7], 'CNPJ'),
     uf: sigla(campos[9]),
     stateRegistration: texto(campos[10]),
     period: inicio.slice(0, 7),
@@ -411,26 +412,6 @@ function lerApuracaoIpi(campos: readonly string[]): EfdIpiAssessment {
 }
 
 // ----------------------------------------------------------------- campos
-
-/**
- * CNPJ da escrituração, 14 posições.
- *
- * Não filtra para dígitos. A partir do leiaute 020 o campo passou de numérico
- * para caractere, porque o CNPJ alfanumérico usa letras nas 12 primeiras
- * posições; jogar fora o que não é dígito devolveria um CNPJ curto e errado.
- */
-function inscricao(bruto: string | undefined): string {
-  const limpo = texto(bruto).toUpperCase().replace(/[^0-9A-Z]/g, '');
-
-  if (limpo.length !== 14) {
-    throw new SpedFormatError(
-      `Campo CNPJ do registro 0000 com ${limpo.length} posições; esperado 14. ` +
-        'Sem CNPJ íntegro não se sabe de quem é a escrituração.',
-    );
-  }
-
-  return limpo;
-}
 
 function sigla(bruto: string | undefined): string {
   const limpo = texto(bruto).toUpperCase();

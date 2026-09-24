@@ -14,13 +14,14 @@ import {
   regimeComparavel,
 } from '../../fiscal/simulation/regime-simulation.js';
 import type { Regime } from '../../fiscal/shared/fiscal-vocabulary.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const PERIOD = '^[0-9]{4}-(0[1-9]|1[0-2])$';
 
 const CNPJ_SCHEMA = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 interface CnpjParams {

@@ -8,20 +8,21 @@ import {
   SpedNotUsableError,
 } from '../../fiscal/dossier/dossier.service.js';
 import { SpedFormatError } from '../../fiscal/dossier/sped-parser.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const PERIOD = '^[0-9]{4}-(0[1-9]|1[0-2])$';
 
 const CNPJ_SCHEMA = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 const SCOPE_PARAMS = {
   type: 'object',
   required: ['cnpj', 'period'],
   properties: {
-    cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+    cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
     period: { type: 'string', pattern: PERIOD },
   },
 } as const;

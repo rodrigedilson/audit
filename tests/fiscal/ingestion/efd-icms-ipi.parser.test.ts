@@ -182,7 +182,7 @@ describe('parseEfdIcmsIpi — abertura', () => {
 
   it('recusa CNPJ com menos de 14 posições em vez de completar', () => {
     expect(() => parseEfdIcmsIpi(abertura('020', '1234567800019'))).toThrow(
-      /13 posições/,
+      /esperado 14 posições/,
     );
   });
 
