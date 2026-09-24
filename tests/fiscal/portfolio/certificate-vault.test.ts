@@ -161,6 +161,27 @@ describe('CertificateVault — rotação', () => {
     expect(ANTIGA).not.toContain(umCofre.keyId);
   });
 
+  /**
+   * Espaço nas pontas não pode mudar a chave derivada.
+   *
+   * O hash era do valor cru, então a mesma chave vinda de um
+   * `openssl rand | pipe` — que acrescenta `\n` — derivava outra chave. O
+   * sintoma seria "chave mestra incorreta" sobre um acervo cifrado com a chave
+   * certa, e não há recuperação disso.
+   */
+  it('a chave com espaço nas pontas é a mesma chave', () => {
+    const pfx = Buffer.from('pfx-qualquer');
+    const cifrado = new CertificateVault(NOVA).encrypt(pfx);
+
+    expect(new CertificateVault(`${NOVA}\n`).decrypt(cifrado.ciphertext).equals(pfx)).toBe(true);
+    expect(new CertificateVault(`  ${NOVA}  `).keyId).toBe(new CertificateVault(NOVA).keyId);
+  });
+
+  /** E por isso `previous` igual à atual é detectado mesmo com espaço sobrando. */
+  it('detecta a anterior igual à atual mesmo com espaço sobrando', () => {
+    expect(() => new CertificateVault(NOVA, `${NOVA}\n`)).toThrow(/igual à atual/);
+  });
+
   /** Variável esquecida no ambiente é erro, não configuração silenciosa. */
   it('recusa a anterior igual à atual', () => {
     expect(() => new CertificateVault(NOVA, NOVA)).toThrow(/igual à atual/);

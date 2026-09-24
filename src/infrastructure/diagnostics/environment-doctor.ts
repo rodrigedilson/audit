@@ -140,6 +140,30 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   dfe_documents: '19-coleta-dfe.sql',
 };
 
+/**
+ * Isola uma checagem.
+ *
+ * O doutor existe para diagnosticar ambiente quebrado, e uma checagem que lança
+ * derrubava o diagnóstico inteiro — foi o que aconteceu contra produção, onde
+ * uma migration não aplicada deixou a coluna `key_id` ausente e a exceção matou
+ * as outras onze checagens. Um diagnóstico que morre na primeira surpresa não
+ * diagnostica nada.
+ */
+async function isolar(nome: string, checagem: () => Promise<Checagem>): Promise<Checagem> {
+  try {
+    return await checagem();
+  } catch (erro) {
+    return {
+      nome,
+      estado: 'falha',
+      detalhe: erro instanceof Error ? erro.message : String(erro),
+      acao:
+        'A checagem quebrou. Em geral é migration não aplicada ou permissão —\n' +
+        '  compare a lista de tabelas acima com supabase/migrations/.',
+    };
+  }
+}
+
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
   const checagens: Checagem[] = [];
 
@@ -206,17 +230,29 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
       return { checagens, ok: false };
     }
 
-    checagens.push(await checarCargaInicial(pool));
-    checagens.push(await checarTrilhas(pool));
-    checagens.push(await checarVisibilidadePublica(pool));
-    checagens.push(await checarTabelasOficiais(pool));
-    checagens.push(await checarCofreDeCertificados(pool, env));
-    checagens.push(await checarRegrasPublicadas(pool));
-    checagens.push(await checarPrazosNormativos(pool));
-    checagens.push(await checarCotaDoAssistente(pool));
-    checagens.push(await checarCnpjAlfanumerico(pool));
-    checagens.push(await checarCobranca(pool, env));
-    checagens.push(await checarEscritorio(pool));
+    checagens.push(await isolar('carga inicial', () => checarCargaInicial(pool)));
+    checagens.push(await isolar('trilhas de auditoria', () => checarTrilhas(pool)));
+    checagens.push(
+      await isolar('visibilidade das tabelas públicas', () =>
+        checarVisibilidadePublica(pool),
+      ),
+    );
+    checagens.push(
+      await isolar('tabelas oficiais de códigos', () => checarTabelasOficiais(pool)),
+    );
+    checagens.push(
+      await isolar('cofre de certificados A1', () => checarCofreDeCertificados(pool, env)),
+    );
+    checagens.push(
+      await isolar('regras de creditamento', () => checarRegrasPublicadas(pool)),
+    );
+    checagens.push(await isolar('prazos normativos', () => checarPrazosNormativos(pool)));
+    checagens.push(await isolar('cota do assistente', () => checarCotaDoAssistente(pool)));
+    checagens.push(
+      await isolar('CNPJ alfanumérico', () => checarCnpjAlfanumerico(pool)),
+    );
+    checagens.push(await isolar('cobrança (Asaas)', () => checarCobranca(pool, env)));
+    checagens.push(await isolar('escritório e usuário', () => checarEscritorio(pool)));
   } finally {
     await pool.end().catch(() => undefined);
   }
@@ -693,6 +729,36 @@ async function checarTabelasOficiais(pool: pg.Pool): Promise<Checagem> {
  * DF-e falha.
  */
 async function checarCofreDeCertificados(pool: pg.Pool, env: Env): Promise<Checagem> {
+  /**
+   * `key_id` vem de uma migration própria, e o doutor roda contra banco que
+   * pode não tê-la aplicado — foi o caso em produção. Sem esta checagem, a
+   * consulta lançava `column "key_id" does not exist` e a ausência de uma
+   * migration aparecia como quebra do diagnóstico em vez de achado.
+   */
+  const { rows: coluna } = await pool.query<{ existe: boolean }>(
+    `select exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = 'certificates'
+          and column_name = 'key_id'
+     ) as existe`,
+  );
+
+  if (coluna[0]?.existe !== true) {
+    const { rows: quantos } = await pool.query<{ n: string }>(
+      'select count(*)::text as n from certificates',
+    );
+
+    return {
+      nome: 'cofre de certificados A1',
+      estado: 'aviso',
+      detalhe: `${quantos[0]?.n ?? 0} certificado(s), e a coluna key_id não existe`,
+      acao:
+        'Aplique a migration do key_id (passo 14 do SUPABASE.md). Sem ela não há\n' +
+        '  como saber qual chave mestra cifrou cada certificado, e a rotação da\n' +
+        '  chave deixa de ser conferível.',
+    };
+  }
+
   const { rows } = await pool.query<{ key_id: string | null; n: string }>(
     'select key_id, count(*)::text as n from certificates group by key_id',
   );
