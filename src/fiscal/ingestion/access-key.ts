@@ -41,7 +41,15 @@ export class AccessKeyError extends Error {
  * define. Quem lê a chave de um arquivo sobe a caixa antes de chegar aqui:
  * minúscula mudaria o valor ASCII e o dígito verificador não fecharia.
  */
-const CHAVE_44 = /^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$/;
+export const PADRAO_DA_CHAVE = '^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$';
+
+const CHAVE_44 = new RegExp(PADRAO_DA_CHAVE);
+
+/**
+ * Chave dentro de um texto (mensagem de erro, pergunta), sem colar em outra
+ * sequência alfanumérica dos lados.
+ */
+export const CHAVE_EM_TEXTO = /(?<![0-9A-Z])([0-9]{6}[0-9A-Z]{12}[0-9]{26})(?![0-9A-Z])/;
 
 /**
  * Dígito verificador por módulo 11 com pesos cíclicos de 2 a 9, da direita para
