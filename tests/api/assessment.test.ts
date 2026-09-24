@@ -149,6 +149,20 @@ describe.skipIf(!DATABASE_URL)('API — apuração dual', () => {
       expect(r.json().totals.icms.potentialCreditsCents).toBe(18_000);
     });
 
+    /** A coleta marca a nota cancelada na SEFAZ; ela fica na base e sai da soma. */
+    it('nota cancelada não entra na apuração', async () => {
+      await subir([nfeXml(cnpj, fornecedor, '000000015', true), nfeXml(cnpj, fornecedor, '000000017', true)]);
+      await pool.query(
+        `update documents set cancelled_at = now()
+          where tenant_id = $1::uuid and cnpj = $2::char(14) and substring(access_key, 26, 9) = '000000017'`,
+        [tenantId, cnpj],
+      );
+
+      const r = await apurar();
+
+      expect(r.json().totals.icms.debitsCents).toBe(18_000);
+    });
+
     /**
      * A decisão central da onda: sem regra de creditamento publicada, o devido
      * não é calculado. Um número fiscal errado é pior do que um ausente.

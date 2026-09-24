@@ -121,6 +121,12 @@ export interface FiscalStats {
   periods_reconciled: number;
   periods_confirmed: number;
   documents_received: number;
+  /**
+   * Opcional de propósito: um campo novo e fixo mudaria o hash de toda projeção
+   * já calculada, inclusive o das competências confirmadas. Só aparece depois do
+   * primeiro `doc.cancelled`.
+   */
+  documents_cancelled?: number;
   items_classified: number;
   credits_by_state: Record<CreditState, number>;
   open_issues: number;

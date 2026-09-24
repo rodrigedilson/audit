@@ -7,6 +7,8 @@ import type { Env } from '../config/env.js';
 import { JwtVerifier } from './auth/jwt-verifier.js';
 import { TenantResolver, type TenantContext } from './auth/tenant-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
+import { registerPlanGate } from './plugins/plan-gate.js';
+import { PlanFeatures } from '../billing/plan-features.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerPortfolioRoutes } from './routes/portfolio.routes.js';
 import { registerEventRoutes } from './routes/events.routes.js';
@@ -61,6 +63,8 @@ export interface ApiDeps {
    * homologação gravaria notas de teste na base real (ADR-006).
    */
   dfe?: DfeSyncService;
+  /** O que o plano de cada regime inclui (`plans.features`). */
+  planFeatures: PlanFeatures;
 }
 
 declare module 'fastify' {
@@ -150,6 +154,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     pool,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
+    planFeatures: new PlanFeatures(pool),
     ...(options.asaas !== undefined
       ? { asaas: options.asaas }
       : env.asaas === undefined
@@ -257,6 +262,9 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     const user = await deps.jwtVerifier.verify(request.headers.authorization);
     request.tenant = await deps.tenantResolver.resolve(user);
   });
+
+  // Depois da autenticação e da validação: recusa o que o plano do CNPJ não inclui.
+  registerPlanGate(app, deps.pool, deps.planFeatures);
 
   await app.register(
     async (instance) => {

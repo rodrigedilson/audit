@@ -205,11 +205,13 @@ export const verificarLancamento: Verifier = (subject, ctx) => {
 /**
  * Autorização competente.
  *
- * Parcial por honestidade: o protocolo da SEFAZ é conferível, e o cancelamento
- * posterior **não é**, porque a ingestão ainda não coleta o evento de
- * cancelamento. Enquanto `cancelled` vier `null`, a verificação sai
+ * O cancelamento é trazido pela distribuição da SEFAZ, e a verificação reprova
+ * de fato quando a nota foi cancelada. A **denegação** é situação distinta e
+ * continua não coletada: enquanto `denied` vier `null`, a verificação sai
  * `not_verified` mesmo com protocolo presente — dizer `pass` afirmaria que o
- * documento não foi cancelado, que é justamente o que não se sabe.
+ * documento não foi denegado, que é o que não se sabe.
+ *
+ * A regra geral do módulo vale aqui: só se afirma o que a fonte sustenta.
  */
 export const verificarAutorizacao: Verifier = (subject, ctx) => {
   const v: Verification = 'v4_autorizacao_competente';

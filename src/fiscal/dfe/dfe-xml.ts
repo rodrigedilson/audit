@@ -168,6 +168,59 @@ export function lerResumoNfe(xml: string): ResumoNfe {
   };
 }
 
+/**
+ * Cancelamento (110111) e cancelamento por substituição (110112). Nos dois, a
+ * operação da nota deixa de existir para efeito fiscal.
+ */
+export const TP_CANCELAMENTO: readonly string[] = ['110111', '110112'];
+
+/** Evento de NF-e trazido pela distribuição (`procEventoNFe` ou `resEvento`). */
+export interface EventoNfe {
+  accessKey: string;
+  tpEvento: string;
+  nSeqEvento: number;
+  /** cStat do registro. Nulo no `resEvento`, que só resume evento já registrado. */
+  cStat: string | null;
+  /** Protocolo do evento, e não o da autorização da nota. */
+  protocolo: string | null;
+  dhEvento: string | null;
+}
+
+export function lerEventoNfe(xml: string): EventoNfe {
+  const raiz = parser.parse(xml);
+  const proc = achar(raiz, 'procEventoNFe');
+  const inf = proc === undefined ? achar(raiz, 'resEvento') : achar(proc['evento'], 'infEvento');
+  const ret =
+    proc === undefined
+      ? undefined
+      : achar(((proc['retEvento'] as unknown[] | undefined) ?? [])[0], 'infEvento');
+
+  const chave = texto(inf?.['chNFe']);
+  const tipo = texto(inf?.['tpEvento']);
+  if (inf === undefined || !/^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$/.test(chave) || !/^[0-9]{6}$/.test(tipo)) {
+    throw new RespostaSefazInvalidaError('Evento de NF-e sem chave de acesso ou tipo válido.');
+  }
+  const seq = Number(texto(inf['nSeqEvento']) || '1');
+
+  return {
+    accessKey: chave,
+    tpEvento: tipo,
+    nSeqEvento: Number.isInteger(seq) && seq > 0 ? seq : 1,
+    cStat: proc === undefined ? null : texto(ret?.['cStat']) || null,
+    protocolo: texto((proc === undefined ? inf : ret)?.['nProt']) || null,
+    dhEvento: texto(inf['dhEvento']) || null,
+  };
+}
+
+/**
+ * Evento que vale contra a nota: 135 registrado e vinculado, 155 cancelamento
+ * homologado fora de prazo. O 136 é registrado sem vínculo à NF-e, e não
+ * cancela nada. O `resEvento` só existe para evento registrado.
+ */
+export function eventoVinculado(e: EventoNfe): boolean {
+  return e.cStat === null || e.cStat === '135' || e.cStat === '155';
+}
+
 // --------------------------------------------------------------------- evento
 
 /** Ciência da operação: o evento que libera o XML completo ao destinatário. */

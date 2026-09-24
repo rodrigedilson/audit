@@ -279,7 +279,11 @@ describe.skipIf(!DATABASE_URL)('API — trilhas de auditoria e Book de fechament
       });
 
       expect(r.statusCode).toBe(403);
-      expect(r.json().message).toMatch(/Lucro Presumido/);
+      expect(r.json()).toMatchObject({
+        code: 'feature_not_in_plan',
+        feature: 'white_label',
+        plans_with_feature: ['lucro_presumido', 'lucro_real'],
+      });
     });
 
     it('gera com white label quando o regime do CNPJ o inclui', async () => {

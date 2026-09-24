@@ -92,8 +92,11 @@ export class AuditService {
       issued_at: Date;
       period: string;
       total_cents: string;
+      cancelled_at: Date | null;
+      cancel_protocol: string | null;
     }>(
-      `select access_key, issuer_cnpj, counterparty_cnpj, issued_at, period, total_cents
+      `select access_key, issuer_cnpj, counterparty_cnpj, issued_at, period,
+              total_cents, cancelled_at, cancel_protocol
          from documents
         where tenant_id = $1::uuid and cnpj = $2::char(14)
           and period = $3::char(7) and direction = 'inbound'
@@ -109,9 +112,17 @@ export class AuditService {
       recipientCnpj: r.counterparty_cnpj ?? scope.cnpj,
       issuedAt: r.issued_at.toISOString().slice(0, 10),
       documentPeriod: r.period,
-      // Não coletados pela ingestão de hoje. Ver ADR-006.
-      authorizationProtocol: null,
-      cancelled: null,
+      /**
+       * O cancelamento passou a ser coletado pela distribuição da SEFAZ, então
+       * a verificação 4 deixa de dizer "não sei" sobre ele: `cancelled` é
+       * `true` ou `false`, e não `null`.
+       *
+       * A denegação continua `null` — é situação distinta do cancelamento e a
+       * coleta não a traz. Preencher `false` afirmaria que o documento não foi
+       * denegado, que é o que não se sabe.
+       */
+      authorizationProtocol: r.cancel_protocol,
+      cancelled: r.cancelled_at !== null,
       denied: null,
       appropriatedPeriod: r.period,
       classification: null,

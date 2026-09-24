@@ -422,6 +422,7 @@ export class DossierService {
          join document_items i
            on i.tenant_id = d.tenant_id and i.cnpj = d.cnpj and i.access_key = d.access_key
         where d.tenant_id = $1::uuid and d.cnpj = $2::char(14) and d.direction = 'inbound'
+          and d.cancelled_at is null
         group by d.access_key, d.period`,
       [scope.tenantId, scope.cnpj],
     );

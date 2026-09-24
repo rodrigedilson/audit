@@ -49,9 +49,14 @@ const TITULOS: Record<string, string> = {
   '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
   '20260925130000_remove_projection_snapshots.sql': 'remove-projection-snapshots',
   '20260925140000_auditoria_continua.sql': 'auditoria-continua',
+  '20260926100000_cancelamento_de_nfe.sql': 'cancelamento-de-nfe',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260926100000_cancelamento_de_nfe.sql':
+    'Cancelamento de NF-e pela distribuição: a nota cancelada fica marcada e\n' +
+    '-- sai das somas, e todo evento trazido pela SEFAZ é guardado, inclusive o\n' +
+    '-- que não pode ser aplicado por a competência já estar confirmada.',
   '20260925140000_auditoria_continua.sql':
     'Teste de comprovacao e inspecao documentaria: criterios de avaliacao,\n' +
     '-- execucoes por censo, achados com risco por probabilidade x impacto e\n' +

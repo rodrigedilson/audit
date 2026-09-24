@@ -36,6 +36,8 @@ export const ORCHESTRATOR_ACTIONS = [
   // ingestion/ — Onda 4
   'doc.received',
   'doc.manifested',
+  // Cancelamento homologado pela SEFAZ (110111), trazido pela distribuição.
+  'doc.cancelled',
   'sped.imported',
   'bank.statement.imported',
 

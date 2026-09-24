@@ -55,6 +55,10 @@ const TABELAS = [
   'assessment_adjustments',
   'audit_trails',
   'books',
+  'evaluation_criteria',
+  'audit_executions',
+  'audit_findings',
+  'audit_reversals',
   'fisco_assessments',
   'fisco_assessment_lines',
   'assessment_divergences',
@@ -74,6 +78,7 @@ const TABELAS = [
   'dfe_sync_state',
   'dfe_summaries',
   'dfe_documents',
+  'dfe_events',
   'pricing_tiers',
   'readiness_reports',
   'plan_features',
@@ -140,9 +145,14 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   dfe_sync_state: '19-coleta-dfe.sql',
   dfe_summaries: '19-coleta-dfe.sql',
   dfe_documents: '19-coleta-dfe.sql',
+  dfe_events: '29-cancelamento-de-nfe.sql',
   pricing_tiers: '22-faixas-de-volume.sql',
   readiness_reports: '23-diagnostico-publico.sql',
   plan_features: '25-rotulos-e-lead.sql',
+  evaluation_criteria: '28-auditoria-continua.sql',
+  audit_executions: '28-auditoria-continua.sql',
+  audit_findings: '28-auditoria-continua.sql',
+  audit_reversals: '28-auditoria-continua.sql',
 };
 
 /**

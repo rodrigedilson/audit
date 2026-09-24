@@ -59,8 +59,9 @@ export const TRILHAS_INICIAIS: readonly AuditProcedure[] = [
     procedureId: 'credito-sobre-documento-cancelado',
     name: 'Crédito sobre documento cancelado ou denegado',
     description:
-      'Depende da consulta de situação na SEFAZ. Enquanto a ingestão não coletar ' +
-      'o evento de cancelamento, a verificação sai não verificada em vez de passar.',
+      'O cancelamento é trazido pela distribuição da SEFAZ, então esta trilha ' +
+      'reprova de fato. A denegação continua não coletada, e por isso a ' +
+      'verificação só afirma o que a fonte sustenta.',
     population: 'creditos_de_entrada',
     sampling: censo(),
     verifications: ['v4_autorizacao_competente'],

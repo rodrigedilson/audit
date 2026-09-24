@@ -99,6 +99,7 @@ export class AssessmentService {
          join document_items di
            on di.tenant_id = d.tenant_id and di.cnpj = d.cnpj and di.access_key = d.access_key
         where d.tenant_id = $1::uuid and d.cnpj = $2::char(14) and d.period = $3::char(7)
+          and d.cancelled_at is null
         order by d.access_key, di.line`,
       [scope.tenantId, scope.cnpj, period],
     );
