@@ -9,18 +9,19 @@ import {
   ThreadNotFoundError,
 } from '../../fiscal/assistant/assistant.service.js';
 import { PERGUNTAS_SUPORTADAS } from '../../fiscal/assistant/intent-classifier.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const CNPJ_SCHEMA = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 const THREAD_SCHEMA = {
   type: 'object',
   required: ['cnpj', 'thread_id'],
   properties: {
-    cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+    cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
     thread_id: { type: 'string', format: 'uuid' },
   },
 } as const;

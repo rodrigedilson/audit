@@ -3,11 +3,12 @@ import type { ApiDeps } from '../server.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { CatalogService } from '../../fiscal/catalog/catalog.service.js';
 import type { Classification, Health } from '../../fiscal/catalog/code-validation.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const CNPJ_SCHEMA = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 interface CnpjParams {
@@ -92,7 +93,7 @@ export async function registerCatalogRoutes(app: FastifyInstance, deps: ApiDeps)
           type: 'object',
           required: ['cnpj', 'item_id'],
           properties: {
-            cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+            cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
             item_id: { type: 'string', minLength: 1, maxLength: 120 },
           },
         },

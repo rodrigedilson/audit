@@ -182,7 +182,7 @@ describe('parseEfdIcmsIpi — abertura', () => {
 
   it('recusa CNPJ com menos de 14 posições em vez de completar', () => {
     expect(() => parseEfdIcmsIpi(abertura('020', '1234567800019'))).toThrow(
-      /13 posições/,
+      /esperado 14 posições/,
     );
   });
 
@@ -287,9 +287,11 @@ describe('parseEfdIcmsIpi — apuração', () => {
 
     expect(icmsAssessment).toEqual({
       totalDebitsCents: 500_000,
+      documentDebitAdjustmentsCents: 1_000,
       adjustmentDebitsCents: 2_000,
       creditReversalsCents: 3_000,
       totalCreditsCents: 400_000,
+      documentCreditAdjustmentsCents: 1_100,
       adjustmentCreditsCents: 4_000,
       debitReversalsCents: 5_000,
       previousCreditBalanceCents: 6_000,

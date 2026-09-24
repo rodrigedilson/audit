@@ -21,6 +21,7 @@ import { registerAssistantRoutes } from './routes/assistant.routes.js';
 import { registerCreditRoutes } from './routes/credit.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
 import { registerDossierRoutes } from './routes/dossier.routes.js';
+import { registerEfdIcmsIpiRoutes } from './routes/efd-icms-ipi.routes.js';
 import { AsaasClient, type AsaasGateway } from '../billing/asaas-client.js';
 import type { LanguageModelPort } from '../fiscal/assistant/language-model.port.js';
 import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.js';
@@ -258,6 +259,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerCreditRoutes(instance, deps);
       await registerSimulationRoutes(instance, deps);
       await registerDossierRoutes(instance, deps);
+      await registerEfdIcmsIpiRoutes(instance, deps);
     },
     { prefix: '/v1' },
   );

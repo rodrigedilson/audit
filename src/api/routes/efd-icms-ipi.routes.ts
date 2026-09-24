@@ -2,12 +2,12 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ApiDeps } from '../server.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
+import { SpedFormatError } from '../../fiscal/ingestion/efd-icms-ipi.parser.js';
 import {
-  DossierNotReadyError,
-  DossierService,
-  SpedNotUsableError,
-} from '../../fiscal/dossier/dossier.service.js';
-import { SpedFormatError } from '../../fiscal/dossier/sped-parser.js';
+  EfdIcmsIpiService,
+  EfdIcmsNotImportedError,
+  EfdIcmsNotUsableError,
+} from '../../fiscal/reconciliation/efd-icms-ipi.service.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const PERIOD = '^[0-9]{4}-(0[1-9]|1[0-2])$';
@@ -35,24 +35,26 @@ interface ScopeParams extends CnpjParams {
   period: string;
 }
 
-/** 60 MB cobrem uma EFD-Contribuições de empresa com movimento alto. */
+/** 60 MB cobrem uma EFD ICMS/IPI de empresa com movimento alto. */
 const MAX_BYTES_SPED = 60 * 1024 * 1024;
 
 /**
- * Dossiê de saldo credor PIS/Cofins — diferencial #9.
+ * EFD ICMS/IPI: importação e conciliação.
  *
- * Substitui o `501` que a Onda 4 devolvia em `POST /sped`: ali o caminho previsto
- * era a coleta automática, que depende de fonte externa; aqui é o upload do
- * arquivo que o cliente já gera hoje, e que é a fonte de verdade do saldo credor.
+ * A escrituração estadual entra por aqui, e não pelo `POST /clients/:cnpj/sped`,
+ * que é da EFD-Contribuições. São dois leiautes com posições de campo próprias,
+ * e um endpoint que adivinhasse qual é pelo conteúdo erraria em silêncio no caso
+ * que importa: arquivo do tipo errado lido com as posições do outro devolve
+ * base no lugar de valor.
  */
-export async function registerDossierRoutes(
+export async function registerEfdIcmsIpiRoutes(
   app: FastifyInstance,
   deps: ApiDeps,
 ): Promise<void> {
-  const dossier = new DossierService(deps.pool);
+  const servico = new EfdIcmsIpiService(deps.pool);
 
   app.post<{ Params: CnpjParams }>(
-    '/clients/:cnpj/sped',
+    '/clients/:cnpj/efd-icms-ipi',
     { schema: { params: CNPJ_SCHEMA } },
     async (request, reply) => {
       deps.tenantResolver.assertCanWrite(request.tenant);
@@ -61,7 +63,7 @@ export async function registerDossierRoutes(
       const orchestrator = await deps.orchestratorFor(scope);
 
       try {
-        const resultado = await dossier.importSped(
+        const resultado = await servico.importFile(
           scope,
           { content, reference },
           orchestrator,
@@ -76,20 +78,20 @@ export async function registerDossierRoutes(
   );
 
   /**
-   * O dossiê é **derivado na leitura**, e não um resultado guardado.
+   * A conciliação é **derivada na leitura**, e não um resultado guardado.
    *
-   * É deliberado: congelá-lo esconderia o ganho de lastro que acontece quando o
-   * escritório localiza um XML que faltava — e localizar documento é exatamente
-   * o trabalho que o dossiê encomenda.
+   * Congelá-la faria uma conferência nova — ou a correção de uma existente —
+   * valer só para arquivo importado depois dela, e o cliente continuaria vendo
+   * o veredito velho sobre o mesmo arquivo.
    */
   app.get<{ Params: ScopeParams }>(
-    '/clients/:cnpj/credit-dossier/:period',
+    '/clients/:cnpj/icms-ipi-reconciliation/:period',
     { schema: { params: SCOPE_PARAMS } },
     async (request) => {
       const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
 
       try {
-        return await dossier.dossier(scope, request.params.period);
+        return await servico.reconciliation(scope, request.params.period);
       } catch (cause) {
         throw traduzir(cause);
       }
@@ -108,7 +110,7 @@ async function readUpload(
     throw new ValidationError(
       1,
       'schema_violation',
-      'Envie a EFD-Contribuições como multipart/form-data ou com content-type text/plain.',
+      'Envie a EFD ICMS/IPI como multipart/form-data ou com content-type text/plain.',
     );
   }
 
@@ -119,9 +121,11 @@ async function readUpload(
       continue;
     }
 
+    // O SPED é gerado em ANSI, não em UTF-8. Ler como UTF-8 corromperia a razão
+    // social e, pior, qualquer acento dentro de um campo de texto do arquivo.
     return {
       content: (await part.toBuffer()).toString('latin1'),
-      reference: part.filename ?? 'efd-contribuicoes.txt',
+      reference: part.filename ?? 'efd-icms-ipi.txt',
     };
   }
 
@@ -130,17 +134,17 @@ async function readUpload(
 
 /**
  * Formato é camada 1; CNPJ divergente é camada 0 de isolamento, que no contrato
- * aparece como `tenant_violation`; dossiê sem escrituração é 404, porque falta
- * um recurso e não há nada de errado com o pedido.
+ * aparece como `tenant_violation`; conciliação sem escrituração é 404, porque
+ * falta um recurso e não há nada de errado com o pedido.
  */
 function traduzir(cause: unknown): unknown {
   if (cause instanceof SpedFormatError) {
     return new ValidationError(1, 'schema_violation', cause.message);
   }
-  if (cause instanceof SpedNotUsableError) {
+  if (cause instanceof EfdIcmsNotUsableError) {
     return new ValidationError(2, 'tenant_violation', cause.message);
   }
-  if (cause instanceof DossierNotReadyError) {
+  if (cause instanceof EfdIcmsNotImportedError) {
     return new NotFoundError(cause.message);
   }
   return cause;

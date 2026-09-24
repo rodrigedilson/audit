@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 17 de 19: ativacao-da-cobranca
+-- audit — passo 17 de 21: ativacao-da-cobranca
 --
 -- Dados de cobrança do escritório (CPF/CNPJ, e-mail, forma de pagamento),
 -- preenchidos quando o owner ativa a cobrança. Sem ativação não há

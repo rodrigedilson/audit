@@ -131,9 +131,13 @@ export function parseNfe(xml: string): ParsedDocument {
     );
   }
 
-  const issuerCnpj = digits(text(emit?.['CNPJ']));
-  if (issuerCnpj.length !== 14) {
-    throw new DocumentParseError('schema_violation', 2, 'Emitente sem CNPJ de 14 dígitos.');
+  const issuerCnpj = inscricao(text(emit?.['CNPJ']));
+  if (issuerCnpj === undefined) {
+    throw new DocumentParseError(
+      'schema_violation',
+      2,
+      'Emitente sem CNPJ de 14 posições.',
+    );
   }
 
   // A chave carrega o CNPJ do emitente; divergir dela significa documento
@@ -154,7 +158,7 @@ export function parseNfe(xml: string): ParsedDocument {
   }
 
   const modelCode = keyParts.model;
-  const recipientCnpj = digits(text(dest?.['CNPJ']));
+  const recipientCnpj = inscricao(text(dest?.['CNPJ'])) ?? '';
   const recipientName = text(dest?.['xNome']);
 
   return {
@@ -175,8 +179,20 @@ export function parseNfe(xml: string): ParsedDocument {
 }
 
 function readAccessKey(infNFe: Record<string, unknown>): string {
-  // O Id vem como "NFe" + 44 dígitos.
-  const raw = digits(text(infNFe['@Id']));
+  /*
+   * O Id vem como "NFe" seguido das 44 posições da chave.
+   *
+   * Antes bastava filtrar para dígitos, o que descartava o prefixo de brinde.
+   * Com a chave podendo ter letras nas doze posições do CNPJ, filtrar assim
+   * deixaria "NFE" colado no começo da chave — o prefixo agora sai explícito.
+   * Nenhuma chave real começa por letra: as duas primeiras posições são o código
+   * numérico da UF.
+   */
+  const raw = (text(infNFe['@Id']) ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/^NFE/, '')
+    .replace(/[^0-9A-Z]/g, '');
 
   if (!isValidAccessKey(raw)) {
     throw new DocumentParseError(
@@ -184,7 +200,7 @@ function readAccessKey(infNFe: Record<string, unknown>): string {
       2,
       raw.length === 44
         ? 'Chave de acesso com dígito verificador inválido.'
-        : `Chave de acesso ausente ou com tamanho inválido (${raw.length} dígitos).`,
+        : `Chave de acesso ausente ou com tamanho inválido (${raw.length} posições).`,
     );
   }
 
@@ -356,8 +372,17 @@ function text(value: unknown): string | undefined {
   return str.length > 0 ? str : undefined;
 }
 
-function digits(value: string | undefined): string {
-  return (value ?? '').replace(/\D/g, '');
+/**
+ * CNPJ do XML: 14 posições, sendo as duas últimas numéricas.
+ *
+ * Não filtra para dígitos. Desde 31/07/2026 a Receita emite CNPJ alfanumérico, e
+ * a Nota Técnica Conjunta CNPJ Alfanumérico 2025.001 abriu o campo no DF-e.
+ * Devolve `undefined` quando não há CNPJ válido, para que quem chama decida se
+ * isso é erro — no emitente é, no destinatário nem sempre (venda a consumidor).
+ */
+function inscricao(value: string | undefined): string | undefined {
+  const limpo = (value ?? '').trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return /^[0-9A-Z]{12}[0-9]{2}$/.test(limpo) ? limpo : undefined;
 }
 
 /**

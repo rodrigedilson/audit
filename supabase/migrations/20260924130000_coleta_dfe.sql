@@ -48,7 +48,7 @@ create table if not exists public.dfe_sync_state (
 create table if not exists public.dfe_summaries (
   tenant_id        uuid not null,
   cnpj             char(14) not null,
-  access_key       char(44) not null check (access_key ~ '^[0-9]{44}$'),
+  access_key       char(44) not null,
   nsu              char(15) not null,
   issuer_cnpj      char(14),
   issuer_name      text,
@@ -73,7 +73,7 @@ create table if not exists public.dfe_summaries (
 create table if not exists public.dfe_documents (
   tenant_id     uuid not null,
   cnpj          char(14) not null,
-  access_key    char(44) not null check (access_key ~ '^[0-9]{44}$'),
+  access_key    char(44) not null,
   nsu           char(15) not null,
   period        char(7) check (period is null or period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
   xml           text not null,
@@ -107,6 +107,23 @@ begin
     execute format(
       'create policy %I_select_own on public.%I for select using (public.is_member_of(tenant_id))',
       t, t
+    );
+  end loop;
+end $$;
+
+-- Chave de acesso com CNPJ alfanumérico (NT Conjunta CNPJ Alfanumérico
+-- 2025.001): letras só nas 12 posições do CNPJ do emitente. A restrição tem
+-- nome fixo, e é trocada aqui em vez de declarada inline, para valer também no
+-- banco onde esta migration já tinha rodado com a regra só de dígitos.
+do $$
+declare t text;
+begin
+  foreach t in array array['dfe_summaries', 'dfe_documents']
+  loop
+    execute format('alter table public.%I drop constraint if exists %I', t, t || '_access_key_check');
+    execute format(
+      'alter table public.%I add constraint %I check (access_key ~ ''^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$'')',
+      t, t || '_access_key_check'
     );
   end loop;
 end $$;

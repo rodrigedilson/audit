@@ -64,6 +64,13 @@ describe('distribuição — resposta', () => {
     expect(() => lerRespostaDistribuicao('<Envelope><Body><Fault/></Body></Envelope>')).toThrow(RespostaSefazInvalidaError);
   });
 
+  /** CNPJ alfanumérico (NT Conjunta 2025.001): letras só nas 12 posições do emitente. */
+  it('aceita chave com CNPJ alfanumérico, e recusa letra fora do CNPJ', () => {
+    const alfanumerica = '352711AB12CD34EF5655001000000015123456789012';
+    expect(lerResumoNfe(resNFe(alfanumerica)).accessKey).toBe(alfanumerica);
+    expect(() => lerResumoNfe(resNFe('A' + alfanumerica.slice(1)))).toThrow(RespostaSefazInvalidaError);
+  });
+
   it('o resumo traz chave, emitente, data e valor em centavos', () => {
     expect(lerResumoNfe(resNFe(CHAVE, '1500.35'))).toEqual({
       accessKey: CHAVE,

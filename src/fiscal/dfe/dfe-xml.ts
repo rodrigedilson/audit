@@ -153,7 +153,9 @@ export interface ResumoNfe {
 export function lerResumoNfe(xml: string): ResumoNfe {
   const res = achar(parser.parse(xml), 'resNFe');
   const chave = texto(res?.['chNFe']);
-  if (res === undefined || !/^\d{44}$/.test(chave)) {
+  // Letras só nas 12 posições do CNPJ do emitente (CNPJ alfanumérico, NT
+  // Conjunta 2025.001), como em `access-key.ts`.
+  if (res === undefined || !/^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$/.test(chave)) {
     throw new RespostaSefazInvalidaError('Resumo de NF-e sem chave de acesso válida.');
   }
   const valor = texto(res['vNF']);

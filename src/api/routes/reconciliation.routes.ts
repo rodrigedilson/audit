@@ -7,6 +7,7 @@ import {
   ReconciliationService,
 } from '../../fiscal/reconciliation/reconciliation.service.js';
 import { UploadFormatError } from '../../fiscal/reconciliation/fisco-upload.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const PERIOD = '^[0-9]{4}-(0[1-9]|1[0-2])$';
 
@@ -14,7 +15,7 @@ const SCOPE_PARAMS = {
   type: 'object',
   required: ['cnpj', 'period'],
   properties: {
-    cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+    cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
     period: { type: 'string', pattern: PERIOD },
   },
 } as const;

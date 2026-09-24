@@ -41,6 +41,7 @@ import {
   SpedFormatError,
   centavos,
   data,
+  inscricao,
   inteiro,
   numero,
   separar,
@@ -142,9 +143,13 @@ export interface EfdIcmsAnalytic {
 /** E110 — apuração do ICMS do período. */
 export interface EfdIcmsAssessment {
   totalDebitsCents: number;
+  /** `VL_AJ_DEBITOS` — ajustes que vêm do próprio documento fiscal. */
+  documentDebitAdjustmentsCents: number;
   adjustmentDebitsCents: number;
   creditReversalsCents: number;
   totalCreditsCents: number;
+  /** `VL_AJ_CREDITOS` — ajustes que vêm do próprio documento fiscal. */
+  documentCreditAdjustmentsCents: number;
   adjustmentCreditsCents: number;
   debitReversalsCents: number;
   previousCreditBalanceCents: number;
@@ -288,7 +293,7 @@ function lerAbertura(campos: readonly string[]): EfdIcmsHeader {
 
   return {
     layoutVersion: versao,
-    cnpj: inscricao(campos[7]),
+    cnpj: inscricao(campos[7], 'CNPJ'),
     uf: sigla(campos[9]),
     stateRegistration: texto(campos[10]),
     period: inicio.slice(0, 7),
@@ -377,9 +382,11 @@ function lerAnalitico(campos: readonly string[]): EfdIcmsAnalytic {
 function lerApuracaoIcms(campos: readonly string[]): EfdIcmsAssessment {
   return {
     totalDebitsCents: centavos(campos[2], 'VL_TOT_DEBITOS'),
+    documentDebitAdjustmentsCents: centavos(campos[3], 'VL_AJ_DEBITOS'),
     adjustmentDebitsCents: centavos(campos[4], 'VL_TOT_AJ_DEBITOS'),
     creditReversalsCents: centavos(campos[5], 'VL_ESTORNOS_CRED'),
     totalCreditsCents: centavos(campos[6], 'VL_TOT_CREDITOS'),
+    documentCreditAdjustmentsCents: centavos(campos[7], 'VL_AJ_CREDITOS'),
     adjustmentCreditsCents: centavos(campos[8], 'VL_TOT_AJ_CREDITOS'),
     debitReversalsCents: centavos(campos[9], 'VL_ESTORNOS_DEB'),
     previousCreditBalanceCents: centavos(campos[10], 'VL_SLD_CREDOR_ANT'),
@@ -405,26 +412,6 @@ function lerApuracaoIpi(campos: readonly string[]): EfdIpiAssessment {
 }
 
 // ----------------------------------------------------------------- campos
-
-/**
- * CNPJ da escrituração, 14 posições.
- *
- * Não filtra para dígitos. A partir do leiaute 020 o campo passou de numérico
- * para caractere, porque o CNPJ alfanumérico usa letras nas 12 primeiras
- * posições; jogar fora o que não é dígito devolveria um CNPJ curto e errado.
- */
-function inscricao(bruto: string | undefined): string {
-  const limpo = texto(bruto).toUpperCase().replace(/[^0-9A-Z]/g, '');
-
-  if (limpo.length !== 14) {
-    throw new SpedFormatError(
-      `Campo CNPJ do registro 0000 com ${limpo.length} posições; esperado 14. ` +
-        'Sem CNPJ íntegro não se sabe de quem é a escrituração.',
-    );
-  }
-
-  return limpo;
-}
 
 function sigla(bruto: string | undefined): string {
   const limpo = texto(bruto).toUpperCase();
