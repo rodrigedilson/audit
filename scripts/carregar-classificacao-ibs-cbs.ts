@@ -7,12 +7,18 @@
  *
  * https://dfe-portal.svrs.rs.gov.br/Cff/ClassificacaoTributaria
  *
- * Existe uma API oficial em `https://cff.svrs.rs.gov.br/api/v1/consultas/classTrib`,
- * e ela é o caminho certo no longo prazo — mas exige autenticação mútua com
- * certificado ICP-Brasil. Quando o cofre tiver um A1 guardado, trocar este
- * carregador por uma chamada autenticada é uma tarde de trabalho, e aí a
- * atualização passa a ser um `certificate.used` com `purpose` próprio. Até lá, o
- * portal serve a mesma tabela sem certificado.
+ * **A API oficial já está ligada.** Com `CFF_CERT_PFX` e `CFF_CERT_PASSWORD`
+ * apontando para um A1, o carregador chama
+ * `https://cff.svrs.rs.gov.br/api/v1/consultas/classTrib` em vez de raspar a
+ * página. Sem certificado, cai na raspagem, que entrega a mesma tabela e depende
+ * da forma da página.
+ *
+ * O certificado **não vem do cofre**, e isso não é esquecimento: o cofre não
+ * guarda a senha do PFX, de propósito, e sem ela não há uso não assistido. É
+ * decisão de arquitetura pendente — ver
+ * `docs/adr/ADR-006-uso-nao-assistido-do-certificado.md`. Quando ela for tomada,
+ * a chamada passa a emitir `certificate.used` com `purpose` próprio, que é o que
+ * torna o uso auditável.
  *
  * O que entra:
  *
@@ -38,11 +44,22 @@
  * npx tsx scripts/carregar-classificacao-ibs-cbs.ts
  * npx tsx scripts/carregar-classificacao-ibs-cbs.ts --executar
  * npx tsx scripts/carregar-classificacao-ibs-cbs.ts --arquivo tabela.json --executar
+ *
+ * # pela API oficial, com certificado:
+ * CFF_CERT_PFX=/caminho/a1.pfx CFF_CERT_PASSWORD=... \
+ *   npx tsx scripts/carregar-classificacao-ibs-cbs.ts --executar
+ *
+ * # força a raspagem mesmo com certificado configurado, para comparar:
+ * npx tsx scripts/carregar-classificacao-ibs-cbs.ts --portal
  * ```
  */
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import { ignorarErroDeClienteOcioso } from '../src/infrastructure/persistence/pool-errors.js';
+import {
+  consultarClassTrib,
+  credencialDoAmbiente,
+} from '../src/fiscal/catalog/conformidade-facil.client.js';
 
 const PORTAL = 'https://dfe-portal.svrs.rs.gov.br/Cff/ClassificacaoTributaria';
 const FONTE = 'IT RT 2025.002 · Portal da Conformidade Fácil (SVRS)';
@@ -118,7 +135,29 @@ async function main(): Promise<void> {
   }
 
   let registros: RegistroDeCst[];
-  if (arquivo !== null && arquivo !== undefined) {
+
+  /**
+   * A API oficial primeiro, quando há certificado configurado.
+   *
+   * A raspagem do portal entrega a mesma tabela e não exige certificado, mas
+   * depende da forma da página. Com um A1 à mão, a API é a fonte que não quebra
+   * sozinha — e o `--portal` força a raspagem quando se quer comparar as duas.
+   */
+  const credencial = process.argv.includes('--portal') ? null : await credencialDoAmbiente();
+
+  if (credencial !== null && (arquivo === null || arquivo === undefined)) {
+    console.log('Fonte: API do Conformidade Fácil (mTLS com ICP-Brasil)');
+    const resposta = await consultarClassTrib(credencial);
+    registros = (Array.isArray(resposta) ? resposta : []) as RegistroDeCst[];
+
+    if (registros.length === 0) {
+      throw new Error(
+        'A API respondeu, e a resposta não tem o formato esperado — um array de CSTs\n' +
+          'com `ClassificacoesTributarias` aninhadas. Rode com --portal para comparar\n' +
+          'com a raspagem antes de concluir que a tabela mudou.',
+      );
+    }
+  } else if (arquivo !== null && arquivo !== undefined) {
     const conteudo = await readFile(arquivo, 'utf8');
     registros = conteudo.trimStart().startsWith('[')
       ? (JSON.parse(conteudo) as RegistroDeCst[])

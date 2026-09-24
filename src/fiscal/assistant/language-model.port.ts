@@ -23,29 +23,46 @@ export function routeTier(intent: Intent): 1 | 3 {
   return intent === 'desconhecido' ? 3 : 1;
 }
 
+/** Uma evidência já ancorada: fato que uma consulta determinística produziu. */
+export interface ModelEvidence {
+  /** `E1`, `E2`…: o único jeito de o modelo citar algo. */
+  id: string;
+  text: string;
+}
+
 export interface ModelRequest {
   question: string;
-  /** Evidências recuperadas, em texto, para o modelo não precisar inventar. */
-  context: string;
+  /**
+   * O que o modelo pode usar. Nada além disto: o modelo não vê o banco, só os
+   * fatos que as consultas de camada 1 já trouxeram com citação.
+   */
+  evidence: ModelEvidence[];
+}
+
+export interface ModelClaim {
+  kind: 'fact' | 'explanation';
+  text: string;
+  /** Evidências (`E1`…) que sustentam a afirmação. Obrigatório em `fact`. */
+  evidenceIds: string[];
 }
 
 export interface ModelAnswer {
-  text: string;
-  /** `event_seq` que o modelo alega sustentarem a resposta. */
-  citedEventSeqs: number[];
+  answerable: boolean;
+  /** Por que não dá para responder com as evidências dadas. */
+  reason: string | null;
+  claims: ModelClaim[];
 }
 
 /**
  * Porta para um modelo de linguagem.
  *
- * Nenhuma implementação é registrada por padrão, e isso é uma escolha: sem
- * provedor configurado, a pergunta de camada 3 recebe "não sei responder, e eis
- * o que sei" em vez de uma resposta plausível sem lastro.
+ * Sem provedor configurado, a pergunta de camada 3 recebe "não sei responder, e
+ * eis o que sei" em vez de uma resposta plausível sem lastro.
  *
- * Quando um provedor entrar, a resposta dele passa pelo **mesmo**
- * `assertGrounded` das respostas determinísticas: citação que não esteja nas
- * evidências recuperadas é recusada antes de sair do serviço. A garantia é
- * mecânica, não uma instrução de prompt.
+ * Com provedor, a resposta dele passa pelo **mesmo** `assertGrounded` das
+ * respostas determinísticas: o modelo só cita evidência por id, a citação vira
+ * a citação real da evidência, e id desconhecido é recusado antes de sair do
+ * serviço. A garantia é mecânica, não uma instrução de prompt.
  */
 export interface LanguageModelPort {
   readonly name: string;

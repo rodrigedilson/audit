@@ -5,6 +5,8 @@ import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { AssessmentService } from '../../fiscal/assessment/assessment.service.js';
 import { syncPeriodState } from '../../fiscal/portfolio/portfolio-read-model.js';
 import type { Regime } from '../../fiscal/shared/fiscal-vocabulary.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
+import { PADRAO_DA_CHAVE } from '../../fiscal/ingestion/access-key.js';
 
 const PERIOD = '^[0-9]{4}-(0[1-9]|1[0-2])$';
 
@@ -12,7 +14,7 @@ const SCOPE_PARAMS = {
   type: 'object',
   required: ['cnpj', 'period'],
   properties: {
-    cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+    cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
     period: { type: 'string', pattern: PERIOD },
   },
 } as const;
@@ -159,7 +161,7 @@ export async function registerAssessmentRoutes(
           type: 'object',
           properties: {
             tax: { type: 'string' },
-            access_key: { type: 'string', pattern: '^[0-9]{44}$' },
+            access_key: { type: 'string', pattern: PADRAO_DA_CHAVE },
           },
         },
       },
@@ -202,7 +204,7 @@ export async function registerAssessmentRoutes(
             },
             amount_cents: { type: 'integer' },
             reason: { type: 'string', minLength: 3, maxLength: 1000 },
-            reference_access_key: { type: 'string', pattern: '^[0-9]{44}$' },
+            reference_access_key: { type: 'string', pattern: PADRAO_DA_CHAVE },
           },
         },
       },

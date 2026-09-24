@@ -9,18 +9,19 @@ import {
   ThreadNotFoundError,
 } from '../../fiscal/assistant/assistant.service.js';
 import { PERGUNTAS_SUPORTADAS } from '../../fiscal/assistant/intent-classifier.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const CNPJ_SCHEMA = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 const THREAD_SCHEMA = {
   type: 'object',
   required: ['cnpj', 'thread_id'],
   properties: {
-    cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+    cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
     thread_id: { type: 'string', format: 'uuid' },
   },
 } as const;
@@ -48,14 +49,14 @@ export async function registerAssistantRoutes(
   app: FastifyInstance,
   deps: ApiDeps,
 ): Promise<void> {
-  const assistant = new AssistantService(deps.pool);
+  const assistant = new AssistantService(deps.pool, deps.languageModel);
 
   /** O catálogo de perguntas, sem CNPJ: serve de ajuda e de material de venda. */
   app.get('/assistant/capabilities', async () => {
     /**
      * Declarado no contrato porque muda o que o usuário pode esperar: camada 1
      * é consulta determinística e reproduzível; a 3 depende de modelo de
-     * linguagem. Derivado do serviço, e não escrito aqui, para a resposta não
+     * linguagem, que responde só sobre as evidências da camada 1. Derivado do serviço, e não escrito aqui, para a resposta não
      * continuar dizendo "sem modelo" no dia em que um for ligado.
      */
     const configured = assistant.languageModelName !== undefined;
@@ -66,6 +67,7 @@ export async function registerAssistantRoutes(
       })),
       deterministic_only: !configured,
       language_model_configured: configured,
+      ...(configured ? { language_model: assistant.languageModelName } : {}),
     };
   });
 

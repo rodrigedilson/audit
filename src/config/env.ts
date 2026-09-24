@@ -61,6 +61,12 @@ export interface Env {
    * 503 em vez de ficar aberto: um POST anônimo poderia marcar fatura como paga.
    */
   asaasWebhookToken?: string;
+  /**
+   * Camada 3 do assistente. Ausente, o assistente responde só o que a consulta
+   * determinística cobre, e diz "não sei" para o resto — que é o comportamento
+   * correto sem modelo, não uma falha.
+   */
+  anthropic?: { apiKey: string; model: string };
 }
 
 export class EnvError extends Error {
@@ -172,6 +178,15 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       apiKey: asaasApiKey,
       // Só chega aqui sem URL em dev: em prod a ausência já falhou acima.
       baseUrl: asaasBaseUrlRaw || ASAAS_SANDBOX_URL,
+    };
+  }
+
+  const anthropicKey = source['ANTHROPIC_API_KEY']?.trim();
+  if (anthropicKey) {
+    env.anthropic = {
+      apiKey: anthropicKey,
+      // O ADR-026 reserva a camada 3 a Sonnet/Opus.
+      model: source['ASSISTANT_MODEL']?.trim() || 'claude-opus-5',
     };
   }
 

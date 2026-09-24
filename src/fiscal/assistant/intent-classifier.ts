@@ -11,6 +11,8 @@
  * "não entendi, e eis o que sei responder", que é verdadeira.
  */
 
+import { isValidAccessKey } from '../ingestion/access-key.js';
+
 export type Intent =
   | 'estado_da_competencia'
   | 'valor_devido'
@@ -300,5 +302,25 @@ function extrairCompetencia(question: string): string | undefined {
  */
 function extrairChave(question: string): string | undefined {
   const juntada = question.replace(/(?<=\d)[\s.\-/]+(?=\d)/g, '');
-  return /(?<!\d)(\d{44})(?!\d)/.exec(juntada)?.[1];
+  const numerica = /(?<!\d)(\d{44})(?!\d)/.exec(juntada)?.[1];
+  if (numerica !== undefined) {
+    return numerica;
+  }
+
+  // Chave com CNPJ alfanumérico: letras nas 12 posições do emitente. Digitada
+  // em grupos ("3527 11AB 12CD…"), um grupo termina em letra e o seguinte
+  // começa em dígito, e juntar só entre dígitos não basta. Juntar entre
+  // quaisquer alfanuméricos cola a chave na palavra anterior ("com 3527…"),
+  // então a janela de 44 só é aceita se o dígito verificador fechar: é isso que
+  // separa a chave do texto em volta.
+  const compacta = question.toUpperCase().replace(/(?<=[0-9A-Z])[\s.\-/]+(?=[0-9A-Z])/g, '');
+  for (const trecho of compacta.match(/[0-9A-Z]{44,}/g) ?? []) {
+    for (let i = 0; i + 44 <= trecho.length; i += 1) {
+      const candidata = trecho.slice(i, i + 44);
+      if (/[A-Z]/.test(candidata) && isValidAccessKey(candidata)) {
+        return candidata;
+      }
+    }
+  }
+  return undefined;
 }

@@ -15,3 +15,4 @@ numeração sequencial, nunca reescrita — decisão superada recebe status
 | [ADR-003](ADR-003-event-store-postgres.md) | Event store em Postgres com sequência por CNPJ | Aceita |
 | [ADR-004](ADR-004-cobranca-asaas.md) | Asaas como provedor de cobrança | Aceita |
 | [ADR-005](ADR-005-canonicalizacao-do-hash.md) | Canonicalização JSON determinística para o hash de projeção | Aceita |
+| [ADR-006](ADR-006-coleta-dfe-sefaz.md) | Coleta de DF-e na SEFAZ: distribuição por NSU e ciência da operação | Aceita |

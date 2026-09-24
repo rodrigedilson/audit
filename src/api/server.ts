@@ -21,7 +21,13 @@ import { registerAssistantRoutes } from './routes/assistant.routes.js';
 import { registerCreditRoutes } from './routes/credit.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
 import { registerDossierRoutes } from './routes/dossier.routes.js';
-import { AsaasClient } from '../billing/asaas-client.js';
+import { registerEfdIcmsIpiRoutes } from './routes/efd-icms-ipi.routes.js';
+import { AsaasClient, type AsaasGateway } from '../billing/asaas-client.js';
+import type { LanguageModelPort } from '../fiscal/assistant/language-model.port.js';
+import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.js';
+import { SefazSoapClient, type SefazDfeGateway } from '../fiscal/dfe/sefaz-gateway.js';
+import { DfeSyncService } from '../fiscal/dfe/dfe-sync.service.js';
+import { startDfeWorker } from '../fiscal/dfe/dfe-worker.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
@@ -45,10 +51,24 @@ export interface ApiDeps {
    * nada é enviado ao gateway. É o que permite operar as primeiras ondas sem
    * credencial de pagamento.
    */
-  asaas?: AsaasClient;
+  asaas?: AsaasGateway;
+  /** Camada 3 do assistente. Ausente sem `ANTHROPIC_API_KEY`. */
+  languageModel?: LanguageModelPort;
+  /**
+   * Coleta de DF-e. Ausente em dev: o banco é o de produção, e uma coleta em
+   * homologação gravaria notas de teste na base real (ADR-006).
+   */
+  dfe?: DfeSyncService;
 }
 
 declare module 'fastify' {
+  interface FastifyInstance {
+    /**
+     * Coleta de DF-e, quando há gateway. Exposta para o `serve` e os testes
+     * executarem a fila sem depender do worker de fundo.
+     */
+    dfeSync?: DfeSyncService;
+  }
   interface FastifyRequest {
     /**
      * Preenchido pelo hook de autenticação. Sempre presente nas rotas
@@ -84,6 +104,20 @@ export const PUBLIC_ROUTES = new Set([
 export interface BuildServerOptions {
   env: Env;
   pool?: pg.Pool;
+  /**
+   * Gateway de cobrança. Os testes injetam um dublê; sem ele, o cliente HTTP é
+   * montado a partir de `ASAAS_API_KEY`, e sem a chave não há gateway.
+   */
+  asaas?: AsaasGateway;
+  /** Modelo de linguagem. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
+  languageModel?: LanguageModelPort;
+  /** Gateway da SEFAZ. Os testes injetam um dublê; sem ele, só em `prod`. */
+  sefaz?: SefazDfeGateway;
+  /**
+   * Sobe o worker da coleta junto com o servidor. Só o `serve` liga: os testes
+   * executam os jobs direto, e um worker de fundo disputaria a fila com eles.
+   */
+  startWorkers?: boolean;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -108,9 +142,21 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     pool,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
-    ...(env.asaas === undefined
-      ? {}
-      : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
+    ...(options.asaas !== undefined
+      ? { asaas: options.asaas }
+      : env.asaas === undefined
+        ? {}
+        : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
+    ...(options.languageModel !== undefined
+      ? { languageModel: options.languageModel }
+      : env.anthropic === undefined
+        ? {}
+        : {
+            languageModel: new ClaudeLanguageModel({
+              apiKey: env.anthropic.apiKey,
+              model: env.anthropic.model,
+            }),
+          }),
     orchestratorFor: async (scope) => {
       const orchestrator = new FiscalOrchestratorService(
         new PostgresEventStoreRepository(pool, scope),
@@ -122,6 +168,17 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     },
   };
 
+  const sefaz = options.sefaz ?? (env.environment === 'prod' ? new SefazSoapClient() : undefined);
+  if (sefaz !== undefined) {
+    deps.dfe = new DfeSyncService(
+      pool,
+      sefaz,
+      env.certificateMasterKey,
+      env.certificateMasterKeyPrevious,
+      deps.orchestratorFor,
+    );
+  }
+
   const app = Fastify({
     logger: {
       level: env.logLevel,
@@ -132,6 +189,17 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   });
 
   registerErrorHandler(app);
+
+  if (deps.dfe !== undefined) {
+    app.decorate('dfeSync', deps.dfe);
+  }
+
+  if (options.startWorkers && deps.dfe !== undefined) {
+    const worker = startDfeWorker(deps.dfe, {
+      onError: (erro) => app.log.error({ err: erro }, 'worker da coleta de DF-e'),
+    });
+    app.addHook('onClose', async () => worker.stop());
+  }
 
   await app.register(cors, {
     origin: env.corsOrigins,
@@ -191,6 +259,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerCreditRoutes(instance, deps);
       await registerSimulationRoutes(instance, deps);
       await registerDossierRoutes(instance, deps);
+      await registerEfdIcmsIpiRoutes(instance, deps);
     },
     { prefix: '/v1' },
   );

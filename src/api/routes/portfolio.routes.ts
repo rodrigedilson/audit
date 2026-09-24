@@ -5,11 +5,12 @@ import { EventScope } from '../../esaa/core/event-store/value-objects/event-scop
 import { syncPortfolioReadModel } from '../../fiscal/portfolio/portfolio-read-model.js';
 import { PERIOD_STATES, REGIMES } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
+import { PADRAO_DE_CNPJ, exigirCnpjNaRota } from './cnpj-param.js';
 
 const CNPJ_PARAM = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 interface CnpjParams {
@@ -214,7 +215,7 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
           type: 'object',
           required: ['cnpj', 'legal_name', 'regime'],
           properties: {
-            cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+            cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
             legal_name: { type: 'string', minLength: 1 },
             trade_name: { type: 'string' },
             regime: { type: 'string', enum: [...REGIMES] },
@@ -229,7 +230,11 @@ export async function registerPortfolioRoutes(app: FastifyInstance, deps: ApiDep
       const context = request.tenant;
       deps.tenantResolver.assertIsOwner(context);
 
-      const scope = EventScope.create(context.tenantId, request.body.cnpj);
+      // Com o alfanumérico em vigor, 14 posições já não distinguem um CNPJ de
+      // um pedaço de texto: `RAZAOSOCIALLT` casa com o padrão da rota. O dígito
+      // verificador é o que sustenta a ampliação, e este é o ponto de entrada.
+      const cnpj = exigirCnpjNaRota(request.body.cnpj, 'Cadastro de empresa');
+      const scope = EventScope.create(context.tenantId, cnpj);
 
       // Idempotência de cadastro: o event log aceitaria um segundo
       // `client.enrolled`, mas cobrar duas vezes pelo mesmo CNPJ não é

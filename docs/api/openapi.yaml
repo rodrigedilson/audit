@@ -321,8 +321,10 @@ paths:
       - in: path
         name: access_key
         required: true
-        description: Chave de acesso (44 dígitos)
-        schema: { type: string, pattern: "^[0-9]{44}$" }
+        description: >
+          Chave de acesso, 44 posições. Letras maiúsculas só nas 12 do CNPJ do
+          emitente (CNPJ alfanumérico, NT Conjunta 2025.001).
+        schema: { type: string, pattern: "^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$" }
     get:
       tags: [ingestion]
       summary: Documento com itens, tributos atuais e IBS/CBS lado a lado
@@ -340,12 +342,83 @@ paths:
     post:
       tags: [ingestion]
       summary: Dispara coleta na distribuição DF-e (assíncrono)
+      description: >
+        ADR-006. Enfileira a coleta; o worker consulta a SEFAZ por NSU com o A1
+        do cliente, ingere as NF-e completas das competências abertas pelo mesmo
+        caminho do upload e registra a ciência da operação (210210) dos resumos
+        de entrada. A NF-e de entrada chega completa na coleta seguinte à
+        ciência. Com coleta pendente, devolve o mesmo job (`reused: true`).
       responses:
         "202":
           description: Job aceito
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Job" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Job"
+                  - type: object
+                    properties:
+                      reused: { type: boolean }
+        "409":
+          description: >
+            Sem certificado (`dfe_no_certificate`), certificado guardado antes da
+            coleta e que precisa ser reenviado (`dfe_certificate_not_usable`) ou
+            cliente sem UF (`dfe_missing_uf`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: >
+            A SEFAZ só aceita nova consulta a partir de `retry_at` (cabeçalho
+            `Retry-After`). Consultar antes conta como consumo indevido (656).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Coleta indisponível no ambiente (`dfe_gateway_not_configured`). Esperado em dev.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /clients/{cnpj}/dfe:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [ingestion]
+      summary: Estado da coleta de DF-e do CNPJ
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cnpj: { type: string }
+                  available: { type: boolean, description: "Há gateway da SEFAZ neste ambiente." }
+                  ult_nsu: { type: string, nullable: true }
+                  max_nsu: { type: string, nullable: true }
+                  last_cstat: { type: string, nullable: true }
+                  last_message: { type: string, nullable: true }
+                  last_run_at: { type: string, format: date-time, nullable: true }
+                  next_allowed_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Antes disso, POST /sync responde 429.
+                  summaries:
+                    type: object
+                    properties:
+                      awaiting_acknowledgement: { type: integer }
+                      awaiting_full_xml: { type: integer }
+                      acknowledgement_failed: { type: integer }
+                  documents:
+                    type: object
+                    properties:
+                      awaiting_period_open:
+                        type: integer
+                        description: NF-e baixada de competência ainda não aberta; entra na coleta seguinte à abertura.
+                      rejected_by_pipeline: { type: integer }
 
   /clients/{cnpj}/sped:
     parameters:
@@ -427,6 +500,93 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CreditDossier" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /clients/{cnpj}/efd-icms-ipi:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [reconciliation]
+      operationId: importEfdIcmsIpi
+      summary: Importa a EFD ICMS/IPI do cliente
+      description: >
+        Rota própria, e não a `/sped` da EFD-Contribuições. São duas escriturações
+        com posições de campo próprias, e um endpoint que adivinhasse qual é pelo
+        conteúdo erraria em silêncio no caso que importa: arquivo do tipo errado
+        lido com as posições do outro devolve base no lugar de valor.
+
+
+        Onde os dois leiautes divergem é no `0000` — `DT_INI` no campo 4 contra 6,
+        `CNPJ` no 7 contra 9. `C100` e `C170` são idênticos nos dois, o que torna
+        a confusão silenciosa e a recusa pelo cabeçalho obrigatória.
+
+
+        Lê `0000`, `C100`, `C170`, `C190`, `E110` e `E520`, e conta os demais sem
+        interpretá-los. São aceitos os leiautes **019** (obrigatório desde
+        01/01/2025) e **020** (desde 01/01/2026): os seis registros foram
+        extraídos dos Guias Práticos 3.1.9 e 3.2.2 e comparados campo a campo,
+        e são idênticos nos dois. Versão fora dessa lista é recusada, e não lida
+        no palpite.
+
+
+        Convive com a EFD-Contribuições da mesma competência: são escriturações
+        diferentes, e uma não substitui a outra. Dentro de cada uma, a
+        retificadora substitui a original.
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Escrituração importada
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EfdIcmsImportOutcome" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/icms-ipi-reconciliation/{period}:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [reconciliation]
+      operationId: getIcmsIpiReconciliation
+      summary: Confere a EFD ICMS/IPI contra as regras do próprio guia
+      description: |
+        O arquivo declara a apuração no `E110` e no `E520` e declara os documentos
+        que a sustentam nos blocos C. Nada garante que os dois concordem: o PVA
+        aceita arquivo cuja apuração não fecha com os documentos, e quem recebe a
+        conta é o contribuinte, meses depois.
+
+        Refaz a aritmética que o guia manda o arquivo obedecer e soma os
+        documentos contra o declarado. Não é opinião nossa sobre quanto deveria
+        ser: é a escrituração conferida contra as regras dela.
+
+        **Conferência que não pôde rodar vem `not_verified` com motivo, nunca
+        `passed`.** Sem `E110` não há apuração declarada para conferir, o que não
+        é o mesmo que apuração correta; documento sem `C170` não é documento
+        errado, porque a NF-e de emissão própria costuma vir só com `C100` e
+        `C190`; e quando o arquivo traz `C500`, `D100` e afins, que também lançam
+        ICMS e este leitor ainda não soma, comparar só os `C190` acusaria uma
+        diferença que é limitação nossa.
+
+        A conciliação é **derivada na leitura**, e não um resultado guardado:
+        congelada, uma conferência nova valeria só para arquivo importado depois
+        dela, e o cliente continuaria vendo o veredito velho sobre o mesmo
+        arquivo.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IcmsIpiReconciliation" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /clients/{cnpj}/bank-statements:
@@ -1142,8 +1302,10 @@ paths:
       description: >
         Independe de CNPJ. A lista é fechada de propósito: são as perguntas que o
         produto responde a partir dos dados, com citação conferível. Pergunta fora
-        dela recebe "não sei, e eis o que sei" — `deterministic_only: true` diz
-        exatamente isso, e `language_model_configured: false` diz por quê.
+        dela vai para a camada 3 quando há modelo configurado: o modelo responde
+        só sobre os fatos que as consultas da lista trouxeram, cita-os, e a
+        resposta passa pela mesma checagem de citação. Sem modelo, a pergunta
+        fora da lista recebe "não sei, e eis o que sei".
       responses:
         "200":
           description: OK
@@ -1167,6 +1329,10 @@ paths:
                       é reproduzível e tem citação — nenhum modelo de linguagem no
                       caminho.
                   language_model_configured: { type: boolean }
+                  language_model:
+                    type: string
+                    description: Modelo da camada 3. Presente só quando configurado.
+                    example: claude-opus-5
 
   /clients/{cnpj}/assistant/usage:
     parameters:
@@ -1411,7 +1577,11 @@ components:
       in: path
       name: cnpj
       required: true
-      schema: { type: string, pattern: "^[0-9]{14}$" }
+      # Doze posições alfanuméricas e dois dígitos verificadores numéricos: a
+      # Receita emite CNPJ alfanumérico desde 31/07/2026 (IN RFB 2.229/2024).
+      # O dígito verificador não é conferido pelo schema — JSON Schema não faz
+      # módulo 11 —, e sim na fronteira de entrada da API.
+      schema: { type: string, pattern: "^[0-9A-Za-z]{12}[0-9]{2}$" }
     Period:
       in: query
       name: period
@@ -1503,7 +1673,7 @@ components:
       type: object
       required: [cnpj, legal_name, regime]
       properties:
-        cnpj: { type: string, pattern: "^[0-9]{14}$" }
+        cnpj: { type: string, pattern: "^[0-9A-Za-z]{12}[0-9]{2}$" }
         legal_name: { type: string }
         trade_name: { type: string }
         regime: { $ref: "#/components/schemas/Regime" }
@@ -2540,7 +2710,10 @@ components:
           enum: [1, 3]
           description: >
             1 = consulta determinística, reproduzível, sem modelo nenhum.
-            3 = exigiria raciocínio livre de um modelo de linguagem. A camada 2
+            3 = modelo de linguagem compondo a resposta sobre os fatos da camada
+            1: cada afirmação cita as mesmas evidências, e valor em R$ ou
+            competência que não esteja na evidência citada derruba a resposta.
+            Sai com `confidence: medium`. A camada 2
             do ADR-026 é classificação de item em lote, trabalho do catálogo e
             não de conversa.
         confidence: { type: string, enum: [high, medium, low] }
@@ -2605,6 +2778,97 @@ components:
           additionalProperties: { type: integer }
         event_seq: { type: integer }
         projection_hash: { type: string }
+
+    EfdIcmsImportOutcome:
+      type: object
+      required:
+        [sped_file_id, period, kind, layout_version, uf, documents_count,
+         has_icms_assessment, has_ipi_assessment, rejected, counts, event_seq,
+         projection_hash]
+      properties:
+        sped_file_id: { type: string, format: uuid }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        kind: { type: string, enum: [original, retificadora] }
+        layout_version: { type: string }
+        company_name: { type: string }
+        uf:
+          type: string
+          description: A EFD ICMS/IPI é estadual; sem a UF não se sabe qual legislação aplicar.
+        documents_count: { type: integer }
+        has_icms_assessment:
+          type: boolean
+          description: >
+            Se o arquivo trouxe `E110`. Distingue ausência de apuração de apuração
+            zerada, que não são a mesma coisa.
+        has_ipi_assessment: { type: boolean }
+        rejected:
+          type: array
+          description: Registros recusados, com a linha e o motivo. Um ruim não derruba os bons.
+          items:
+            type: object
+            properties:
+              line: { type: integer }
+              record: { type: string }
+              reason: { type: string }
+        counts:
+          type: object
+          description: Registros lidos por tipo, para conferir o que entrou.
+          additionalProperties: { type: integer }
+        event_seq: { type: integer }
+        projection_hash: { type: string }
+
+    IcmsIpiCheck:
+      type: object
+      required: [checkId, name, rule, status, severity, issues]
+      properties:
+        checkId: { type: string }
+        name: { type: string }
+        rule:
+          type: string
+          description: A regra conferida, com a origem no guia. Vai para a tela e para o Book.
+        status: { type: string, enum: [passed, failed, not_verified] }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        notVerifiedReason:
+          type: string
+          nullable: true
+          description: >
+            Por que não deu para conferir; `null` quando conferiu. `not_verified`
+            sem motivo é indistinguível de desleixo — quem lê precisa saber se
+            falta arquivo, falta registro ou falta suporte nosso.
+        declaredCents: { type: integer, nullable: true }
+        expectedCents: { type: integer, nullable: true }
+        differenceCents: { type: integer, nullable: true }
+        issues:
+          type: array
+          items:
+            type: object
+            properties:
+              subject: { type: string }
+              message: { type: string }
+              differenceCents: { type: integer }
+
+    IcmsIpiReconciliation:
+      type: object
+      required:
+        [period, kind, layout_version, imported_at, checks, totalDifferenceCents,
+         failedCount, notVerifiedCount]
+      properties:
+        period: { $ref: "#/components/schemas/PeriodId" }
+        kind: { type: string, enum: [original, retificadora] }
+        layout_version: { type: string }
+        imported_at: { type: string, format: date-time }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/IcmsIpiCheck" }
+        totalDifferenceCents:
+          type: integer
+          description: Soma das diferenças absolutas só das conferências que falharam.
+        failedCount: { type: integer }
+        notVerifiedCount:
+          type: integer
+          description: >
+            Quantas não puderam ser conferidas. Aparece ao lado das que falharam
+            para que "nenhuma falha" nunca seja lido como "tudo conferido".
 
     CreditBackingCheck:
       type: object
@@ -2719,7 +2983,13 @@ components:
         accepted: { type: integer }
         rejected: { type: integer }
         error: { type: string, nullable: true }
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Resumo da execução. Na coleta de DF-e, lotes, NSUs, documentos, resumos e ciências.
         created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
         finished_at: { type: string, format: date-time, nullable: true }
 
     Event:

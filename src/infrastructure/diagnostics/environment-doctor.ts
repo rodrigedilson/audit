@@ -69,7 +69,12 @@ const TABELAS = [
   'simulations',
   'sped_files',
   'sped_documents',
+  'efd_icms_documents',
+  'efd_icms_assessments',
   'sped_carried_credits',
+  'dfe_sync_state',
+  'dfe_summaries',
+  'dfe_documents',
 ] as const;
 
 const FUNCOES = [
@@ -127,7 +132,12 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   simulations: '11-simulador-de-regime.sql',
   sped_files: '12-dossie-saldo-credor.sql',
   sped_documents: '12-dossie-saldo-credor.sql',
+  efd_icms_documents: '18-efd_icms_ipi.sql',
+  efd_icms_assessments: '18-efd_icms_ipi.sql',
   sped_carried_credits: '12-dossie-saldo-credor.sql',
+  dfe_sync_state: '19-coleta-dfe.sql',
+  dfe_summaries: '19-coleta-dfe.sql',
+  dfe_documents: '19-coleta-dfe.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {
@@ -144,6 +154,9 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
         `banco configurado`,
         env.supabase.jwksUrl ? 'JWT por JWKS' : 'JWT por segredo HS256',
         `cofre A1 com chave de ${env.certificateMasterKey.length} caracteres`,
+        env.anthropic === undefined
+          ? 'assistente só na camada 1'
+          : `assistente camada 3 com ${env.anthropic.model}`,
       ].join(' · '),
     });
   } catch (erro) {
@@ -201,6 +214,8 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await checarRegrasPublicadas(pool));
     checagens.push(await checarPrazosNormativos(pool));
     checagens.push(await checarCotaDoAssistente(pool));
+    checagens.push(await checarCnpjAlfanumerico(pool));
+    checagens.push(await checarCobranca(pool, env));
     checagens.push(await checarEscritorio(pool));
   } finally {
     await pool.end().catch(() => undefined);
@@ -420,6 +435,77 @@ export async function checarCotaDoAssistente(pool: pg.Pool): Promise<Checagem> {
       'O `UPDATE` de carga não rodou: o assistente vai responder 403 para todos os\n' +
       '  clientes, sem erro em log nenhum. Reaplique\n' +
       '  scripts/sql/migracoes/09-assistente-fiscal.sql — é idempotente.',
+  };
+}
+
+/**
+ * Cobrança: schema da ativação e gateway do ambiente.
+ *
+ * É o registro do que falta para cobrar de verdade. Em prod, sem as chaves do
+ * Asaas, a cobrança roda em modo "só cálculo" e a ativação responde 503. Isso é
+ * aviso, não falha: o produto funciona, mas não fatura, e a lista do que
+ * configurar precisa aparecer a cada `doctor`, e não depender de alguém lembrar.
+ *
+ * Em dev, chave do Asaas é o erro: o banco é o de produção, e o sandbox
+ * gravaria IDs de cliente e de assinatura falsos nas tabelas de cobrança reais.
+ */
+export async function checarCobranca(pool: pg.Pool, env: Env): Promise<Checagem> {
+  const nome = 'cobrança (Asaas)';
+  const { rows } = await pool.query<{ colunas: string; ativadas: string | null }>(
+    `select (select count(*) from information_schema.columns
+              where table_schema = 'public' and table_name = 'subscriptions'
+                and column_name in ('billing_document', 'billing_email', 'billing_type', 'activated_at'))::text
+              as colunas,
+            (select count(*) from subscriptions where asaas_subscription_id is not null)::text as ativadas`,
+  );
+
+  if (Number(rows[0]!.colunas) < 4) {
+    return {
+      nome,
+      estado: 'falha',
+      detalhe: 'schema da ativação ausente em subscriptions',
+      acao:
+        'A ativação da cobrança vai falhar ao gravar os dados do pagador. Aplique\n' +
+        '  scripts/sql/migracoes/17-ativacao-da-cobranca.sql — é idempotente.',
+    };
+  }
+
+  const ativadas = Number(rows[0]!.ativadas ?? 0);
+
+  if (env.environment === 'dev') {
+    return env.asaas === undefined
+      ? {
+          nome,
+          estado: 'ok',
+          detalhe: 'dev sem gateway, como deve: o banco é o de produção, e a cobrança é testada com dublê',
+        }
+      : {
+          nome,
+          estado: 'aviso',
+          detalhe: 'dev com ASAAS_API_KEY',
+          acao:
+            'Tire a chave do config dev: com o banco compartilhado, o sandbox grava IDs\n' +
+            '  falsos nas tabelas de cobrança de produção. Ver docs/setup/SEGREDOS.md.',
+        };
+  }
+
+  if (env.asaas === undefined) {
+    return {
+      nome,
+      estado: 'aviso',
+      detalhe: 'modo só cálculo: sem ASAAS_API_KEY, a ativação responde 503 e nada é faturado',
+      acao:
+        'Para cobrar (docs/setup/SEGREDOS.md, seção Cobrança):\n' +
+        '  1. ASAAS_API_KEY, ASAAS_BASE_URL=https://api.asaas.com/v3 e ASAAS_WEBHOOK_TOKEN no Doppler prd;\n' +
+        '  2. webhook /v1/webhooks/asaas no painel do Asaas, com o mesmo token;\n' +
+        '  3. conferir no sandbox o ajuste de valor de cobrança gerada por assinatura.',
+    };
+  }
+
+  return {
+    nome,
+    estado: 'ok',
+    detalhe: `gateway configurado · ${ativadas} escritório(s) com cobrança ativada`,
   };
 }
 
@@ -700,6 +786,50 @@ async function checarRegrasPublicadas(pool: pg.Pool): Promise<Checagem> {
  * Sem um `membership`, a API responde 403 em tudo: o tenant é resolvido pela
  * tabela, nunca por um claim do token.
  */
+/**
+ * As restrições de CNPJ aceitam letras?
+ *
+ * Existe porque a falha é muda e cara: sem a migration, o banco recusa o CNPJ
+ * alfanumérico numa `check` e a API devolve **500**, não mensagem de validação.
+ * O escritório vê "erro no sistema" ao cadastrar justamente a empresa nova que
+ * acabou de captar — e a Receita emite CNPJ alfanumérico desde 31/07/2026.
+ *
+ * A checagem não tenta inserir nada: lê a definição das restrições e procura
+ * pela antiga, só de dígitos.
+ */
+export async function checarCnpjAlfanumerico(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ tabela: string }>(
+    `select rel.relname as tabela
+       from pg_constraint con
+       join pg_class rel on rel.oid = con.conrelid
+       join pg_namespace n on n.oid = rel.relnamespace
+      where n.nspname = 'public'
+        and con.contype = 'c'
+        and pg_get_constraintdef(con.oid) like '%cnpj%'
+        and pg_get_constraintdef(con.oid) like '%[0-9]{14}%'
+      order by rel.relname`,
+  );
+
+  if (rows.length === 0) {
+    return {
+      nome: 'CNPJ alfanumérico',
+      estado: 'ok',
+      detalhe: 'nenhuma restrição limita o CNPJ a dígitos',
+    };
+  }
+
+  const tabelas = rows.map((r) => r.tabela).join(', ');
+
+  return {
+    nome: 'CNPJ alfanumérico',
+    estado: 'falha',
+    detalhe:
+      `${rows.length} tabela(s) ainda exigem CNPJ só de dígitos: ${tabelas}. ` +
+      'Cadastrar empresa aberta de 31/07/2026 em diante devolve 500.',
+    acao: 'Rode scripts/sql/migracoes/19-cnpj_alfanumerico.sql.',
+  };
+}
+
 async function checarEscritorio(pool: pg.Pool): Promise<Checagem> {
   const { rows } = await pool.query<{ escritorios: string; owners: string }>(
     `select (select count(*)::text from tenants) as escritorios,

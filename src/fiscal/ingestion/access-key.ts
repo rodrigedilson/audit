@@ -1,7 +1,17 @@
 /**
- * Chave de acesso do DF-e: 44 dígitos que carregam UF, competência de emissão,
+ * Chave de acesso do DF-e: 44 posições que carregam UF, competência de emissão,
  * CNPJ do emitente, modelo, série, número, tipo de emissão, código numérico e
  * dígito verificador.
+ *
+ * **Não é mais só numérica.** Como o CNPJ do emitente ocupa as posições 7 a 18 e
+ * desde 31/07/2026 ele pode ter letras, a chave passou a aceitá-las ali —
+ * `[0-9]{6}[A-Z0-9]{12}[0-9]{26}` — e o dígito verificador passou a ser
+ * calculado sobre o valor ASCII menos 48 de cada caractere. É a Nota Técnica
+ * Conjunta CNPJ Alfanumérico 2025.001.
+ *
+ * Para chave só de dígitos o resultado é idêntico ao de antes, porque o ASCII de
+ * `0` a `9` menos 48 é o próprio dígito. Nenhuma chave já validada deixa de
+ * valer — e há teste fixando isso.
  *
  * Validar a chave antes de qualquer outra coisa é o filtro mais barato da
  * ingestão: um XML truncado, com chave trocada ou com dígito inválido é
@@ -26,18 +36,36 @@ export class AccessKeyError extends Error {
   }
 }
 
-const DIGITS_44 = /^[0-9]{44}$/;
+/**
+ * Letras só nas doze posições do CNPJ, e só maiúsculas, como a Nota Técnica
+ * define. Quem lê a chave de um arquivo sobe a caixa antes de chegar aqui:
+ * minúscula mudaria o valor ASCII e o dígito verificador não fecharia.
+ */
+export const PADRAO_DA_CHAVE = '^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$';
+
+const CHAVE_44 = new RegExp(PADRAO_DA_CHAVE);
+
+/**
+ * Chave dentro de um texto (mensagem de erro, pergunta), sem colar em outra
+ * sequência alfanumérica dos lados.
+ */
+export const CHAVE_EM_TEXTO = /(?<![0-9A-Z])([0-9]{6}[0-9A-Z]{12}[0-9]{26})(?![0-9A-Z])/;
 
 /**
  * Dígito verificador por módulo 11 com pesos cíclicos de 2 a 9, da direita para
- * a esquerda — o algoritmo da NT da NF-e. Resto 0 ou 1 resulta em DV 0.
+ * a esquerda. Resto 0 ou 1 resulta em DV 0.
+ *
+ * O valor de cada caractere é o código ASCII menos 48, e não `Number(c)`: é o
+ * que a Nota Técnica Conjunta CNPJ Alfanumérico 2025.001 manda, e é o que faz a
+ * letra ter valor. `Number('A')` seria `NaN`, e a soma inteira viraria `NaN` —
+ * o DV sairia `'0'` por acidente e uma chave qualquer passaria.
  */
 export function computeCheckDigit(first43: string): string {
   let sum = 0;
   let weight = 2;
 
   for (let i = first43.length - 1; i >= 0; i--) {
-    sum += Number(first43[i]) * weight;
+    sum += (first43.charCodeAt(i) - 48) * weight;
     weight = weight === 9 ? 2 : weight + 1;
   }
 
@@ -46,16 +74,17 @@ export function computeCheckDigit(first43: string): string {
 }
 
 export function isValidAccessKey(key: string): boolean {
-  if (!DIGITS_44.test(key)) {
+  if (!CHAVE_44.test(key)) {
     return false;
   }
   return computeCheckDigit(key.slice(0, 43)) === key[43];
 }
 
 export function parseAccessKey(key: string): AccessKeyParts {
-  if (!DIGITS_44.test(key)) {
+  if (!CHAVE_44.test(key)) {
     throw new AccessKeyError(
-      `Chave de acesso deve ter 44 dígitos; recebida com ${key.length}.`,
+      'Chave de acesso deve ter 44 posições, com letras admitidas apenas nas doze ' +
+        `do CNPJ do emitente; recebida '${key}' com ${key.length}.`,
     );
   }
 

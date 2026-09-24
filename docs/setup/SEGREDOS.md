@@ -80,7 +80,26 @@ existem. O que falta é marcar o ambiente em cada um.
 
 ### 1. Doppler: marcar os dois configs
 
+> **O CLI é opcional para a rotação.** Criar o projeto, guardar os segredos e
+> ligar a integração com o Render se fazem inteiros no painel do Doppler. O CLI
+> serve para rodar o projeto localmente (`doppler run`) e para os scripts de
+> recifragem.
+
 ```bash
+# Antes de tudo: instalar e autenticar o CLI.
+#
+# O comando da documentação oficial — `curl … | sh` — usa o gerenciador de
+# pacote e falha sem root: `dpkg: requested operation requires superuser
+# privilege`. Com `--install-path` ele desliga o gerenciador e instala no
+# diretório do usuário, que é o que se quer numa máquina de desenvolvimento.
+mkdir -p "$HOME/.local/bin"
+curl -Ls https://cli.doppler.com/install.sh | sh -s -- --install-path "$HOME/.local/bin"
+
+# Se `doppler` não for encontrado depois, falta o diretório no PATH:
+# export PATH="$HOME/.local/bin:$PATH"
+
+doppler login
+
 doppler secrets set AUDIT_ENV=prod --project audit --config prd
 doppler secrets set CORS_ORIGINS=https://sped-genius-hub.vercel.app --project audit --config prd
 
@@ -161,6 +180,28 @@ precisa ter `AUDIT_ENV=dev`. E não pode ter `TEST_DATABASE_URL` junto da
 doppler run --project audit --config dev -- npm run doctor   # ambiente dev
 doppler run --project audit --config prd -- npm run doctor   # ambiente prod
 ```
+
+## Assistente fiscal, camada 3 (Anthropic)
+
+**Estado em 2026-09-24:** o código está pronto, e a chave ainda não está no
+Doppler. Sem ela, o assistente responde as perguntas da lista, por consulta
+determinística e com citação, e diz "não sei, e eis o que sei" para as outras. O
+`npm run doctor` mostra `assistente só na camada 1` na linha das variáveis.
+
+Quando houver chave:
+
+```bash
+doppler secrets set ANTHROPIC_API_KEY --project audit --config prd
+# opcional; o padrão é claude-opus-5, a camada 3 do ADR-026
+doppler secrets set ASSISTANT_MODEL=claude-opus-5 --project audit --config prd
+```
+
+Em `dev` a chave pode existir: o assistente só grava em `assistant_messages`,
+que é conversa e não apuração. Mas cada pergunta fora da lista custa uma chamada
+ao modelo. Use uma chave com limite de gasto próprio, e não a de produção.
+
+O `doctor` passa a dizer `assistente camada 3 com claude-opus-5`, e
+`GET /v1/assistant/capabilities` passa a devolver `language_model_configured: true`.
 
 ## Rotação da chave mestra
 

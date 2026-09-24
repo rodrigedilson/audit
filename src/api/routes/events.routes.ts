@@ -5,11 +5,12 @@ import { EventReplayerService } from '../../esaa/core/event-store/event-replayer
 import { FiscalProjectorService } from '../../fiscal/projection/fiscal-projector.service.js';
 import { FiscalHashVerifierService } from '../../fiscal/projection/fiscal-hash-verifier.service.js';
 import { inferActorType } from '../actor-type.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const CNPJ_PARAM = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 interface CnpjParams {

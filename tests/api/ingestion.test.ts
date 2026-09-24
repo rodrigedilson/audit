@@ -389,18 +389,17 @@ describe.skipIf(!DATABASE_URL)('API — ingestão de documentos', () => {
      * EFD-Contribuições na Onda 12 (upload do arquivo) — as duas deixaram de ser
      * promessa e viraram rota que funciona.
      */
-    it('a coleta DF-e responde 501 apontando o caminho disponível', async () => {
-      for (const path of ['sync']) {
-        const response = await app.inject({
-          method: 'POST',
-          url: `/v1/clients/${cnpj}/${path}`,
-          headers: { authorization: `Bearer ${await tokenFor(owner)}` },
-          payload: {},
-        });
+    /** Dev não fala com a SEFAZ (ADR-006); a coleta de verdade está em dfe-sync.test.ts. */
+    it('sem gateway da SEFAZ, a coleta responde 503 apontando o upload manual', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/clients/${cnpj}/sync`,
+        headers: { authorization: `Bearer ${await tokenFor(owner)}` },
+        payload: {},
+      });
 
-        expect(response.statusCode).toBe(501);
-        expect(response.json().message).toMatch(/upload manual de XML/);
-      }
+      expect(response.statusCode).toBe(503);
+      expect(response.json().message).toMatch(/upload manual/);
     });
 
     it('404 para job de outro escritório, sem confirmar existência', async () => {

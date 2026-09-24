@@ -115,3 +115,24 @@ describe('loadEnv — dev', () => {
     expect(loadEnv({ ...DEV }).corsOrigins).toEqual(['http://localhost:5173']);
   });
 });
+
+describe('loadEnv — assistente', () => {
+  const DEV = { ...BASE, AUDIT_ENV: 'dev' } as const;
+
+  it('sem ANTHROPIC_API_KEY, não há camada 3', () => {
+    expect(loadEnv({ ...DEV }).anthropic).toBeUndefined();
+  });
+
+  it('com a chave, a camada 3 usa claude-opus-5 por padrão', () => {
+    expect(loadEnv({ ...DEV, ANTHROPIC_API_KEY: 'sk-teste' }).anthropic).toEqual({
+      apiKey: 'sk-teste',
+      model: 'claude-opus-5',
+    });
+  });
+
+  it('ASSISTANT_MODEL troca o modelo', () => {
+    expect(loadEnv({ ...DEV, ANTHROPIC_API_KEY: 'sk-teste', ASSISTANT_MODEL: 'claude-sonnet-5' }).anthropic?.model).toBe(
+      'claude-sonnet-5',
+    );
+  });
+});
