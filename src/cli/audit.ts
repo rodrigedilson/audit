@@ -219,7 +219,7 @@ function simbolo(checagem: Checagem): string {
  */
 async function runServe(): Promise<number> {
   const env = loadEnv();
-  const app = await buildServer({ env });
+  const app = await buildServer({ env, startWorkers: true });
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {

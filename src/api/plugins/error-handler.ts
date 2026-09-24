@@ -3,6 +3,7 @@ import { UnauthorizedError } from '../auth/jwt-verifier.js';
 import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { BillingSettingsMissingError } from '../../billing/billing.service.js';
 import { BillingConflictError, BillingInputError } from '../../billing/billing-activation.service.js';
+import { DfeSyncRefusedError } from '../../fiscal/dfe/dfe-sync.service.js';
 import {
   ESAAError,
   IntegrityViolationError,
@@ -34,6 +35,19 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (error instanceof BillingSettingsMissingError) {
       request.log.error({ err: error }, 'billing_settings ausente');
       return reply.code(503).send({ code: 'billing_not_configured', message: error.message });
+    }
+
+    // Pedir antes da hora conta como consumo indevido na SEFAZ: 429 com o
+    // horário, para a tela mostrar quando dá, em vez de deixar tentar de novo.
+    if (error instanceof DfeSyncRefusedError) {
+      if (error.kind === 'blocked' && error.retryAt !== undefined) {
+        const segundos = Math.max(1, Math.ceil((error.retryAt.getTime() - Date.now()) / 1000));
+        return reply
+          .code(429)
+          .header('retry-after', String(segundos))
+          .send({ code: 'dfe_sync_blocked', message: error.message, retry_at: error.retryAt.toISOString() });
+      }
+      return reply.code(409).send({ code: `dfe_${error.kind}`, message: error.message });
     }
 
     if (error instanceof BillingConflictError) {

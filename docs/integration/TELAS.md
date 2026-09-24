@@ -82,6 +82,9 @@ Cabeçalho com razão social, CNPJ, regime e `has_certificate`. Abas:
 ### 5. Cofre de certificados A1
 `GET|PUT|DELETE /v1/clients/{cnpj}/certificate` · `GET .../certificate/usage` · `GET /v1/certificates/expiring`
 
+`usable_for_sync: false` no `GET` do certificado quer dizer que ele foi enviado
+antes da coleta de DF-e, e precisa ser reenviado para buscar notas na SEFAZ.
+
 - **Sem certificado:** upload (`PUT`, multipart `pfx` + `password`), **somente
   `owner`**. Avise que o arquivo é cifrado e que a senha **não** é guardada.
 - **Com certificado:** titular, emissor, serial, validade, `days_to_expiry`
@@ -123,10 +126,29 @@ Documento item a item, com `legacy_taxes` (ICMS, IPI, PIS, COFINS) e
 Esta é a tela que materializa o diferencial: os dois sistemas no mesmo item.
 Valores vêm em centavos inteiros — divida por 100 na apresentação, nunca antes.
 
-`POST /clients/{cnpj}/sync` (DF-e da SEFAZ) responde **501** por enquanto e
-aponta o upload manual: enfileirar sem consumidor deixaria o escritório
-esperando um job que nunca sai de `queued`. O SPED (`/sped`) e o extrato
-(`/bank-statements`) já têm rota própria, por upload.
+**Coleta na SEFAZ** (ADR-006). O botão "Buscar notas na SEFAZ" chama
+`POST /clients/{cnpj}/sync`, que responde **202** com um `Job`. Acompanhe por
+`GET /jobs/{job_id}` até `done` ou `failed`. O `result` traz os números da
+coleta.
+
+- `GET /clients/{cnpj}/dfe` alimenta o painel da coleta:
+  - `next_allowed_at`: antes desse horário o botão fica desabilitado, e a tela
+    mostra o horário;
+  - `summaries.awaiting_full_xml`: notas de entrada com ciência feita, cujo XML
+    chega na próxima coleta;
+  - `documents.awaiting_period_open`: notas baixadas de competência ainda não
+    aberta. Mostre "abra a competência para incluí-las": elas entram na coleta
+    seguinte, e não viram rejeição.
+- Erros que a tela trata:
+  - **429**: a SEFAZ pune consulta repetida com uma hora de bloqueio. Mostre
+    `retry_at` e não ofereça tentar de novo;
+  - **409 `dfe_certificate_not_usable`**: certificado enviado antes da coleta.
+    Leve à aba do certificado para reenviar;
+  - **409 `dfe_missing_uf`**: leve ao cadastro da empresa;
+  - **503 `dfe_gateway_not_configured`**: o esperado em dev. O upload manual
+    continua em `POST /clients/{cnpj}/documents`.
+
+O SPED (`/sped`) e o extrato (`/bank-statements`) têm rota própria, por upload.
 
 ### 7. Saúde do cadastro de itens (Onda 5)
 `GET /v1/clients/{cnpj}/items?health` · `PUT .../items/{item_id}/classification` · `GET .../items/health`

@@ -340,12 +340,83 @@ paths:
     post:
       tags: [ingestion]
       summary: Dispara coleta na distribuição DF-e (assíncrono)
+      description: >
+        ADR-006. Enfileira a coleta; o worker consulta a SEFAZ por NSU com o A1
+        do cliente, ingere as NF-e completas das competências abertas pelo mesmo
+        caminho do upload e registra a ciência da operação (210210) dos resumos
+        de entrada. A NF-e de entrada chega completa na coleta seguinte à
+        ciência. Com coleta pendente, devolve o mesmo job (`reused: true`).
       responses:
         "202":
           description: Job aceito
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Job" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Job"
+                  - type: object
+                    properties:
+                      reused: { type: boolean }
+        "409":
+          description: >
+            Sem certificado (`dfe_no_certificate`), certificado guardado antes da
+            coleta e que precisa ser reenviado (`dfe_certificate_not_usable`) ou
+            cliente sem UF (`dfe_missing_uf`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: >
+            A SEFAZ só aceita nova consulta a partir de `retry_at` (cabeçalho
+            `Retry-After`). Consultar antes conta como consumo indevido (656).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Coleta indisponível no ambiente (`dfe_gateway_not_configured`). Esperado em dev.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /clients/{cnpj}/dfe:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [ingestion]
+      summary: Estado da coleta de DF-e do CNPJ
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cnpj: { type: string }
+                  available: { type: boolean, description: "Há gateway da SEFAZ neste ambiente." }
+                  ult_nsu: { type: string, nullable: true }
+                  max_nsu: { type: string, nullable: true }
+                  last_cstat: { type: string, nullable: true }
+                  last_message: { type: string, nullable: true }
+                  last_run_at: { type: string, format: date-time, nullable: true }
+                  next_allowed_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: Antes disso, POST /sync responde 429.
+                  summaries:
+                    type: object
+                    properties:
+                      awaiting_acknowledgement: { type: integer }
+                      awaiting_full_xml: { type: integer }
+                      acknowledgement_failed: { type: integer }
+                  documents:
+                    type: object
+                    properties:
+                      awaiting_period_open:
+                        type: integer
+                        description: NF-e baixada de competência ainda não aberta; entra na coleta seguinte à abertura.
+                      rejected_by_pipeline: { type: integer }
 
   /clients/{cnpj}/sped:
     parameters:
@@ -2908,7 +2979,13 @@ components:
         accepted: { type: integer }
         rejected: { type: integer }
         error: { type: string, nullable: true }
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Resumo da execução. Na coleta de DF-e, lotes, NSUs, documentos, resumos e ciências.
         created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
         finished_at: { type: string, format: date-time, nullable: true }
 
     Event:

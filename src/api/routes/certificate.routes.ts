@@ -8,6 +8,7 @@ import {
   CertificateVault,
   daysToExpiry,
   readCertificateMetadata,
+  extrairCredencial,
 } from '../../fiscal/portfolio/certificate-vault.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
@@ -48,8 +49,9 @@ export async function registerCertificateRoutes(
         valid_to: Date;
         stored_at: Date;
         stored_by: string;
+        credential_format: string;
       }>(
-        `select subject, issuer, serial, valid_from, valid_to, stored_at, stored_by
+        `select subject, issuer, serial, valid_from, valid_to, stored_at, stored_by, credential_format
            from certificates
           where tenant_id = $1::uuid and cnpj = $2::char(14)`,
         [scope.tenantId, scope.cnpj],
@@ -83,6 +85,9 @@ export async function registerCertificateRoutes(
          * nome afirmava um recorte que ninguém calculava.
          */
         usage_count: projection.certificate?.usage_count ?? 0,
+        // Certificado enviado antes da coleta de DF-e foi guardado como PFX com
+        // senha descartada, e não abre: precisa ser reenviado (ADR-006).
+        usable_for_sync: certificate.credential_format === 'pem_bundle',
       });
     },
   );
@@ -104,8 +109,12 @@ export async function registerCertificateRoutes(
       const { pfx, password } = await readUpload(request);
 
       let metadata;
+      let credencial: Buffer;
       try {
         metadata = readCertificateMetadata(pfx, password);
+        // O que se guarda é a credencial, e não o PFX: a senha que o protege
+        // não é guardada, e sem ela o PFX não abriria na coleta (ADR-006).
+        credencial = extrairCredencial(pfx, password);
       } catch (cause) {
         if (cause instanceof CertificateError) {
           throw new ValidationError(2, 'schema_violation', cause.message);
@@ -113,7 +122,7 @@ export async function registerCertificateRoutes(
         throw cause;
       }
 
-      const encrypted = vault.encrypt(pfx);
+      const encrypted = vault.encrypt(credencial);
 
       // O evento vem primeiro: é a fonte da verdade. A tabela guarda o material
       // cifrado, que não cabe no log — um PFX de 4 KB em base64 dentro de um
@@ -137,10 +146,11 @@ export async function registerCertificateRoutes(
       await deps.pool.query(
         `insert into certificates (
            tenant_id, cnpj, encrypted_pfx, fingerprint, key_id, subject, issuer, serial,
-           valid_from, valid_to, stored_by
-         ) values ($1::uuid, $2::char(14), $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11::uuid)
+           valid_from, valid_to, stored_by, credential_format
+         ) values ($1::uuid, $2::char(14), $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11::uuid, 'pem_bundle')
          on conflict (tenant_id, cnpj) do update set
            encrypted_pfx = excluded.encrypted_pfx,
+           credential_format = excluded.credential_format,
            fingerprint = excluded.fingerprint,
            key_id = excluded.key_id,
            subject = excluded.subject,

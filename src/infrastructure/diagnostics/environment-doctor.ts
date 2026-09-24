@@ -70,6 +70,9 @@ const TABELAS = [
   'sped_files',
   'sped_documents',
   'sped_carried_credits',
+  'dfe_sync_state',
+  'dfe_summaries',
+  'dfe_documents',
 ] as const;
 
 const FUNCOES = [
@@ -128,6 +131,9 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   sped_files: '12-dossie-saldo-credor.sql',
   sped_documents: '12-dossie-saldo-credor.sql',
   sped_carried_credits: '12-dossie-saldo-credor.sql',
+  dfe_sync_state: '19-coleta-dfe.sql',
+  dfe_summaries: '19-coleta-dfe.sql',
+  dfe_documents: '19-coleta-dfe.sql',
 };
 
 export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Promise<Diagnostico> {

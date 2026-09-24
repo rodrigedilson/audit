@@ -25,6 +25,9 @@ import { registerEfdIcmsIpiRoutes } from './routes/efd-icms-ipi.routes.js';
 import { AsaasClient, type AsaasGateway } from '../billing/asaas-client.js';
 import type { LanguageModelPort } from '../fiscal/assistant/language-model.port.js';
 import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.js';
+import { SefazSoapClient, type SefazDfeGateway } from '../fiscal/dfe/sefaz-gateway.js';
+import { DfeSyncService } from '../fiscal/dfe/dfe-sync.service.js';
+import { startDfeWorker } from '../fiscal/dfe/dfe-worker.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
@@ -51,9 +54,21 @@ export interface ApiDeps {
   asaas?: AsaasGateway;
   /** Camada 3 do assistente. Ausente sem `ANTHROPIC_API_KEY`. */
   languageModel?: LanguageModelPort;
+  /**
+   * Coleta de DF-e. Ausente em dev: o banco é o de produção, e uma coleta em
+   * homologação gravaria notas de teste na base real (ADR-006).
+   */
+  dfe?: DfeSyncService;
 }
 
 declare module 'fastify' {
+  interface FastifyInstance {
+    /**
+     * Coleta de DF-e, quando há gateway. Exposta para o `serve` e os testes
+     * executarem a fila sem depender do worker de fundo.
+     */
+    dfeSync?: DfeSyncService;
+  }
   interface FastifyRequest {
     /**
      * Preenchido pelo hook de autenticação. Sempre presente nas rotas
@@ -96,6 +111,13 @@ export interface BuildServerOptions {
   asaas?: AsaasGateway;
   /** Modelo de linguagem. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
   languageModel?: LanguageModelPort;
+  /** Gateway da SEFAZ. Os testes injetam um dublê; sem ele, só em `prod`. */
+  sefaz?: SefazDfeGateway;
+  /**
+   * Sobe o worker da coleta junto com o servidor. Só o `serve` liga: os testes
+   * executam os jobs direto, e um worker de fundo disputaria a fila com eles.
+   */
+  startWorkers?: boolean;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -146,6 +168,17 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     },
   };
 
+  const sefaz = options.sefaz ?? (env.environment === 'prod' ? new SefazSoapClient() : undefined);
+  if (sefaz !== undefined) {
+    deps.dfe = new DfeSyncService(
+      pool,
+      sefaz,
+      env.certificateMasterKey,
+      env.certificateMasterKeyPrevious,
+      deps.orchestratorFor,
+    );
+  }
+
   const app = Fastify({
     logger: {
       level: env.logLevel,
@@ -156,6 +189,17 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   });
 
   registerErrorHandler(app);
+
+  if (deps.dfe !== undefined) {
+    app.decorate('dfeSync', deps.dfe);
+  }
+
+  if (options.startWorkers && deps.dfe !== undefined) {
+    const worker = startDfeWorker(deps.dfe, {
+      onError: (erro) => app.log.error({ err: erro }, 'worker da coleta de DF-e'),
+    });
+    app.addHook('onClose', async () => worker.stop());
+  }
 
   await app.register(cors, {
     origin: env.corsOrigins,

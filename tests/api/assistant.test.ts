@@ -140,8 +140,9 @@ describe.skipIf(!DATABASE_URL)('API — assistente fiscal somente leitura', () =
     cnpj = randomCnpj();
     fornecedor = randomCnpj();
 
-    // `lucro_real` dá a maior cota e isola de `tax_rules`, que outros arquivos
-    // apagam em paralelo — aqui nenhuma resposta depende de regra publicada.
+    // `lucro_real` dá a maior cota. Não isola de `tax_rules`: `assessment.test.ts`
+    // publica regra de ICMS para ele em paralelo. O teste que depende da
+    // ausência de regra troca o regime (ver "devido não determinável").
     await createClient(pool, tenantId, cnpj, { regime: 'lucro_real' });
     await call('POST', `/v1/clients/${cnpj}/periods`, { period: PERIODO });
 
@@ -378,6 +379,15 @@ describe.skipIf(!DATABASE_URL)('API — assistente fiscal somente leitura', () =
      * tratá-la como fechada.
      */
     it('devido não determinável baixa a confiança e explica o motivo', async () => {
+      // `tax_rules` é global, e `assessment.test.ts` publica e apaga regra de
+      // ICMS para `lucro_real` em paralelo: com a regra presente naquele
+      // instante, o ICMS fica determinável e a confiança sai `high`, certa.
+      // Nenhum teste publica regra para `lucro_presumido`, e este caso precisa
+      // justamente da ausência de regra.
+      await pool.query(
+        "update clients set regime = 'lucro_presumido' where tenant_id = $1::uuid and cnpj = $2::char(14)",
+        [tenantId, cnpj],
+      );
       await subir([nfeXml(cnpj, fornecedor, '000000015')]);
       await call('POST', `/v1/clients/${cnpj}/assessments/${PERIODO}`);
 
