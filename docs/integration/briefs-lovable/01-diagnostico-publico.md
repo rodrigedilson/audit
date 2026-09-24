@@ -164,7 +164,7 @@ enviado" e não deixe o usuário insistir.
 | Vazio | Área de upload + explicação. Sem esqueleto de tabela. |
 | Carregando | Barra ou spinner, "Lendo N arquivos…". Sem porcentagem falsa. |
 | `200` com `parsed: 0` | Todos os arquivos falharam: mostre as rejeições e convide a tentar de novo. Não mostre 0% como se fosse resultado. |
-| `422` | `{ message }` inline na área de upload — é limite de forma (nenhum arquivo, mais de 50, mais de 10 MB). No envio do e-mail, é endereço malformado ou consentimento ausente. |
+| `400` | `{ code: "bad_request", message }` inline — limite de forma (nenhum arquivo, mais de 50, mais de 10 MB) ou, no envio do e-mail, endereço malformado. A `message` já vem pronta para exibir. |
 | `404` no envio do e-mail | Já registrado, ou `report_id` perdido. "Este relatório já foi enviado." |
 | `429` com `code: "rate_limited"` | "Você fez muitos diagnósticos seguidos. Tente de novo em N segundos." Use `retry_after_seconds`. **Não é tela de upgrade.** |
 | `503` com `code: "diagnostic_disabled"` | "O diagnóstico está temporariamente indisponível." |

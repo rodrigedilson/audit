@@ -1801,7 +1801,19 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReadinessReport" }
-        "422": { $ref: "#/components/responses/Rejected" }
+        "400":
+          description: >
+            Entrada malformada: nenhum arquivo, mais de 50, ou lote acima de
+            10 MB. A mensagem é a frase pronta para a tela — a superfície
+            pública não usa o vocabulário de camada e motivo do pipeline
+            fiscal, que não significa nada para um visitante anônimo.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [bad_request] }
+                  message: { type: string }
         "429":
           description: Limite de uso do diagnóstico público
           content:
@@ -1866,7 +1878,15 @@ paths:
                 properties:
                   lead_registered: { type: boolean, enum: [true] }
         "404": { $ref: "#/components/responses/NotFound" }
-        "422": { $ref: "#/components/responses/Rejected" }
+        "400":
+          description: E-mail malformado ou consentimento ausente. Frase pronta para a tela.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [bad_request] }
+                  message: { type: string }
         "429":
           description: Limite de uso
           content:

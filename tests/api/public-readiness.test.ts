@@ -255,7 +255,10 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
         campos: { email: 'isto-nao-e-email', consent: 'true' },
       });
 
-      expect(response.statusCode).toBe(422);
+      expect(response.statusCode).toBe(400);
+      // Frase pronta, sem o vocabulário do pipeline: quem lê é um visitante.
+      expect(response.json().message).toBe('E-mail inválido.');
+      expect(response.json().message).not.toMatch(/layer|schema_violation/);
       const { rows } = await pool.query('select count(*) from readiness_reports');
       expect(Number(rows[0].count)).toBe(0);
     });
@@ -307,7 +310,8 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
         consent: false,
       });
 
-      expect(r.statusCode).toBe(422);
+      expect(r.statusCode).toBe(400);
+      expect(r.json().message).toMatch(/consentir/);
       const { rows } = await pool.query('select email from readiness_reports');
       expect(rows[0].email).toBeNull();
     });
@@ -321,7 +325,8 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
         consent: true,
       });
 
-      expect(r.statusCode).toBe(422);
+      expect(r.statusCode).toBe(400);
+      expect(r.json().message).toBe('E-mail inválido.');
     });
 
     /** Reenviar o formulário não pode trocar o endereço nem a data já consentida. */
@@ -389,7 +394,8 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
         payload: form,
       });
 
-      expect(response.statusCode).toBe(422);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe('Nenhum arquivo XML enviado.');
     });
 
     it('recusa mais de 50 arquivos', async () => {
@@ -398,8 +404,9 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
       );
       const response = await diagnosticar(arquivos);
 
-      expect(response.statusCode).toBe(422);
-      expect(response.json().message).toMatch(/50 arquivos/);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe('Máximo de 50 arquivos por requisição.');
+      expect(response.json().message).not.toMatch(/layer|schema_violation/);
     });
 
     /**
