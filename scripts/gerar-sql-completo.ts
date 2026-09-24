@@ -48,9 +48,15 @@ const TITULOS: Record<string, string> = {
   '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
   '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
   '20260925130000_remove_projection_snapshots.sql': 'remove-projection-snapshots',
+  '20260925140000_auditoria_continua.sql': 'auditoria-continua',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260925140000_auditoria_continua.sql':
+    'Teste de comprovacao e inspecao documentaria: criterios de avaliacao,\n' +
+    '-- execucoes por censo, achados com risco por probabilidade x impacto e\n' +
+    '-- estorno que exige humano identificado. Os criterios nascem NAO\n' +
+    '-- conferidos: o achado existe, aparece e nao afirma.',
   '20260925130000_remove_projection_snapshots.sql':
     'Remove a tabela de snapshot da projeção, órfã desde a primeira migration:\n' +
     '-- nada nunca escreveu nela, e um cache vazio afirma um cache que não existe.',
