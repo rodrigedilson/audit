@@ -92,6 +92,11 @@ export class AssistantService {
     private readonly model?: LanguageModelPort,
   ) {}
 
+  /** Nome do modelo da camada 3, ou `undefined` quando só a camada 1 responde. */
+  get languageModelName(): string | undefined {
+    return this.model?.name;
+  }
+
   async usage(scope: EventScope): Promise<Usage> {
     const { rows } = await this.pool.query<{
       used: string;
