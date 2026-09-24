@@ -535,6 +535,133 @@ describe.skipIf(!DATABASE_URL)('API — coleta de DF-e na SEFAZ (ADR-006)', () =
       });
     });
 
+    describe('coleta agendada (ADR-007)', () => {
+      const ligar = async (enabled: boolean, userId = owner, servidor = app) =>
+        servidor.inject({
+          method: 'PUT',
+          url: `/v1/clients/${cnpj}/dfe/auto`,
+          headers: { authorization: `Bearer ${await token(userId)}` },
+          payload: { enabled },
+        });
+
+      /** Executa até o job deste CNPJ, como o worker faria. */
+      const executarAgendado = async (): Promise<Record<string, unknown>> => {
+        const { rows } = await pool.query<{ id: string }>(
+          "select id from jobs where tenant_id = $1::uuid and cnpj = $2::char(14) and trigger = 'schedule' order by created_at desc limit 1",
+          [tenantId, cnpj],
+        );
+        const alvo = rows[0]!.id;
+        for (let i = 0; i < 20; i += 1) {
+          const executado = await app.dfeSync!.runNext();
+          if (executado === alvo || executado === null) break;
+        }
+        return (await call('GET', `/v1/jobs/${alvo}`)).json();
+      };
+
+      beforeEach(async () => {
+        // Só este arquivo liga a opção: desligar as dos testes anteriores faz o
+        // agendador olhar só para o CNPJ do teste.
+        await pool.query('update clients set dfe_auto_sync = false where dfe_auto_sync');
+      });
+
+      it('só o owner liga, e a mudança vai para o log em nome dele', async () => {
+        expect((await ligar(true, viewer)).statusCode).toBe(403);
+
+        const r = await ligar(true);
+
+        expect(r.statusCode).toBe(200);
+        expect(r.json().auto_sync).toMatchObject({ enabled: true, enabled_by: owner });
+        expect((await call('GET', `/v1/clients/${cnpj}/dfe`)).json().auto_sync.enabled).toBe(true);
+        const mudancas = await eventos('client.updated');
+        expect(mudancas.at(-1)).toMatchObject({ actor: owner, payload: { dfe_auto_sync: true } });
+      });
+
+      it('não liga com certificado que não serve para a coleta', async () => {
+        await pool.query(
+          "update certificates set credential_format = 'pfx_protected' where tenant_id = $1::uuid and cnpj = $2::char(14)",
+          [tenantId, cnpj],
+        );
+
+        const r = await ligar(true);
+        expect(r.statusCode).toBe(409);
+        expect(r.json().code).toBe('dfe_certificate_not_usable');
+      });
+
+      /** Em dev o banco é o de produção: ligar de lá faria produção coletar. */
+      it('sem gateway da SEFAZ, 503', async () => {
+        expect((await ligar(true, owner, semSefaz)).statusCode).toBe(503);
+      });
+
+      it('o agendador enfileira quem ligou, e o A1 é usado em nome do orquestrador', async () => {
+        await ligar(true);
+
+        expect(await app.dfeSync!.scheduleDue()).toBe(1);
+        const job = await executarAgendado();
+
+        expect(job.status, JSON.stringify(job)).toBe('done');
+        const usos = await eventos('certificate.used');
+        expect(usos.length).toBeGreaterThan(0);
+        expect(usos.every((u) => u.actor === 'closer')).toBe(true);
+        expect(usos[0]!.payload).toMatchObject({ triggered_by: 'schedule', enabled_by: owner });
+      });
+
+      it('a nota trazida pela coleta agendada entra no log em nome do orquestrador', async () => {
+        await abrirCompetencia();
+        await ligar(true);
+        sefaz.distribuicoes = [
+          respostaDistribuicao('138', [{ nsu: '1', schema: 'procNFe_v4.00.xsd', xml: procNFe(fornecedor, cnpj, '40') }], '000000000000001', '000000000000001'),
+        ];
+
+        await app.dfeSync!.scheduleDue();
+        const job = await executarAgendado();
+
+        expect(job).toMatchObject({ status: 'done', accepted: 1 });
+        expect((await eventos('doc.received')).map((e) => e.actor)).toEqual(['closer']);
+      });
+
+      it('não enfileira de novo com job pendente, nem com a SEFAZ bloqueada', async () => {
+        await ligar(true);
+        expect(await app.dfeSync!.scheduleDue()).toBe(1);
+        expect(await app.dfeSync!.scheduleDue()).toBe(0);
+
+        await executarAgendado();
+        // Alcançada a fila, a SEFAZ fica uma hora sem aceitar consulta.
+        expect(await app.dfeSync!.scheduleDue()).toBe(0);
+      });
+
+      it('não enfileira com a opção desligada', async () => {
+        await ligar(true);
+        await ligar(false);
+
+        expect(await app.dfeSync!.scheduleDue()).toBe(0);
+        expect((await call('GET', `/v1/clients/${cnpj}/dfe`)).json().auto_sync).toEqual({
+          enabled: false,
+          enabled_by: null,
+          enabled_at: null,
+        });
+      });
+
+      it('desligada depois de enfileirar, o job falha sem usar o certificado', async () => {
+        await ligar(true);
+        await app.dfeSync!.scheduleDue();
+        await ligar(false);
+
+        const job = await executarAgendado();
+
+        expect(job.status).toBe('failed');
+        expect(job.error).toMatch(/desligada/);
+        expect(await eventos('certificate.used')).toHaveLength(0);
+      });
+
+      it('o pedido manual continua em nome de quem pediu, marcado como manual', async () => {
+        await coletar();
+
+        const usos = await eventos('certificate.used');
+        expect(usos[0]).toMatchObject({ actor: owner, payload: { triggered_by: 'manual' } });
+        expect(usos[0]!.payload).not.toHaveProperty('enabled_by');
+      });
+    });
+
     /** Job inserido por fora da API, sem CNPJ, não pode travar o worker. */
     it('job de coleta sem CNPJ não é tomado pelo worker', async () => {
       const { rows } = await pool.query<{ id: string }>(

@@ -2,19 +2,20 @@ import type { Pool } from 'pg';
 import { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import type { FiscalOrchestratorService } from '../../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { guardarCompletos, ingerirPendentes } from './dfe-documents.js';
+import { aplicarCancelamentos, guardarEvento } from './dfe-events.js';
+import { autoSync } from './dfe-auto-sync.js';
+import { DfeSyncRefusedError } from './dfe-errors.js';
 import { CertificateVault, lerCredencial, type CredencialA1 } from '../portfolio/certificate-vault.js';
 import {
   CODIGO_UF,
   NSU_ZERO,
   cienciaRegistrada,
   dataHoraBrasilia,
-  eventoVinculado,
-  lerEventoNfe,
   lerResumoNfe,
-  TP_CANCELAMENTO,
   type RespostaDistribuicao,
 } from './dfe-xml.js';
 import type { SefazDfeGateway } from './sefaz-gateway.js';
+import { ORCHESTRATOR_AGENT } from '../shared/fiscal-vocabulary.js';
 
 /**
  * Coleta de DF-e de um CNPJ (ADR-006): distribuição por NSU até alcançar o
@@ -34,29 +35,32 @@ const ESPERA_MS = 3600_000;
 /** Job `running` há mais que isto é de um processo que morreu no meio. */
 const JOB_ABANDONADO = "interval '15 minutes'";
 
-/** Pedido recusado antes de enfileirar — 409 ou 429 na API. */
-export class DfeSyncRefusedError extends Error {
-  constructor(
-    message: string,
-    readonly kind: 'no_certificate' | 'certificate_not_usable' | 'missing_uf' | 'blocked',
-    readonly retryAt?: Date,
-  ) {
-    super(message);
-    this.name = 'DfeSyncRefusedError';
-  }
-}
+export { DfeSyncRefusedError } from './dfe-errors.js';
 
 export interface EnqueuedJob {
   jobId: string;
   reused: boolean;
 }
 
+/** `manual`: alguém pediu. `schedule`: o agendador, com a opção do cliente ligada (ADR-007). */
+export type SyncTrigger = 'manual' | 'schedule';
+
 interface Job {
   id: string;
   tenant_id: string;
   cnpj: string;
   requested_by: string | null;
+  trigger: SyncTrigger;
 }
+
+/** Quem age e por quê, no `certificate.used` de cada chamada à SEFAZ. */
+interface Autoria {
+  actor: string;
+  trigger: SyncTrigger;
+  /** Quem ligou a coleta agendada. Só no `schedule`. */
+  enabledBy: string | null;
+}
+
 
 export interface SyncSummary {
   lotes: number;
@@ -79,8 +83,9 @@ export interface SyncSummary {
   blocked_until: string | null;
 }
 
-/** Motivo gravado em `dfe_events` quando o cancelamento esbarra no INV-001. */
-export const CANCELAMENTO_EXIGE_RETIFICACAO = 'competência confirmada: exige retificação';
+
+export { CANCELAMENTO_EXIGE_RETIFICACAO } from './dfe-events.js';
+export type { AutoSyncState } from './dfe-auto-sync.js';
 
 export class DfeSyncService {
   private readonly vault: CertificateVault;
@@ -102,6 +107,19 @@ export class DfeSyncService {
    * Job pendente do mesmo CNPJ é devolvido em vez de duplicado.
    */
   async enqueue(scope: EventScope, requestedBy: string): Promise<EnqueuedJob> {
+    return this.enfileirar(scope, requestedBy, 'manual');
+  }
+
+  /** Coleta do agendador: sem quem pediu, com as mesmas recusas do pedido manual. */
+  async enqueueScheduled(scope: EventScope): Promise<EnqueuedJob> {
+    return this.enfileirar(scope, null, 'schedule');
+  }
+
+  private async enfileirar(
+    scope: EventScope,
+    requestedBy: string | null,
+    trigger: SyncTrigger,
+  ): Promise<EnqueuedJob> {
     const { rows: certs } = await this.pool.query<{ credential_format: string }>(
       'select credential_format from certificates where tenant_id = $1::uuid and cnpj = $2::char(14)',
       [scope.tenantId, scope.cnpj],
@@ -150,9 +168,9 @@ export class DfeSyncService {
     }
 
     const { rows } = await this.pool.query<{ id: string }>(
-      `insert into jobs (tenant_id, cnpj, kind, requested_by)
-       values ($1::uuid, $2::char(14), 'dfe_sync', $3::uuid) returning id`,
-      [scope.tenantId, scope.cnpj, requestedBy],
+      `insert into jobs (tenant_id, cnpj, kind, requested_by, trigger)
+       values ($1::uuid, $2::char(14), 'dfe_sync', $3::uuid, $4) returning id`,
+      [scope.tenantId, scope.cnpj, requestedBy, trigger],
     );
     return { jobId: rows[0]!.id, reused: false };
   }
@@ -171,7 +189,7 @@ export class DfeSyncService {
            order by created_at
            for update skip locked
            limit 1)
-        returning id, tenant_id, cnpj, requested_by`,
+        returning id, tenant_id, cnpj, requested_by, trigger`,
     );
     const job = rows[0];
     if (job === undefined) {
@@ -197,10 +215,8 @@ export class DfeSyncService {
 
   private async run(job: Job): Promise<SyncSummary> {
     const scope = EventScope.create(job.tenant_id, job.cnpj.trim());
-    if (job.requested_by === null) {
-      throw new Error('Job sem requested_by: não há em nome de quem usar o certificado.');
-    }
-    const actor = job.requested_by;
+    const autoria = await this.autoria(scope, job);
+    const actor = autoria.actor;
     const credencial = await this.credencial(scope);
     const cUFAutor = await this.codigoUf(scope);
     const orchestrator = await this.orchestratorFor(scope);
@@ -241,10 +257,10 @@ export class DfeSyncService {
           ultNsu: resumo.ult_nsu,
         });
       } catch (erro) {
-        await this.usoDoCertificado(orchestrator, scope, actor, 'dfe_distribution', 'NFeDistribuicaoDFe', 'failure');
+        await this.usoDoCertificado(orchestrator, scope, autoria, 'dfe_distribution', 'NFeDistribuicaoDFe', 'failure');
         throw erro;
       }
-      await this.usoDoCertificado(orchestrator, scope, actor, 'dfe_distribution', 'NFeDistribuicaoDFe', 'success');
+      await this.usoDoCertificado(orchestrator, scope, autoria, 'dfe_distribution', 'NFeDistribuicaoDFe', 'success');
 
       resumo.lotes += 1;
       resumo.last_cstat = resposta.cStat;
@@ -270,7 +286,7 @@ export class DfeSyncService {
           await this.guardarResumo(scope, doc.nsu, doc.xml);
           resumo.summaries += 1;
         } else if (doc.esquema === 'resEvento' || doc.esquema === 'procEventoNFe') {
-          await this.guardarEvento(scope, doc.nsu, doc.xml);
+          await guardarEvento(this.pool, scope, doc.nsu, doc.xml);
           resumo.events_seen += 1;
         } else {
           resumo.events_seen += 1;
@@ -298,9 +314,9 @@ export class DfeSyncService {
 
     // Depois da ingestão: o cancelamento pode ter chegado no mesmo lote da nota,
     // ou antes dela, e só se aplica a nota que já está na base.
-    await this.aplicarCancelamentos(scope, orchestrator, actor, resumo);
+    await aplicarCancelamentos(this.pool, scope, orchestrator, actor, resumo);
 
-    await this.manifestar(scope, credencial, orchestrator, actor, resumo);
+    await this.manifestar(scope, credencial, orchestrator, autoria, resumo);
 
     return resumo;
   }
@@ -310,7 +326,7 @@ export class DfeSyncService {
     scope: EventScope,
     credencial: CredencialA1,
     orchestrator: FiscalOrchestratorService,
-    actor: string,
+    autoria: Autoria,
     resumo: SyncSummary,
   ): Promise<void> {
     const { rows } = await this.pool.query<{ access_key: string }>(
@@ -343,7 +359,7 @@ export class DfeSyncService {
       await this.usoDoCertificado(
         orchestrator,
         scope,
-        actor,
+        autoria,
         'manifestation',
         `NFeRecepcaoEvento4 210210 ${access_key}`,
         ok ? 'success' : 'failure',
@@ -363,102 +379,62 @@ export class DfeSyncService {
     }
   }
 
+  // ------------------------------------------------- coleta agendada
+
   /**
-   * Cancelamento homologado de nota que está na base vira `doc.cancelled`, e a
-   * nota sai das somas. Competência confirmada não muda (INV-001): o evento fica
-   * em `dfe_events` com o motivo, e a correção é a retificação. A checagem é
-   * feita antes de propor, para não gravar um `output.rejected` a cada coleta.
-   * Cancelamento de nota que ainda não chegou espera a coleta seguinte.
+   * Em nome de quem o A1 é usado. O pedido manual é de quem pediu. O agendado é
+   * do orquestrador (`closer`), e só enquanto a opção continuar ligada: quem a
+   * desliga entre o enfileiramento e a execução não pode ver o certificado usado
+   * mesmo assim.
    */
-  private async aplicarCancelamentos(
-    scope: EventScope,
-    orchestrator: FiscalOrchestratorService,
-    actor: string,
-    resumo: SyncSummary,
-  ): Promise<void> {
-    const { rows } = await this.pool.query<{
-      access_key: string;
-      tp_evento: string;
-      n_seq_evento: number;
-      protocolo: string | null;
-      dh_evento: Date | null;
-      period: string;
-      state: string | null;
-    }>(
-      `select e.access_key, e.tp_evento, e.n_seq_evento, e.protocolo, e.dh_evento, d.period, p.state
-         from dfe_events e
-         join documents d
-           on d.tenant_id = e.tenant_id and d.cnpj = e.cnpj and d.access_key = e.access_key
-         left join periods p
-           on p.tenant_id = d.tenant_id and p.cnpj = d.cnpj and p.period = d.period
-        where e.tenant_id = $1::uuid and e.cnpj = $2::char(14)
-          and e.applied_at is null and e.blocked_reason is null
-          and e.tp_evento = any($3::text[])
-          and (e.cstat is null or e.cstat in ('135', '155'))
-          and d.cancelled_at is null
-        order by e.received_at`,
-      [scope.tenantId, scope.cnpj, TP_CANCELAMENTO],
-    );
-
-    const aplicados = new Set<string>();
-    for (const e of rows) {
-      const chave = e.access_key.trim();
-      // Cancelamento e cancelamento por substituição da mesma nota: um basta.
-      if (aplicados.has(chave)) continue;
-
-      if (e.state === 'confirmed') {
-        await this.bloquearEvento(scope, e, CANCELAMENTO_EXIGE_RETIFICACAO);
-        resumo.cancellations_blocked += 1;
-        continue;
+  private async autoria(scope: EventScope, job: Job): Promise<Autoria> {
+    if (job.trigger === 'schedule') {
+      const estado = await autoSync(this.pool, scope);
+      if (!estado.enabled) {
+        throw new Error('A coleta agendada foi desligada para este CNPJ depois de enfileirada.');
       }
-
-      const r = await orchestrator.processIntention({
-        action: 'doc.cancelled',
-        task_id: chave,
-        actor,
-        period: e.period,
-        payload: {
-          access_key: chave,
-          tp_evento: e.tp_evento,
-          n_seq_evento: e.n_seq_evento,
-          protocol: e.protocolo,
-          cancelled_at: e.dh_evento === null ? null : e.dh_evento.toISOString(),
-        },
-      });
-      if (!r.accepted) {
-        await this.bloquearEvento(scope, e, r.rejectionReason ?? 'recusado pelo pipeline');
-        resumo.cancellations_blocked += 1;
-        continue;
-      }
-
-      await this.pool.query(
-        `update documents
-            set cancelled_at = coalesce($4::timestamptz, now()), cancel_protocol = $5, cancel_event_seq = $6
-          where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3`,
-        [scope.tenantId, scope.cnpj, chave, e.dh_evento, e.protocolo, r.event!.event_seq],
-      );
-      await this.pool.query(
-        `update dfe_events set applied_at = now()
-          where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3
-            and tp_evento = any($4::text[]) and applied_at is null`,
-        [scope.tenantId, scope.cnpj, chave, TP_CANCELAMENTO],
-      );
-      aplicados.add(chave);
-      resumo.cancellations += 1;
+      return { actor: ORCHESTRATOR_AGENT, trigger: 'schedule', enabledBy: estado.enabled_by };
     }
+    if (job.requested_by === null) {
+      throw new Error('Job sem requested_by: não há em nome de quem usar o certificado.');
+    }
+    return { actor: job.requested_by, trigger: 'manual', enabledBy: null };
   }
 
-  private async bloquearEvento(
-    scope: EventScope,
-    e: { access_key: string; tp_evento: string; n_seq_evento: number },
-    motivo: string,
-  ): Promise<void> {
-    await this.pool.query(
-      `update dfe_events set blocked_reason = $6
-        where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3
-          and tp_evento = $4 and n_seq_evento = $5`,
-      [scope.tenantId, scope.cnpj, e.access_key, e.tp_evento, e.n_seq_evento, motivo],
+  /**
+   * Enfileira a coleta de todo CNPJ com a opção ligada que pode coletar agora:
+   * certificado utilizável, plano com `coleta_dfe`, SEFAZ liberada e nenhum job
+   * pendente. O que for recusado no caminho (UF, bloqueio que venceu entre a
+   * seleção e o pedido) fica para o próximo tique.
+   */
+  async scheduleDue(limite = 50): Promise<number> {
+    const { rows } = await this.pool.query<{ tenant_id: string; cnpj: string }>(
+      `select c.tenant_id, c.cnpj
+         from clients c
+         join certificates k
+           on k.tenant_id = c.tenant_id and k.cnpj = c.cnpj and k.credential_format = 'pem_bundle'
+         join plans p on p.regime = c.regime and p.features ? 'coleta_dfe'
+         left join dfe_sync_state s on s.tenant_id = c.tenant_id and s.cnpj = c.cnpj
+        where c.dfe_auto_sync
+          and (s.blocked_until is null or s.blocked_until <= $1::timestamptz)
+          and not exists (select 1 from jobs j
+                           where j.tenant_id = c.tenant_id and j.cnpj = c.cnpj
+                             and j.kind = 'dfe_sync' and j.status in ('queued', 'running'))
+        order by s.last_run_at nulls first
+        limit $2`,
+      [this.now(), limite],
     );
+
+    let enfileirados = 0;
+    for (const r of rows) {
+      try {
+        const job = await this.enqueueScheduled(EventScope.create(r.tenant_id, r.cnpj.trim()));
+        if (!job.reused) enfileirados += 1;
+      } catch (erro) {
+        if (!(erro instanceof DfeSyncRefusedError)) throw erro;
+      }
+    }
+    return enfileirados;
   }
 
   // ------------------------------------------------------------ apoio
@@ -530,32 +506,6 @@ export class DfeSyncService {
     );
   }
 
-  /**
-   * Todo evento fica guardado, aplicado ou não. Evento ilegível não trava a
-   * coleta: o NSU já avançou, e ele segue contado em `events_seen`.
-   */
-  private async guardarEvento(scope: EventScope, nsu: string, xml: string): Promise<void> {
-    let e;
-    try {
-      e = lerEventoNfe(xml);
-    } catch {
-      return;
-    }
-    // Evento que não vale contra a nota (136, rejeição) fica registrado já com o
-    // motivo, e não é tentado.
-    const motivo = eventoVinculado(e) ? null : `evento sem vínculo com a NF-e: cStat ${e.cStat ?? '?'}`;
-    await this.pool.query(
-      `insert into dfe_events (tenant_id, cnpj, access_key, tp_evento, n_seq_evento, nsu, cstat,
-                               protocolo, dh_evento, xml, blocked_reason)
-       values ($1::uuid, $2::char(14), $3, $4, $5, $6, $7, $8, $9::timestamptz, $10, $11)
-       on conflict (tenant_id, cnpj, access_key, tp_evento, n_seq_evento) do update
-         set cstat = coalesce(excluded.cstat, dfe_events.cstat),
-             protocolo = coalesce(excluded.protocolo, dfe_events.protocolo),
-             xml = case when excluded.cstat is not null then excluded.xml else dfe_events.xml end`,
-      [scope.tenantId, scope.cnpj, e.accessKey, e.tpEvento, e.nSeqEvento, nsu, e.cStat, e.protocolo, e.dhEvento, xml, motivo],
-    );
-  }
-
   private async marcarRecebidos(scope: EventScope, chaves: string[]): Promise<void> {
     if (chaves.length === 0) return;
     await this.pool.query(
@@ -568,7 +518,7 @@ export class DfeSyncService {
   private async usoDoCertificado(
     orchestrator: FiscalOrchestratorService,
     scope: EventScope,
-    actor: string,
+    autoria: Autoria,
     purpose: 'dfe_distribution' | 'manifestation',
     target: string,
     outcome: 'success' | 'failure',
@@ -576,8 +526,14 @@ export class DfeSyncService {
     const r = await orchestrator.processIntention({
       action: 'certificate.used',
       task_id: scope.cnpj,
-      actor,
-      payload: { purpose, target, outcome },
+      actor: autoria.actor,
+      payload: {
+        purpose,
+        target,
+        outcome,
+        triggered_by: autoria.trigger,
+        ...(autoria.enabledBy === null ? {} : { enabled_by: autoria.enabledBy }),
+      },
     });
     if (!r.accepted) {
       throw new Error(`O uso do certificado não foi registrado no log: ${r.rejectionReason ?? 'recusado'}.`);
