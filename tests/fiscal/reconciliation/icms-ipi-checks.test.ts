@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type {
   EfdIcmsAnalytic,
   EfdIcmsAssessment,
+  EfdIcmsConsolidation,
   EfdIcmsDocument,
   EfdIcmsResult,
   EfdIpiAssessment,
@@ -85,6 +86,7 @@ const efd = (overrides: Partial<EfdIcmsResult> = {}): EfdIcmsResult => ({
     kind: 'original',
   },
   documents: [],
+  consolidations: [],
   icmsAssessment: E110_COERENTE,
   ipiAssessment: E520_COERENTE,
   rejected: [],
@@ -286,18 +288,18 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
     expect(pegar(resultado, 'c190-vs-e110-creditos').status).toBe('passed');
   });
 
-  it('não compara quando há blocos que este leitor ainda não soma', () => {
-    // Conta de energia (C500) e transporte (D100) também lançam ICMS. Comparar
-    // só os C190 acusaria uma diferença que é limitação nossa.
+  it('não compara quando há registro da apuração que este leitor ainda não soma', () => {
+    // O CF-e SAT (C850) também lança débito. Comparar sem ele acusaria uma
+    // diferença que é limitação nossa.
     const resultado = conciliar(({
         documents: [documento({ operation: 'outbound', analytics: [analitico(10_000)] })],
-        counts: { '0000': 1, C100: 1, C190: 1, D100: 3, E110: 1 },
+        counts: { '0000': 1, C100: 1, C190: 1, C800: 3, C850: 3, E110: 1 },
       }),
     );
     const check = pegar(resultado, 'c190-vs-e110-debitos');
 
     expect(check.status).toBe('not_verified');
-    expect(check.notVerifiedReason).toMatch(/D100/);
+    expect(check.notVerifiedReason).toMatch(/C850/);
     expect(check.notVerifiedReason).toMatch(/limitação nossa/);
     expect(check.declaredCents).toBe(500_000);
   });
@@ -390,5 +392,104 @@ describe('summarizeEfdIcmsIpi', () => {
     expect(resumo.documents[0]?.hasItems).toBe(false);
     expect(resumo.documents[1]?.hasItems).toBe(true);
     expect(resumo.documents[1]?.itemsIcmsCents).toBe(0);
+  });
+});
+
+const consolidacao = (
+  overrides: Partial<EfdIcmsConsolidation> & Pick<EfdIcmsConsolidation, 'record' | 'operation'>,
+  icms: number,
+  cfop = '1253',
+): EfdIcmsConsolidation => ({
+  line: 1,
+  situation: '00',
+  subject: `${overrides.record} de teste`,
+  documentIcmsCents: icms,
+  analytics: [{ cstIcms: '000', cfop, icmsRate: 18, operationCents: icms * 6, icmsBaseCents: icms * 6, icmsCents: icms }],
+  ...overrides,
+});
+
+describe('reconcileIcmsIpi — registros fora do C100', () => {
+  /**
+   * O bug: a regex dos blocos não cobertos casava com C001, C990, D001 e D990,
+   * que existem em todo arquivo real, e a conferência principal nunca rodava.
+   */
+  it('abertura e encerramento de bloco não impedem a conferência', () => {
+    const resultado = conciliar({
+      documents: [
+        documento({ operation: 'outbound', analytics: [analitico(500_000)] }),
+        documento({ operation: 'inbound', analytics: [analitico(400_000)] }),
+      ],
+      counts: { '0000': 1, C001: 1, C100: 2, C190: 2, C990: 1, D001: 1, D990: 1, E001: 1, E110: 1, E990: 1 },
+    });
+
+    expect(pegar(resultado, 'c190-vs-e110-debitos').status).toBe('passed');
+    expect(pegar(resultado, 'c190-vs-e110-creditos').status).toBe('passed');
+  });
+
+  it('soma energia, transporte e comunicação no lado do documento pai', () => {
+    const resultado = conciliar({
+      documents: [
+        documento({ operation: 'outbound', analytics: [analitico(480_000)] }),
+        documento({ operation: 'inbound', analytics: [analitico(350_000)] }),
+      ],
+      consolidations: [
+        consolidacao({ record: 'C590', operation: 'inbound' }, 30_000),
+        consolidacao({ record: 'D190', operation: 'inbound' }, 20_000),
+        consolidacao({ record: 'D590', operation: 'outbound' }, 15_000, '5303'),
+        consolidacao({ record: 'C490', operation: 'outbound' }, 5_000, '5102'),
+      ],
+      counts: { '0000': 1, C100: 2, C190: 2, C500: 1, C590: 1, C490: 1, D100: 1, D190: 1, D500: 1, D590: 1, E110: 1 },
+    });
+
+    expect(pegar(resultado, 'c190-vs-e110-debitos')).toMatchObject({ status: 'passed', expectedCents: 500_000 });
+    expect(pegar(resultado, 'c190-vs-e110-creditos')).toMatchObject({ status: 'passed', expectedCents: 400_000 });
+  });
+
+  /** Arquivo importado antes desta leitura tem o C590 na contagem e nenhuma linha dele. */
+  it('registro contado e não somado continua não verificado', () => {
+    const resultado = conciliar({
+      documents: [documento({ operation: 'inbound', analytics: [analitico(400_000)] })],
+      counts: { '0000': 1, C100: 1, C190: 1, C500: 1, C590: 1, E110: 1 },
+    });
+
+    const creditos = pegar(resultado, 'c190-vs-e110-creditos');
+    expect(creditos.status).toBe('not_verified');
+    expect(creditos.notVerifiedReason).toMatch(/C590/);
+  });
+
+  it('registro só de débito não impede conferir os créditos', () => {
+    const resultado = conciliar({
+      documents: [documento({ operation: 'inbound', analytics: [analitico(400_000)] })],
+      counts: { '0000': 1, C100: 1, C190: 1, C800: 1, C850: 1, E110: 1 },
+    });
+
+    expect(pegar(resultado, 'c190-vs-e110-debitos').status).toBe('not_verified');
+    expect(pegar(resultado, 'c190-vs-e110-creditos').status).toBe('passed');
+  });
+
+  it('transferência de saldo devedor (5605) vai para os créditos, e o extemporâneo sai dos débitos', () => {
+    const resultado = conciliar({
+      documents: [
+        documento({ operation: 'outbound', analytics: [analitico(500_000)] }),
+        documento({ operation: 'outbound', analytics: [{ ...analitico(40_000), cfop: '5605' }] }),
+        documento({ operation: 'outbound', situation: '01', analytics: [analitico(7_000)] }),
+        documento({ operation: 'inbound', analytics: [analitico(360_000)] }),
+      ],
+      counts: { '0000': 1, C100: 4, C190: 4, E110: 1 },
+    });
+
+    expect(pegar(resultado, 'c190-vs-e110-debitos')).toMatchObject({ status: 'passed', expectedCents: 500_000 });
+    expect(pegar(resultado, 'c190-vs-e110-creditos')).toMatchObject({ status: 'passed', expectedCents: 400_000 });
+  });
+
+  it('conta de energia cancelada que declara ICMS é acusada', () => {
+    const resultado = conciliar({
+      consolidations: [consolidacao({ record: 'C590', operation: 'inbound', situation: '02' }, 9_000)],
+      counts: { '0000': 1, C500: 1, C590: 1, E110: 1 },
+    });
+
+    const check = pegar(resultado, 'documento-sem-imposto-com-valor');
+    expect(check.status).toBe('failed');
+    expect(check.issues[0]?.subject).toBe('C590 de teste');
   });
 });

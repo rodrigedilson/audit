@@ -26,13 +26,18 @@
  * | `C100`   | documento fiscal, com situação e totais de ICMS e IPI |
  * | `C170`   | item do documento, com CST, base, alíquota e valor de ICMS e IPI |
  * | `C190`   | consolidação analítica do documento por CST × CFOP × alíquota |
+ * | `C500`, `D100`, `D500` | energia/água/gás, transporte e comunicação: sentido e situação |
+ * | `C590`, `D190`, `D590` | analítico de cada um deles |
+ * | `C320`, `C390`, `C490`, `C690`, `C790`, `C890` | analíticos de venda a consumidor, ECF, energia consolidada e CF-e SAT — só saídas |
  * | `E110`   | apuração do ICMS do período |
  * | `E520`   | apuração do IPI do período |
  *
  * **Procedência das posições.** Nenhuma foi escrita de memória. Saíram dos Guias
  * Práticos EFD-ICMS/IPI 3.1.9 (13/05/2025, leiaute 019) e 3.2.2 (11/02/2026,
- * leiaute 020), extraídas pelo script `scripts/extrair-layout-efd.ts`. Os seis
- * registros lidos têm campos idênticos nos dois. Ao mexer neste arquivo, rode o
+ * leiaute 020), extraídas pelo script `scripts/extrair-layout-efd.ts`. Os
+ * registros lidos têm campos idênticos nos dois. Nas tabelas que a conversão do
+ * PDF truncou (`D100`, `D190`, `C790`), as posições foram conferidas no texto
+ * do guia convertido com `pdftotext -layout`. Ao mexer neste arquivo, rode o
  * script de novo — não confie no que está escrito aqui, nem no que você lembra.
  */
 import {
@@ -48,7 +53,10 @@ import {
   texto,
 } from '../shared/sped-campos.js';
 
+import { LeituraDeConsolidacoes, type EfdIcmsConsolidation } from './efd-icms-ipi-consolidacoes.js';
+
 export { MAX_LINHAS_SPED, SpedFormatError, type RejectedRecord };
+export type { EfdIcmsAnalyticLine, EfdIcmsConsolidation } from './efd-icms-ipi-consolidacoes.js';
 
 /**
  * Códigos de versão de leiaute cujas posições este leitor conhece.
@@ -176,6 +184,8 @@ export interface EfdIpiAssessment {
 export interface EfdIcmsResult {
   header: EfdIcmsHeader;
   documents: EfdIcmsDocument[];
+  /** O que lança ICMS fora do C100: energia, transporte, comunicação, varejo. */
+  consolidations: EfdIcmsConsolidation[];
   /**
    * `null` quando o arquivo não traz `E110`. Não é zero: ausência de apuração e
    * apuração zerada são coisas diferentes, e confundi-las faria o sistema
@@ -201,6 +211,7 @@ export function parseEfdIcmsIpi(conteudo: string): EfdIcmsResult {
   const rejected: RejectedRecord[] = [];
   const counts: Record<string, number> = {};
   const documents: EfdIcmsDocument[] = [];
+  const consolidacoes = new LeituraDeConsolidacoes();
 
   let header: EfdIcmsHeader | undefined;
   let icmsAssessment: EfdIcmsAssessment | null = null;
@@ -243,6 +254,7 @@ export function parseEfdIcmsIpi(conteudo: string): EfdIcmsResult {
           ipiAssessment = lerApuracaoIpi(campos);
           break;
         default:
+          consolidacoes.ler(registro, campos, i + 1);
           break;
       }
     } catch (causa) {
@@ -262,7 +274,11 @@ export function parseEfdIcmsIpi(conteudo: string): EfdIcmsResult {
     );
   }
 
-  return { header, documents, icmsAssessment, ipiAssessment, rejected, counts };
+  return {
+    header,
+    documents,
+    consolidations: consolidacoes.consolidations,
+    icmsAssessment, ipiAssessment, rejected, counts };
 }
 
 function exigirDocumento(

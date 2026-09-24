@@ -351,3 +351,82 @@ describe('parseEfdIcmsIpi — apuração', () => {
     expect(counts).toEqual({ '0000': 1, C100: 1, C170: 1, C190: 1, E110: 1, E520: 1 });
   });
 });
+
+/**
+ * Registro com `n` campos, todos preenchidos com um marcador que não é número:
+ * campo lido na posição errada vira erro, e não valor plausível.
+ */
+const linha = (registro: string, n: number, valores: Record<number, string>): string => {
+  const campos = Array.from({ length: n }, (_, i) => (i === 0 ? registro : `x${i + 1}`));
+  for (const [posicao, valor] of Object.entries(valores)) campos[Number(posicao) - 1] = valor;
+  return reg(...campos);
+};
+
+/** Analítico: CST, CFOP, alíquota, VL_OPR, VL_BC_ICMS e VL_ICMS nos campos 2 a 7. */
+const analiticoIcms = (registro: string, icms: string, cfop = '1253', n = 11): string =>
+  linha(registro, n, { 2: '000', 3: cfop, 4: '18,00', 5: '300,00', 6: '250,00', 7: icms, 8: '0', 9: '0', 10: '0', 11: '' });
+
+const c500 = (operacao = '0', situacao = '00'): string =>
+  linha('C500', 27, { 2: operacao, 5: '06', 6: situacao, 10: '777', 20: '45,00' });
+const d100 = (operacao = '0'): string =>
+  linha('D100', 25, { 2: operacao, 5: '57', 6: '00', 9: '888', 10: '', 20: '12,00' });
+const d500 = (operacao = '1'): string => linha('D500', 24, { 2: operacao, 5: '21', 6: '00', 9: '999', 19: '7,00' });
+
+describe('parseEfdIcmsIpi — registros fora do C100', () => {
+  it('lê C590, D190 e D590 com o sentido, a situação e o ICMS do documento pai', () => {
+    const { consolidations, rejected } = parseEfdIcmsIpi(
+      [
+        abertura(),
+        c500('0', '00'),
+        analiticoIcms('C590', '45,00'),
+        d100('0'),
+        analiticoIcms('D190', '12,00', '1353', 9),
+        d500('1'),
+        analiticoIcms('D590', '7,00', '5303'),
+      ].join('\n'),
+    );
+
+    expect(rejected).toEqual([]);
+    expect(consolidations.map((c) => [c.record, c.operation, c.situation, c.documentIcmsCents])).toEqual([
+      ['C590', 'inbound', '00', 4500],
+      ['D190', 'inbound', '00', 1200],
+      ['D590', 'outbound', '00', 700],
+    ]);
+    expect(consolidations[0]!.analytics[0]).toEqual({
+      cstIcms: '000',
+      cfop: '1253',
+      icmsRate: 18,
+      operationCents: 30000,
+      icmsBaseCents: 25000,
+      icmsCents: 4500,
+    });
+    expect(consolidations[0]!.subject).toBe('C500 modelo 06 nº 777');
+  });
+
+  it('agrega por registro os analíticos só de saída (varejo, ECF, CF-e)', () => {
+    const { consolidations } = parseEfdIcmsIpi(
+      [abertura(), analiticoIcms('C490', '10,00', '5102', 8), analiticoIcms('C490', '5,00', '5405', 8)].join('\n'),
+    );
+
+    expect(consolidations).toHaveLength(1);
+    expect(consolidations[0]).toMatchObject({ record: 'C490', operation: 'outbound', situation: '00' });
+    expect(consolidations[0]!.analytics.map((a) => a.icmsCents)).toEqual([1000, 500]);
+  });
+
+  it('recusa o analítico sem documento pai', () => {
+    const { rejected } = parseEfdIcmsIpi([abertura(), analiticoIcms('C590', '45,00')].join('\n'));
+
+    expect(rejected[0]).toMatchObject({ record: 'C590', reason: expect.stringMatching(/fora de um documento C500/) });
+  });
+
+  it('pai recusado não deixa o anterior aberto para os analíticos dele', () => {
+    const quebrado = linha('C500', 27, { 2: '0', 5: '06', 6: '00', 10: '778', 20: 'abc' });
+    const { consolidations, rejected } = parseEfdIcmsIpi(
+      [abertura(), c500(), analiticoIcms('C590', '45,00'), quebrado, analiticoIcms('C590', '99,00')].join('\n'),
+    );
+
+    expect(consolidations).toHaveLength(1);
+    expect(consolidations[0]!.analytics).toHaveLength(1);
+    expect(rejected.map((r) => r.record)).toEqual(['C500', 'C590']);
+  });
+});

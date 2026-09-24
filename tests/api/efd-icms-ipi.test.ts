@@ -324,6 +324,56 @@ describe.skipIf(!DATABASE_URL)('API — EFD ICMS/IPI', () => {
       expect(check.differenceCents).toBe(18_000);
     });
 
+    /**
+     * Arquivo como os reais: blocos abertos e fechados (C001, C990, D001, D990),
+     * conta de energia e transporte além das NF-e. A regex antiga casava com o
+     * encerramento de bloco, e a soma nunca era conferida.
+     */
+    describe('arquivo com energia, transporte e blocos abertos e fechados', () => {
+      const campos = (registro: string, n: number, valores: Record<number, string>): string => {
+        const lista = Array.from({ length: n }, (_, i) => (i === 0 ? registro : '0'));
+        for (const [posicao, valor] of Object.entries(valores)) lista[Number(posicao) - 1] = valor;
+        return reg(...lista);
+      };
+      const analitico = (registro: string, cfop: string, icms: string): string =>
+        reg(registro, '000', cfop, '18,00', '300,00', '250,00', icms, '0', '0', '0', '');
+      const arquivo = (): string[] => [
+        abertura(cnpj),
+        reg('C001', '0'),
+        c100(),
+        c190('180,00'),
+        campos('C500', 27, { 2: '0', 3: '1', 4: 'CEMIG', 5: '06', 6: '00', 10: '777', 11: '10012026', 12: '10012026', 20: '45,00', 23: '' }),
+        analitico('C590', '1253', '45,00'),
+        reg('C990', '7'),
+        reg('D001', '0'),
+        campos('D100', 25, { 2: '0', 3: '1', 4: 'TRANSP', 5: '57', 6: '00', 9: '888', 10: '', 11: '12012026', 12: '12012026', 20: '12,00', 22: '', 23: '' }),
+        analitico('D190', '1353', '12,00'),
+        reg('D990', '4'),
+        reg('E110', '180,00', '0', '0', '0', '57,00', '0', '0', '0', '0', '123,00', '0', '123,00', '0', '0'),
+      ];
+
+      it('soma C590 e D190 nos créditos, e confere os dois lados', async () => {
+        const r = await importar(...arquivo());
+        expect(r.statusCode).toBe(201);
+
+        const conciliacao = await conciliar();
+
+        expect(pegar(conciliacao, 'c190-vs-e110-debitos')).toMatchObject({ status: 'passed', expectedCents: 18_000 });
+        expect(pegar(conciliacao, 'c190-vs-e110-creditos')).toMatchObject({ status: 'passed', expectedCents: 5_700 });
+      });
+
+      /** O que foi importado antes de o C590 ser lido tem a contagem e não tem a linha. */
+      it('sem as linhas do C590 gravadas, os créditos voltam a não verificado', async () => {
+        await importar(...arquivo());
+        await pool.query("delete from efd_icms_documents where tenant_id = $1::uuid and record = 'C590'", [tenantId]);
+
+        const creditos = pegar(await conciliar(), 'c190-vs-e110-creditos');
+
+        expect(creditos.status).toBe('not_verified');
+        expect(creditos.notVerifiedReason).toMatch(/C590/);
+      });
+    });
+
     it('não diz passed sobre o que não deu para conferir', async () => {
       await importar(abertura(cnpj), c100(), c190('180,00'));
 

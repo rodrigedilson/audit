@@ -48,9 +48,14 @@ const TITULOS: Record<string, string> = {
   '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
   '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
   '20260926100000_cancelamento_de_nfe.sql': 'cancelamento-de-nfe',
+  '20260926120000_efd_icms_demais_registros.sql': 'efd-icms-demais-registros',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260926120000_efd_icms_demais_registros.sql':
+    'EFD ICMS/IPI: a conciliação passa a somar energia, transporte, comunicação\n' +
+    '-- e varejo (C590, D190, D590, C320 a C890) contra o E110, e cada linha diz\n' +
+    '-- qual analítico soma. Atualiza a descrição da feature sped_completo.',
   '20260926100000_cancelamento_de_nfe.sql':
     'Cancelamento de NF-e pela distribuição: a nota cancelada fica marcada e\n' +
     '-- sai das somas, e todo evento trazido pela SEFAZ é guardado, inclusive o\n' +

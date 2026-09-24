@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 27 de 28: cancelamento-de-nfe
+-- audit — passo 27 de 29: cancelamento-de-nfe
 --
 -- Cancelamento de NF-e pela distribuição: a nota cancelada fica marcada e
 -- sai das somas, e todo evento trazido pela SEFAZ é guardado, inclusive o
