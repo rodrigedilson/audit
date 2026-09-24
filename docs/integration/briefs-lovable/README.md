@@ -12,11 +12,16 @@ Três telas novas, cada uma num arquivo desta pasta. **Cada brief é
 autocontido**: dá para colar um deles no Lovable sem ler os outros. Isso é
 proposital — prompt gigante produz tela genérica.
 
-| Brief | Tela | Precisa de login? |
-|---|---|---|
-| [01](01-diagnostico-publico.md) | Diagnóstico de prontidão para a reforma | **não** |
-| [02](02-calculadora-de-precos.md) | Calculadora de preço com faixas de volume | **não** |
-| [03](03-comprovante-de-integridade.md) | Comprovante de integridade da competência | sim |
+| Brief | Tela | Login | Estado |
+|---|---|---|---|
+| [01](01-diagnostico-publico.md) | Diagnóstico de prontidão para a reforma | **não** | no ar, ver brief 04 |
+| [02](02-calculadora-de-precos.md) | Calculadora de preço com faixas de volume | **não** | no ar, ver brief 04 |
+| [03](03-comprovante-de-integridade.md) | Comprovante de integridade da competência | sim | **implementada** |
+| [04](04-correcoes-nas-telas-publicas.md) | Correções nas telas 01 e 02 | — | **a aplicar** |
+
+**Comece pelo [04](04-correcoes-nas-telas-publicas.md)** se as telas 01 e 02 já
+existem: ele corrige pontos específicos delas, sem recriar nada. Os briefs 01 e
+02 já incorporam as mesmas mudanças e servem para construir do zero.
 
 ---
 

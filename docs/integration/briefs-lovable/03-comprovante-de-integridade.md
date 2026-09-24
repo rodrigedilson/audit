@@ -1,6 +1,9 @@
 # Brief 03 — Comprovante de integridade da competência
 
-> Cole este arquivo inteiro no Lovable. Ele é autocontido.
+> **Esta tela já foi implementada** em `src/pages/ComprovanteDeIntegridade.tsx`,
+> com o hook `useProof` e o componente `VeredictoDoComprovante`. O brief fica
+> como registro das decisões — não precisa ser colado no Lovable.
+>
 > **Esta tela exige login.**
 
 ## O que estamos construindo
