@@ -52,6 +52,21 @@ jobs:
       - name: Typecheck (src + tests)
         run: npm run lint
 
+      # Dependência com vulnerabilidade conhecida é o caminho de entrada mais
+      # barato num sistema que custodia certificado A1 de terceiro. Falha em
+      # `high` e `critical`; `moderate` não trava o build para não virar ruído
+      # que todo mundo aprende a ignorar.
+      - name: Vulnerabilidade em dependência
+        run: npm audit --audit-level=high
+
+      # Segredo commitado não é hipótese: o `.env` do frontend ficou versionado
+      # por meses (só com variáveis públicas, mas sem nada impedindo a próxima).
+      # Roda no histórico inteiro, não só no diff.
+      - name: Segredo no repositório
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build
         run: npm run build
 
