@@ -9,11 +9,12 @@ import {
   daysToExpiry,
   readCertificateMetadata,
 } from '../../fiscal/portfolio/certificate-vault.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 const CNPJ_PARAM = {
   type: 'object',
   required: ['cnpj'],
-  properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+  properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
 } as const;
 
 interface CnpjParams {

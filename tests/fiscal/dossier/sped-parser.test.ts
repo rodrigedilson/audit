@@ -158,7 +158,7 @@ describe('EFD-Contribuições — leitura', () => {
     it('recusa CNPJ com tamanho errado', () => {
       const ruim = ABERTURA.replace('|12345678000195|', '|123|');
 
-      expect(() => parseSped(ruim)).toThrow(/CNPJ com 3 dígitos/);
+      expect(() => parseSped(ruim)).toThrow(/Campo CNPJ não é CNPJ/);
     });
 
     it('recusa data de início fora do formato DDMMAAAA', () => {

@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
+import { digitosVerificadoresDeCnpj } from '../../src/esaa/shared/domain/cnpj.js';
 
 /**
  * Setup de banco para os testes de integração.
@@ -27,8 +28,27 @@ export async function applyMigrations(pool: pg.Pool): Promise<void> {
 }
 
 /** CNPJ sintético de 14 dígitos. Não valida dígito verificador — o banco não exige. */
+/**
+ * CNPJ numérico aleatório **com dígitos verificadores válidos**.
+ *
+ * Antes eram 14 dígitos sorteados, o que passava enquanto nada conferia o DV.
+ * Com o CNPJ alfanumérico em vigor o cadastro passou a conferir, e um CNPJ
+ * inventado seria recusado — além de fazer os testes exercitarem um dado que o
+ * sistema não aceita mais.
+ */
 export function randomCnpj(): string {
-  return Array.from({ length: 14 }, () => Math.floor(Math.random() * 10)).join('');
+  const base = Array.from({ length: 12 }, () => Math.floor(Math.random() * 10)).join('');
+  return base + digitosVerificadoresDeCnpj(base);
+}
+
+/** CNPJ alfanumérico válido, como os emitidos desde 31/07/2026. */
+export function randomCnpjAlfanumerico(): string {
+  const alfabeto = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const base = Array.from(
+    { length: 12 },
+    () => alfabeto[Math.floor(Math.random() * alfabeto.length)]!,
+  ).join('');
+  return base + digitosVerificadoresDeCnpj(base);
 }
 
 export async function createTenant(pool: pg.Pool, name: string): Promise<string> {

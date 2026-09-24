@@ -1502,7 +1502,11 @@ components:
       in: path
       name: cnpj
       required: true
-      schema: { type: string, pattern: "^[0-9]{14}$" }
+      # Doze posições alfanuméricas e dois dígitos verificadores numéricos: a
+      # Receita emite CNPJ alfanumérico desde 31/07/2026 (IN RFB 2.229/2024).
+      # O dígito verificador não é conferido pelo schema — JSON Schema não faz
+      # módulo 11 —, e sim na fronteira de entrada da API.
+      schema: { type: string, pattern: "^[0-9A-Za-z]{12}[0-9]{2}$" }
     Period:
       in: query
       name: period
@@ -1594,7 +1598,7 @@ components:
       type: object
       required: [cnpj, legal_name, regime]
       properties:
-        cnpj: { type: string, pattern: "^[0-9]{14}$" }
+        cnpj: { type: string, pattern: "^[0-9A-Za-z]{12}[0-9]{2}$" }
         legal_name: { type: string }
         trade_name: { type: string }
         regime: { $ref: "#/components/schemas/Regime" }

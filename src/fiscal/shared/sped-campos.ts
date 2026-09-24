@@ -136,6 +136,34 @@ export function competencia(bruto: string | undefined, campo: string): string {
   return `${ano}-${mes}`;
 }
 
+/**
+ * Inscrição de 14 posições — CNPJ, numérico ou alfanumérico.
+ *
+ * Não filtra para dígitos. Desde 31/07/2026 a Receita emite CNPJ alfanumérico
+ * para inscrições novas, e jogar fora o que não é dígito devolveria um CNPJ
+ * curto para toda empresa aberta de agosto em diante.
+ *
+ * Confere o formato e não o dígito verificador: o leitor não é o lugar de
+ * recusar a escrituração de um contribuinte por causa de um dado cadastral. A
+ * comparação contra o CNPJ do escopo, que vem depois, é o que impede importar o
+ * arquivo na conta errada.
+ */
+export function inscricao(bruto: string | undefined, campo: string): string {
+  const limpo = texto(bruto).toUpperCase().replace(/[^0-9A-Z]/g, '');
+
+  // `SpedFormatError`, e não `Error`: o CNPJ está no `0000`, que é lido fora do
+  // laço de recusa por ser estrutural. Erro genérico aqui sairia como 500 na
+  // API, quando o que houve foi arquivo malformado — que é 422 com o motivo.
+  if (!/^[0-9A-Z]{12}[0-9]{2}$/.test(limpo)) {
+    throw new SpedFormatError(
+      `Campo ${campo} não é CNPJ: esperado 14 posições, sendo as duas últimas ` +
+        `numéricas. Recebido '${limpo}'.`,
+    );
+  }
+
+  return limpo;
+}
+
 export function digitos(bruto: string | undefined, quantos: number, campo: string): string {
   const so = texto(bruto).replace(/\D/g, '');
   if (so.length !== quantos) {
