@@ -119,6 +119,37 @@ describe('serviço de simulação — origem da alíquota', () => {
   });
 });
 
+/**
+ * A alíquota é a vigente no ano simulado. Consultar em `current_date` faria a
+ * alíquota de teste de 2026 valer para o regime pleno de 2033.
+ */
+describe('serviço de simulação — data da alíquota', () => {
+  function poolQueGrava(): { pool: Pool; datas: unknown[] } {
+    const fila: Record<string, unknown>[][] = [[MEDICAO], [], [GRAVACAO]];
+    const datas: unknown[] = [];
+    const pool = {
+      query: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('from tax_rules')) {
+          datas.push(params?.[0]);
+        }
+        return { rows: fila.shift() ?? [] };
+      },
+    } as unknown as Pool;
+    return { pool, datas };
+  }
+
+  it.each([
+    ['full_2033', '2033-01-01'],
+    ['transition_2027_2028', '2027-01-01'],
+  ] as const)('o cenário %s consulta tax_rules em %s', async (scenario, data) => {
+    const { pool, datas } = poolQueGrava();
+
+    await new SimulationService(pool).run(SCOPE, { ...pedido, scenario }, null);
+
+    expect(datas).toEqual([data]);
+  });
+});
+
 describe('serviço de simulação — medição da base', () => {
   it('divide receita e compras pelos meses com movimento', async () => {
     const service = new SimulationService(poolDeFila([MEDICAO], [], [GRAVACAO]));
