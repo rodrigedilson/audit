@@ -492,24 +492,19 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
     });
 
     /**
-     * A decisão que mantém o resultado honesto: sem as tabelas oficiais, a
-     * resposta diz que a ausência de erro não significa correção.
+     * O caso "tabelas vazias" mudou de lugar, para
+     * `tests/fiscal/catalog/catalog-health.test.ts`.
+     *
+     * Ele produzia o caso com `delete from fiscal_codes`, e essas tabelas são
+     * **globais** — sem coluna de tenant. O vitest roda arquivos em paralelo, e
+     * o delete esvaziava a tabela para todos os outros arquivos durante a
+     * execução: `reporting.test.ts` chegou a ganhar uma leitura defensiva da
+     * contagem antes de afirmar, o que é o sintoma da corrida, não a cura.
+     *
+     * A lógica que se queria verificar é de `health()` e não precisa de banco.
+     * O que fica aqui é o caminho com as tabelas carregadas, que é o estado
+     * real de produção.
      */
-    it('avisa quando as tabelas oficiais não estão carregadas', async () => {
-      await pool.query('delete from cclasstrib_cst');
-      await pool.query('delete from fiscal_codes');
-
-      try {
-        await classificar('SKU-X', classificacaoValida);
-        const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();
-
-        expect(body.reference_tables_loaded).toBe(false);
-        expect(body.notice).toMatch(/não significa que a classificação está correta/);
-        expect(body.not_verified).toBeGreaterThan(0);
-      } finally {
-        await carregarTabelas();
-      }
-    });
 
     it('a resposta não traz notice quando as tabelas estão carregadas', async () => {
       const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();
