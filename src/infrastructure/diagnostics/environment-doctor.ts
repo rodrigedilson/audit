@@ -144,6 +144,9 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
         `banco configurado`,
         env.supabase.jwksUrl ? 'JWT por JWKS' : 'JWT por segredo HS256',
         `cofre A1 com chave de ${env.certificateMasterKey.length} caracteres`,
+        env.anthropic === undefined
+          ? 'assistente só na camada 1'
+          : `assistente camada 3 com ${env.anthropic.model}`,
       ].join(' · '),
     });
   } catch (erro) {

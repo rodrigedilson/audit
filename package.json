@@ -31,6 +31,7 @@
   "license": "ISC",
   "description": "audit — motor de conciliação da transição tributária (SaaS fiscal sobre o kernel ESAA-Flow de event sourcing)",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "@fastify/cors": "^11.3.0",
     "@fastify/multipart": "^10.1.1",
     "fast-xml-parser": "^4.5.7",

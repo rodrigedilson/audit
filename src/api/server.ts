@@ -22,6 +22,8 @@ import { registerCreditRoutes } from './routes/credit.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
 import { registerDossierRoutes } from './routes/dossier.routes.js';
 import { AsaasClient, type AsaasGateway } from '../billing/asaas-client.js';
+import type { LanguageModelPort } from '../fiscal/assistant/language-model.port.js';
+import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
@@ -46,6 +48,8 @@ export interface ApiDeps {
    * credencial de pagamento.
    */
   asaas?: AsaasGateway;
+  /** Camada 3 do assistente. Ausente sem `ANTHROPIC_API_KEY`. */
+  languageModel?: LanguageModelPort;
 }
 
 declare module 'fastify' {
@@ -89,6 +93,8 @@ export interface BuildServerOptions {
    * montado a partir de `ASAAS_API_KEY`, e sem a chave não há gateway.
    */
   asaas?: AsaasGateway;
+  /** Modelo de linguagem. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
+  languageModel?: LanguageModelPort;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -118,6 +124,16 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       : env.asaas === undefined
         ? {}
         : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
+    ...(options.languageModel !== undefined
+      ? { languageModel: options.languageModel }
+      : env.anthropic === undefined
+        ? {}
+        : {
+            languageModel: new ClaudeLanguageModel({
+              apiKey: env.anthropic.apiKey,
+              model: env.anthropic.model,
+            }),
+          }),
     orchestratorFor: async (scope) => {
       const orchestrator = new FiscalOrchestratorService(
         new PostgresEventStoreRepository(pool, scope),
