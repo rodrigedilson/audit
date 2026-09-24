@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { quote, formatBRL, PricingError, type PricingRules } from '../../src/billing/pricing.js';
+import {
+  quote,
+  quoteFromCounts,
+  serializeQuote,
+  formatBRL,
+  PricingError,
+  QUOTE_SNAPSHOT_VERSION,
+  type PricingRules,
+} from '../../src/billing/pricing.js';
+import type { PricingTier } from '../../src/billing/volume-tiers.js';
 
 /** Preços do briefing, em centavos. Hipótese de teste de preço, não benchmark. */
 const rules: PricingRules = {
@@ -34,8 +43,14 @@ describe('quote — cálculo da assinatura', () => {
     const result = quote([...clients('mei', 3), ...clients('lucro_real', 2)], rules);
 
     expect(result.lines).toEqual([
-      { regime: 'lucro_real', quantity: 2, unitCents: 8900, subtotalCents: 17_800 },
-      { regime: 'mei', quantity: 3, unitCents: 900, subtotalCents: 2_700 },
+      {
+        regime: 'lucro_real',
+        quantity: 2,
+        unitCents: 8900,
+        subtotalCents: 17_800,
+        volumeDiscountCents: 0,
+      },
+      { regime: 'mei', quantity: 3, unitCents: 900, subtotalCents: 2_700, volumeDiscountCents: 0 },
     ]);
   });
 
@@ -115,5 +130,138 @@ describe('formatBRL', () => {
   it('formata em real brasileiro', () => {
     expect(formatBRL(15_000).replace(/ /g, ' ')).toBe('R$ 150,00');
     expect(formatBRL(900).replace(/ /g, ' ')).toBe('R$ 9,00');
+  });
+});
+
+/** Escada semeada pela migration de faixas. */
+const tiers: PricingTier[] = [
+  { fromClients: 1, discountBps: 0, label: 'Até 100 CNPJs' },
+  { fromClients: 101, discountBps: 1500, label: '101 a 300 CNPJs' },
+  { fromClients: 301, discountBps: 3000, label: '301 a 600 CNPJs' },
+  { fromClients: 601, discountBps: 4000, label: '601 a 1.000 CNPJs' },
+  { fromClients: 1001, discountBps: 5000, label: 'Acima de 1.000 CNPJs' },
+];
+
+const comFaixas: PricingRules = { ...rules, tiers };
+
+describe('quoteFromCounts — parcelas visíveis', () => {
+  /**
+   * A invariante que sustenta a tela: as quatro parcelas fecham por soma, e
+   * nenhum desconto entra escondido dentro do subtotal.
+   */
+  it('subtotal − desconto + teto + piso fecha com o total', () => {
+    const cenarios: { counts: { regime: PricingRules['prices'][number]['regime']; quantity: number }[]; rules: PricingRules }[] = [
+      { counts: [{ regime: 'simples_hibrido', quantity: 1200 }], rules: comFaixas },
+      { counts: [{ regime: 'mei', quantity: 3 }], rules: comFaixas },
+      { counts: [{ regime: 'lucro_real', quantity: 500 }], rules: { ...comFaixas, capCents: 2_000_000 } },
+      { counts: [{ regime: 'lucro_presumido', quantity: 40 }], rules: rules },
+      { counts: [], rules: comFaixas },
+    ];
+
+    for (const cenario of cenarios) {
+      const r = quoteFromCounts(cenario.counts, cenario.rules);
+      expect(
+        r.subtotalCents - r.volumeDiscountCents + r.capAdjustmentCents + r.minimumAdjustmentCents,
+      ).toBe(r.totalCents);
+    }
+  });
+
+  it('sem faixas o resultado é o linear de sempre', () => {
+    const r = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 500 }], rules);
+
+    expect(r.volumeDiscountCents).toBe(0);
+    expect(r.effectiveDiscountBps).toBe(0);
+    expect(r.totalCents).toBe(500 * 2900);
+  });
+
+  it('carteira pequena não muda de preço com a escada ligada', () => {
+    const semFaixas = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 10 }], rules);
+    const comEscada = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 10 }], comFaixas);
+
+    expect(comEscada.volumeDiscountCents).toBe(0);
+    expect(comEscada.totalCents).toBe(semFaixas.totalCents);
+  });
+
+  it('o caso do briefing: 1.200 CNPJs saem de R$ 34.800 para R$ 23.780', () => {
+    const r = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 1200 }], comFaixas);
+
+    expect(r.subtotalCents).toBe(3_480_000);
+    expect(r.volumeDiscountCents).toBe(1_102_000);
+    expect(r.totalCents).toBe(2_378_000);
+  });
+
+  it('o teto corta acima e aparece como parcela negativa', () => {
+    const r = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 1200 }], {
+      ...comFaixas,
+      capCents: 900_000,
+    });
+
+    expect(r.capAdjustmentCents).toBe(900_000 - 2_378_000);
+    expect(r.totalCents).toBe(900_000);
+  });
+
+  it('teto que não morde não aparece', () => {
+    const r = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 20 }], {
+      ...comFaixas,
+      capCents: 5_000_000,
+    });
+
+    expect(r.capAdjustmentCents).toBe(0);
+  });
+
+  it('recusa teto abaixo do mínimo, em vez de escolher um dos dois em silêncio', () => {
+    expect(() =>
+      quoteFromCounts([{ regime: 'mei', quantity: 1 }], { ...comFaixas, capCents: 10_000 }),
+    ).toThrow(PricingError);
+  });
+
+  it('o piso incide sobre o líquido, não sobre o bruto', () => {
+    // Teto derruba abaixo do piso: o mínimo volta a morder sobre o valor já cortado.
+    const r = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 1200 }], {
+      ...comFaixas,
+      capCents: 15_000,
+    });
+
+    expect(r.totalCents).toBe(15_000);
+    expect(r.minimumAdjustmentCents).toBe(0);
+  });
+
+  it('quote e quoteFromCounts produzem a mesma cotação', () => {
+    const porCliente = quote(
+      [...clients('simples_hibrido', 150), ...clients('mei', 20)],
+      comFaixas,
+    );
+    const porContagem = quoteFromCounts(
+      [
+        { regime: 'simples_hibrido', quantity: 150 },
+        { regime: 'mei', quantity: 20 },
+      ],
+      comFaixas,
+    );
+
+    expect(porCliente).toEqual(porContagem);
+  });
+
+  it('cada linha traz a decomposição por faixa quando há desconto', () => {
+    const r = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 150 }], comFaixas);
+    const linha = r.lines[0]!;
+
+    expect(linha.subtotalCents).toBe(150 * 2900);
+    expect(linha.tiers).toHaveLength(2);
+    expect(linha.volumeDiscountCents).toBe(
+      linha.tiers!.reduce((soma, t) => soma + t.discountCents, 0),
+    );
+  });
+});
+
+describe('serializeQuote', () => {
+  it('carimba a versão do snapshot e mantém o subtotal bruto', () => {
+    const r = quoteFromCounts([{ regime: 'simples_hibrido', quantity: 1200 }], comFaixas);
+    const json = serializeQuote(r);
+
+    expect(json['snapshot_version']).toBe(QUOTE_SNAPSHOT_VERSION);
+    expect(json['subtotal_cents']).toBe(3_480_000);
+    expect(json['volume_discount_cents']).toBe(1_102_000);
+    expect(json['total_cents']).toBe(2_378_000);
   });
 });

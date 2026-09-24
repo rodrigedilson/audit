@@ -1,8 +1,8 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { ApiDeps } from '../server.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
-import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
-import { IngestionService, type UploadedFile } from '../../fiscal/ingestion/ingestion.service.js';
+import { IngestionService } from '../../fiscal/ingestion/ingestion.service.js';
+import { readXmlUpload } from '../multipart.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 import { PADRAO_DA_CHAVE } from '../../fiscal/ingestion/access-key.js';
 
@@ -38,7 +38,10 @@ export async function registerIngestionRoutes(
       deps.tenantResolver.assertCanWrite(context);
 
       const scope = await deps.tenantResolver.scopeFor(context, request.params.cnpj);
-      const files = await readXmlFiles(request);
+      const { files } = await readXmlUpload(request, {
+        maxFiles: MAX_FILES_PER_UPLOAD,
+        maxTotalBytes: MAX_FILES_PER_UPLOAD * 5 * 1024 * 1024,
+      });
 
       const orchestrator = await deps.orchestratorFor(scope);
       const ingestion = new IngestionService(deps.pool, orchestrator, scope);
@@ -316,38 +319,6 @@ export async function registerIngestionRoutes(
       });
     },
   );
-}
-
-/**
- * Lê os XMLs do multipart. Rejeita o lote inteiro só por problema de forma
- * (nenhum arquivo, excesso de arquivos); conteúdo inválido é decidido por
- * arquivo, no 207.
- */
-async function readXmlFiles(request: FastifyRequest): Promise<UploadedFile[]> {
-  const files: UploadedFile[] = [];
-
-  for await (const part of request.parts()) {
-    if (part.type !== 'file') {
-      continue;
-    }
-    if (files.length >= MAX_FILES_PER_UPLOAD) {
-      throw new ValidationError(
-        1,
-        'schema_violation',
-        `Máximo de ${MAX_FILES_PER_UPLOAD} arquivos por requisição.`,
-      );
-    }
-    files.push({
-      filename: part.filename ?? `arquivo-${files.length + 1}.xml`,
-      content: (await part.toBuffer()).toString('utf8'),
-    });
-  }
-
-  if (files.length === 0) {
-    throw new ValidationError(1, 'schema_violation', 'Nenhum arquivo XML enviado.');
-  }
-
-  return files;
 }
 
 function withoutTotal(row: Record<string, unknown>): Record<string, unknown> {

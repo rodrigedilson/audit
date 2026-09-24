@@ -75,6 +75,8 @@ const TABELAS = [
   'dfe_sync_state',
   'dfe_summaries',
   'dfe_documents',
+  'pricing_tiers',
+  'readiness_reports',
 ] as const;
 
 const FUNCOES = [
@@ -138,6 +140,8 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   dfe_sync_state: '19-coleta-dfe.sql',
   dfe_summaries: '19-coleta-dfe.sql',
   dfe_documents: '19-coleta-dfe.sql',
+  pricing_tiers: '22-faixas-de-volume.sql',
+  readiness_reports: '23-diagnostico-publico.sql',
 };
 
 /**

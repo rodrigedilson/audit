@@ -47,6 +47,12 @@ tags:
     description: Assistente fiscal somente leitura sobre o event log
   - name: events
     description: Event log e verificação de projeção
+  - name: billing
+    description: Planos, calculadora pública de preço e assinatura
+  - name: public
+    description: >
+      Superfície sem autenticação. Existe para ser usada antes de qualquer
+      cadastro — é onde o visitante descobre que tem o problema.
 
 paths:
   # ---------------------------------------------------------------- auth
@@ -1564,6 +1570,245 @@ paths:
                   replayed_hash: { type: string }
                   last_event_seq: { type: integer }
 
+  /clients/{cnpj}/periods/{period}/proof:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [events]
+      operationId: getPeriodProof
+      summary: Comprovante de integridade da competência
+      description: >
+        O documento que o escritório mostra ao cliente dele: qual número foi
+        apurado, sobre quantos documentos, e a prova de que a trilha fecha.
+        Precursor em JSON do Book de fechamento em PDF.
+
+
+        `confirmed_hash_reproduced` é a prova forte. O hash foi gravado no log no
+        ato da confirmação, e reproduzi-lo exige replayar os eventos anteriores
+        àquele instante — se alguém alterou, removeu ou acrescentou evento depois,
+        o número não volta a bater. É `null` em competência ainda não confirmada.
+
+
+        Um evento **removido** nem chega ao hash: o replayer detecta o buraco na
+        sequência antes e responde `409 EVENT_STORE_CORRUPTED`.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cnpj: { type: string }
+                  period: { type: string }
+                  state: { type: string, enum: [open, assessed, reconciled, confirmed] }
+                  verified_at: { type: string, format: date-time }
+                  ok:
+                    type: boolean
+                    description: A projeção de agora fecha com o replay do log.
+                  replayed_hash: { type: string }
+                  stored_hash: { type: string }
+                  confirmed_hash:
+                    type: string
+                    nullable: true
+                    description: Hash aprovado no ato da confirmação; preservado após retificação.
+                  confirmed_hash_reproduced:
+                    type: boolean
+                    nullable: true
+                    description: O replay reproduz o hash da confirmação. `null` se não confirmada.
+                  confirmed_at: { type: string, format: date-time, nullable: true }
+                  confirmed_by: { type: string, nullable: true }
+                  rectifies: { type: string, nullable: true }
+                  rectified_by: { type: string, nullable: true }
+                  last_event_seq: { type: integer }
+                  events_in_period: { type: integer }
+                  total_events: { type: integer }
+                  documents:
+                    type: object
+                    properties:
+                      inbound: { type: integer }
+                      outbound: { type: integer }
+                      total: { type: integer }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ------------------------------------------------------------- billing
+  /plans:
+    get:
+      tags: [billing]
+      operationId: listPlans
+      summary: Catálogo de planos, escada de volume e teto
+      description: >
+        **Pública.** Preço no site antes de qualquer contato comercial — o
+        concorrente esconde preço atrás de formulário, e isso é posicionamento.
+
+
+        A escada de faixas também é pública, pelo mesmo motivo: esconder o
+        desconto de volume atrás de "fale com um consultor" seria a mesma
+        opacidade que esconder o preço.
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  minimum_cents: { type: integer }
+                  minimum_formatted: { type: string }
+                  cap_cents:
+                    type: integer
+                    nullable: true
+                    description: Teto da assinatura. `null` quando não há teto contratado.
+                  tiers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        from_clients: { type: integer }
+                        discount_bps:
+                          type: integer
+                          maximum: 5000
+                          description: >
+                            Desconto **marginal**, como alíquota de IR: vale só para os
+                            CNPJs dentro da faixa. O teto de 50% é condição de
+                            monotonicidade — acima disso acrescentar um CNPJ caro
+                            passaria a baixar a fatura.
+                        label: { type: string, nullable: true }
+                  plans:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        regime: { type: string }
+                        monthly_cents: { type: integer }
+                        monthly_formatted: { type: string }
+                        features: { type: array, items: { type: string } }
+        "503":
+          description: >
+            Parâmetros de cobrança ausentes no banco (`billing_settings`). É
+            configuração do servidor, não erro do cliente: 503 diz "tente
+            depois" em vez de esconder a causa atrás de um 500 genérico.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [billing_not_configured] }
+                  message: { type: string }
+
+  /price-calculator:
+    post:
+      tags: [billing]
+      operationId: calculatePrice
+      summary: Calculadora pública de preço
+      description: >
+        Quantos CNPJs de cada regime, quanto custa.
+
+
+        **`subtotal_cents` é bruto, não é o que se paga.** As quatro parcelas
+        fecham por soma:
+        `subtotal - volume_discount + cap_adjustment + minimum_adjustment = total`.
+        Ignorar `volume_discount_cents` mostraria ao escritório uma fatura maior
+        que a real.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clients]
+              properties:
+                clients:
+                  type: array
+                  minItems: 1
+                  maxItems: 5
+                  items:
+                    type: object
+                    required: [regime, quantity]
+                    properties:
+                      regime: { type: string }
+                      quantity: { type: integer, minimum: 0, maximum: 10000 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PriceQuote" }
+        "422": { $ref: "#/components/responses/Rejected" }
+
+  # -------------------------------------------------------------- public
+  /reform-readiness:
+    post:
+      tags: [public]
+      operationId: reformReadiness
+      summary: Diagnóstico de prontidão da carteira para a reforma
+      description: >
+        O visitante sobe XMLs e recebe o retrato de quantos dos seus fornecedores
+        já emitem com o grupo UB da NT 2025.002 (IBS/CBS). **Sem criar conta.**
+
+
+        Responde `200`, e não `207` como a ingestão: ali cada arquivo tem efeito
+        individual no log; aqui nada é gravado, o relatório está completo mesmo
+        com rejeições, e as rejeições são *dado do diagnóstico* — "2 dos seus 50
+        XMLs nem abrem" —, não falha parcial.
+
+
+        **Nada do documento é persistido.** Só contadores agregados, sem CNPJ,
+        chave de acesso ou razão social. A resposta carrega `persisted: false`
+        como compromisso explícito.
+
+
+        Limites: 50 arquivos e 10 MB por lote; 3 diagnósticos por minuto e 20 por
+        dia, por IP. Estourar responde `429` com `code: rate_limited` — que **não**
+        é o mesmo `429` de limite de plano. Bifurque por `code`, nunca por status.
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+                email:
+                  type: string
+                  description: >
+                    Opcional. O relatório sai de qualquer forma — muro de e-mail é a
+                    opacidade que o produto combate. Só é gravado com `consent=true`.
+                consent: { type: string, enum: ["true", "1"] }
+                source: { type: string }
+      responses:
+        "200":
+          description: Relatório de prontidão
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadinessReport" }
+        "422": { $ref: "#/components/responses/Rejected" }
+        "429":
+          description: Limite de uso do diagnóstico público
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [rate_limited] }
+                  message: { type: string }
+                  retry_after_seconds: { type: integer }
+        "503":
+          description: Diagnóstico temporariamente desligado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [diagnostic_disabled] }
+                  message: { type: string }
+
 # =====================================================================
 components:
   securitySchemes:
@@ -1624,6 +1869,137 @@ components:
           schema: { $ref: "#/components/schemas/Rejection" }
 
   schemas:
+    PriceQuote:
+      type: object
+      description: >
+        Cotação da assinatura. É também o `snapshot` gravado na fatura: a prévia
+        que a tela mostrou e a fatura emitida têm a mesma forma.
+
+
+        **As quatro parcelas fecham por soma** e nenhum desconto entra escondido
+        dentro do subtotal:
+        `subtotal_cents - volume_discount_cents + cap_adjustment_cents + minimum_adjustment_cents = total_cents`.
+      properties:
+        snapshot_version:
+          type: integer
+          description: >
+            2 desde a degressão por volume. Faturas emitidas antes não têm as
+            parcelas novas — bifurque por este número, não pela presença dos campos.
+        billable_clients: { type: integer }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              regime: { type: string }
+              quantity: { type: integer }
+              unit_cents: { type: integer, description: "Preço de tabela, sem desconto." }
+              subtotal_cents: { type: integer, description: "`quantity × unit_cents`, BRUTO." }
+              volume_discount_cents: { type: integer }
+              tiers:
+                type: array
+                description: Decomposição por faixa. Ausente quando não há degressão.
+                items:
+                  type: object
+                  properties:
+                    from_clients: { type: integer }
+                    to_clients: { type: integer, nullable: true }
+                    label: { type: string, nullable: true }
+                    quantity: { type: integer }
+                    discount_bps: { type: integer }
+                    gross_cents: { type: integer }
+                    discount_cents: { type: integer }
+                    net_cents: { type: integer }
+        subtotal_cents: { type: integer, description: "Soma das linhas, BRUTA." }
+        volume_discount_cents: { type: integer, minimum: 0 }
+        cap_adjustment_cents: { type: integer, maximum: 0 }
+        minimum_adjustment_cents: { type: integer, minimum: 0 }
+        effective_discount_bps: { type: integer }
+        total_cents: { type: integer }
+        total_formatted: { type: string }
+        minimum_cents: { type: integer }
+
+    ReadinessRatio:
+      type: object
+      properties:
+        total: { type: integer }
+        ready: { type: integer }
+        ready_pct:
+          type: number
+          description: >
+            Percentual com uma casa, já calculado. Não refaça a conta na tela: ela
+            divergiria do número que o próprio relatório afirma.
+
+    ReadinessReport:
+      type: object
+      properties:
+        generated_at: { type: string, format: date-time }
+        totals:
+          type: object
+          properties:
+            documents: { type: integer }
+            parsed: { type: integer }
+            rejected: { type: integer }
+            duplicates:
+              type: integer
+              description: XMLs repetidos no lote; não entram no denominador.
+        documents_ready: { $ref: "#/components/schemas/ReadinessRatio" }
+        items_ready: { $ref: "#/components/schemas/ReadinessRatio" }
+        value_ready:
+          type: object
+          description: >
+            Prontidão ponderada por valor. Costuma divergir bastante das outras
+            duas — 10% dos documentos podem ser 80% do dinheiro, e é esse achado
+            que mostra o tamanho do problema.
+          properties:
+            total_cents: { type: integer }
+            ready_cents: { type: integer }
+            ready_pct: { type: number }
+        periods:
+          type: array
+          items:
+            type: object
+            properties:
+              period: { type: string }
+              documents: { $ref: "#/components/schemas/ReadinessRatio" }
+        issuers:
+          type: array
+          description: Top 50 fornecedores por volume de documentos.
+          items:
+            type: object
+            properties:
+              cnpj: { type: string }
+              name: { type: string }
+              documents: { $ref: "#/components/schemas/ReadinessRatio" }
+              total_cents: { type: integer }
+        issuers_truncated: { type: boolean }
+        ncms:
+          type: array
+          items:
+            type: object
+            properties:
+              ncm: { type: string, description: "`(sem NCM)` agrupa itens sem classificação." }
+              items: { $ref: "#/components/schemas/ReadinessRatio" }
+        ncms_truncated: { type: boolean }
+        rejections:
+          type: array
+          items:
+            type: object
+            properties:
+              filename: { type: string }
+              layer: { type: integer, enum: [1, 2] }
+              reason: { type: string }
+              message: { type: string }
+        limits:
+          type: object
+          properties:
+            max_files: { type: integer }
+            max_total_bytes: { type: integer }
+        persisted:
+          type: boolean
+          description: Sempre `false`. É o compromisso do produto dito na própria resposta.
+        lead_registered: { type: boolean }
+
     PeriodId:
       type: string
       pattern: "^[0-9]{4}-(0[1-9]|1[0-2])$"

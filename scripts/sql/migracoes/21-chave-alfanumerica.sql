@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 21 de 22: chave-alfanumerica
+-- audit — passo 21 de 25: chave-alfanumerica
 --
 -- Chave de acesso com CNPJ alfanumérico: letras nas 12 posições do CNPJ do
 -- emitente. Troca toda restrição que ainda exija a chave só de dígitos.
