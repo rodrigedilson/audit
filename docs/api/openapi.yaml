@@ -321,8 +321,10 @@ paths:
       - in: path
         name: access_key
         required: true
-        description: Chave de acesso (44 dígitos)
-        schema: { type: string, pattern: "^[0-9]{44}$" }
+        description: >
+          Chave de acesso, 44 posições. Letras maiúsculas só nas 12 do CNPJ do
+          emitente (CNPJ alfanumérico, NT Conjunta 2025.001).
+        schema: { type: string, pattern: "^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$" }
     get:
       tags: [ingestion]
       summary: Documento com itens, tributos atuais e IBS/CBS lado a lado
