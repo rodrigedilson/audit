@@ -1685,6 +1685,18 @@ paths:
                         monthly_cents: { type: integer }
                         monthly_formatted: { type: string }
                         features: { type: array, items: { type: string } }
+        "503":
+          description: >
+            Parâmetros de cobrança ausentes no banco (`billing_settings`). É
+            configuração do servidor, não erro do cliente: 503 diz "tente
+            depois" em vez de esconder a causa atrás de um 500 genérico.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [billing_not_configured] }
+                  message: { type: string }
 
   /price-calculator:
     post:
@@ -1725,7 +1737,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PriceQuote" }
-        "422": { $ref: "#/components/responses/Rejection" }
+        "422": { $ref: "#/components/responses/Rejected" }
 
   # -------------------------------------------------------------- public
   /reform-readiness:
@@ -1776,7 +1788,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReadinessReport" }
-        "422": { $ref: "#/components/responses/Rejection" }
+        "422": { $ref: "#/components/responses/Rejected" }
         "429":
           description: Limite de uso do diagnóstico público
           content:
@@ -1881,7 +1893,7 @@ components:
             properties:
               regime: { type: string }
               quantity: { type: integer }
-              unit_cents: { type: integer, description: Preço de tabela, sem desconto. }
+              unit_cents: { type: integer, description: "Preço de tabela, sem desconto." }
               subtotal_cents: { type: integer, description: "`quantity × unit_cents`, BRUTO." }
               volume_discount_cents: { type: integer }
               tiers:
@@ -1898,7 +1910,7 @@ components:
                     gross_cents: { type: integer }
                     discount_cents: { type: integer }
                     net_cents: { type: integer }
-        subtotal_cents: { type: integer, description: Soma das linhas, BRUTA. }
+        subtotal_cents: { type: integer, description: "Soma das linhas, BRUTA." }
         volume_discount_cents: { type: integer, minimum: 0 }
         cap_adjustment_cents: { type: integer, maximum: 0 }
         minimum_adjustment_cents: { type: integer, minimum: 0 }
