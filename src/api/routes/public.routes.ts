@@ -4,6 +4,7 @@ import type { ApiDeps } from '../server.js';
 import { readXmlUpload } from '../multipart.js';
 import { createBurstLimiter, RateLimitedError } from '../plugins/rate-limit.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
+import { PublicInputError } from '../public-errors.js';
 import { summarizeReadiness, type ReadinessReport } from '../../fiscal/ingestion/readiness.js';
 
 /**
@@ -65,17 +66,32 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
 
     await exigirQuotaDiaria(deps, ipHash);
 
-    const { files, fields } = await readXmlUpload(request, {
-      maxFiles: MAX_ARQUIVOS,
-      maxTotalBytes: MAX_BYTES_DO_LOTE,
-      allowedFields: ['email', 'consent', 'source'],
-    });
+    /**
+     * `readXmlUpload` é compartilhado com a ingestão autenticada, onde recusar
+     * com camada e motivo está certo — lá quem lê é um contador. Aqui a recusa
+     * é traduzida na fronteira, para o visitante ler "Máximo de 50 arquivos" e
+     * não o vocabulário do pipeline.
+     */
+    let files;
+    let fields;
+    try {
+      ({ files, fields } = await readXmlUpload(request, {
+        maxFiles: MAX_ARQUIVOS,
+        maxTotalBytes: MAX_BYTES_DO_LOTE,
+        allowedFields: ['email', 'consent', 'source'],
+      }));
+    } catch (erro) {
+      if (erro instanceof ValidationError) {
+        throw new PublicInputError(erro.details);
+      }
+      throw erro;
+    }
 
     // O e-mail é validado ANTES de gastar CPU com o lote: um endereço
     // malformado não justifica 50 parses.
     const email = fields['email']?.trim();
     if (email && !EMAIL.test(email)) {
-      throw new ValidationError(1, 'schema_violation', 'E-mail inválido.');
+      throw new PublicInputError('E-mail inválido.');
     }
     const consentiu = fields['consent'] === 'true' || fields['consent'] === '1';
 
@@ -161,17 +177,13 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
 
       const email = request.body.email.trim();
       if (!EMAIL.test(email)) {
-        throw new ValidationError(1, 'schema_violation', 'E-mail inválido.');
+        throw new PublicInputError('E-mail inválido.');
       }
 
       // Consentimento é condição, não caixa de sugestão: sem ele não há base
       // para guardar o endereço, e a constraint do banco recusaria de todo jeito.
       if (request.body.consent !== true) {
-        throw new ValidationError(
-          1,
-          'schema_violation',
-          'É preciso consentir com o envio para registrar o e-mail.',
-        );
+        throw new PublicInputError('É preciso consentir com o envio para registrar o e-mail.');
       }
 
       const { rows } = await deps.pool.query<{ registrar_lead_do_diagnostico: boolean }>(

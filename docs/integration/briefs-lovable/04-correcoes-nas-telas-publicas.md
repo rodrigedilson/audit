@@ -55,7 +55,7 @@ Resposta `200`: `{ "lead_registered": true }`.
 
 | Resposta | Significado | O que mostrar |
 |---|---|---|
-| `422` | E-mail malformado ou `consent` diferente de `true` | mensagem da API, inline |
+| `400` | E-mail malformado ou `consent` diferente de `true` | `body.message`, inline — já vem como frase pronta |
 | `404` | `report_id` não existe **ou** já tem e-mail registrado | "Este relatório já foi enviado." e desabilite o botão |
 | `429` com `code: "rate_limited"` | Muitos envios seguidos | "Aguarde N segundos", de `retry_after_seconds` |
 
