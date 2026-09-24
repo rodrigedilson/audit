@@ -546,13 +546,14 @@ export class ReconciliationService {
       applies_to_regimes: Regime[] | null;
       months_after: number | null;
       day_of_month: number | null;
+      day_rule: string;
       fixed_date: string | null;
       warn_days: number;
       severity: DeadlineRule['severity'];
       legal_basis: string;
     }>(
       `select rule_id, name, description, applies_to_regimes, months_after,
-              day_of_month, fixed_date, warn_days, severity, legal_basis
+              day_of_month, day_rule, fixed_date, warn_days, severity, legal_basis
          from deadline_rules
         where active and nature = 'normativo'`,
     );
@@ -564,6 +565,7 @@ export class ReconciliationService {
       appliesToRegimes: r.applies_to_regimes,
       monthsAfter: r.months_after === null ? null : Number(r.months_after),
       dayOfMonth: r.day_of_month === null ? null : Number(r.day_of_month),
+      dayRule: r.day_rule as DeadlineRule['dayRule'],
       fixedDate: r.fixed_date === null ? null : new Date(r.fixed_date).toISOString().slice(0, 10),
       warnDays: Number(r.warn_days),
       severity: r.severity,

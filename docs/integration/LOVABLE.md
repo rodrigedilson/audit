@@ -80,10 +80,12 @@ docker run -p 3000:3000 --env-file .env audit-api
 
 ### O que falta
 
-Escolher o provedor e subir. Qualquer um que aceite `Dockerfile` serve (Fly,
-Render, Railway, Cloud Run). Variáveis no serviço de deploy:
+A API roda no Render, com os segredos sincronizados do Doppler `prd`. O passo a
+passo está em [`SEGREDOS.md`](../setup/SEGREDOS.md#passo-a-passo). Variáveis do
+serviço:
 
 ```bash
+AUDIT_ENV=prod
 DATABASE_URL=postgresql://...        # pooler do Supabase (npm run pooler descobre o host)
 SUPABASE_URL=https://uflputiyytswvagrrzzn.supabase.co
 SUPABASE_ANON_KEY=...

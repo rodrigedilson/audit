@@ -180,11 +180,12 @@ export class DossierService {
        */
       const { rows } = await client.query<{ id: string }>(
         `insert into sped_files (
-           tenant_id, cnpj, period, kind, layout_version, reference, company_name,
-           documents_count, rejected_count, counts, event_seq, imported_by, imported_at
-         ) values ($1::uuid, $2::char(14), $3::char(7), $4::sped_kind, $5, $6, $7,
-                   $8, $9, $10::jsonb, $11, $12::uuid, now())
-         on conflict (tenant_id, cnpj, period) do update set
+           tenant_id, cnpj, period, layout, kind, layout_version, reference,
+           company_name, documents_count, rejected_count, counts, event_seq,
+           imported_by, imported_at
+         ) values ($1::uuid, $2::char(14), $3::char(7), 'contribuicoes',
+                   $4::sped_kind, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::uuid, now())
+         on conflict (tenant_id, cnpj, period, layout) do update set
            kind = excluded.kind,
            layout_version = excluded.layout_version,
            reference = excluded.reference,
@@ -300,7 +301,8 @@ export class DossierService {
       imported_at: string;
     }>(
       `select id, kind, imported_at from sped_files
-        where tenant_id = $1::uuid and cnpj = $2::char(14) and period = $3::char(7)`,
+        where tenant_id = $1::uuid and cnpj = $2::char(14) and period = $3::char(7)
+          and layout = 'contribuicoes'`,
       [scope.tenantId, scope.cnpj, period],
     );
 

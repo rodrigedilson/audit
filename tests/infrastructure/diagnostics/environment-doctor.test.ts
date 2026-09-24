@@ -6,6 +6,7 @@ import {
   checarTrilhas,
   checarPrazosNormativos,
   checarCotaDoAssistente,
+  checarCobranca,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
 
@@ -13,6 +14,7 @@ const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 
 /** Variáveis mínimas para o doctor passar da primeira checagem. */
 const ENV_BASE = {
+  AUDIT_ENV: 'dev',
   SUPABASE_URL: 'https://projeto-de-teste.supabase.co',
   SUPABASE_ANON_KEY: 'chave-anon-de-teste',
   SUPABASE_JWT_SECRET: 'segredo-de-teste',
@@ -582,5 +584,53 @@ describe('checarCotaDoAssistente', () => {
     expect(r.estado).toBe('falha');
     expect(r.acao).toContain('403');
     expect(r.acao).toContain('09-assistente-fiscal.sql');
+  });
+});
+
+/** Cobrança, testada sem banco: `subscriptions` é escrita pelos testes de API em paralelo. */
+describe('checarCobranca', () => {
+  const poolFalso = (colunas: number, ativadas = 0): pg.Pool =>
+    ({
+      query: async () => ({ rows: [{ colunas: String(colunas), ativadas: String(ativadas) }] }),
+    }) as unknown as pg.Pool;
+
+  const env = (environment: 'dev' | 'prod', comChave: boolean) =>
+    ({
+      environment,
+      ...(comChave ? { asaas: { apiKey: 'chave', baseUrl: 'https://api.asaas.com/v3' } } : {}),
+    }) as unknown as Parameters<typeof checarCobranca>[1];
+
+  it('sem o schema da ativação, falha apontando a migration', async () => {
+    const r = await checarCobranca(poolFalso(2), env('prod', true));
+
+    expect(r.estado).toBe('falha');
+    expect(r.acao).toContain('17-ativacao-da-cobranca.sql');
+  });
+
+  /** É o registro do que falta: aparece a cada doctor até as chaves chegarem. */
+  it('prod sem chave: aviso com a lista do que configurar', async () => {
+    const r = await checarCobranca(poolFalso(4), env('prod', false));
+
+    expect(r.estado).toBe('aviso');
+    expect(r.acao).toContain('ASAAS_WEBHOOK_TOKEN');
+    expect(r.acao).toContain('/v1/webhooks/asaas');
+  });
+
+  it('prod com chave: ok, com quantos escritórios já ativaram', async () => {
+    const r = await checarCobranca(poolFalso(4, 3), env('prod', true));
+
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toContain('3 escritório(s)');
+  });
+
+  it('dev sem chave é o estado certo', async () => {
+    expect((await checarCobranca(poolFalso(4), env('dev', false))).estado).toBe('ok');
+  });
+
+  it('dev com chave é aviso: o sandbox gravaria no banco de produção', async () => {
+    const r = await checarCobranca(poolFalso(4), env('dev', true));
+
+    expect(r.estado).toBe('aviso');
+    expect(r.acao).toContain('produção');
   });
 });

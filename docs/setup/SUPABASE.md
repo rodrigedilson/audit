@@ -49,18 +49,20 @@ ordem**. Cada um depende das tabelas do anterior.
 | 13 | `13-correcao-propagacao.sql` | correção: a propagação de item ignorava o item nunca classificado |
 | 14 | `14-key_id_do_certificado.sql` | identifica qual chave mestra cifrou cada certificado, para a rotação ser conferível |
 | 15 | `15-remove_tabelas_orfas.sql` | remove as sete tabelas de "interoperabilidade" que nenhum código usa |
-| 16 | `16-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 16 | `16-dia_util_nos_prazos.sql` | permite prazo em dia útil e prazo antecipado — sem ela, o décimo dia útil entraria como dia 10 |
+| 17 | `17-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
 > **Os arquivos são renumerados quando uma onda nova entra.** Se você já aplicou
 > uma versão anterior, rode os que faltam e ignore o bootstrap — ele é
 > idempotente e avisa que o usuário já pertence a um escritório. `npm run doctor`
 > diz exatamente quais tabelas faltam e de qual arquivo elas vêm.
 
-> **Já aplicou até o `13-correcao-propagacao.sql`?** Rode o `14` e o `15`. O
+> **Já aplicou até o `13-correcao-propagacao.sql`?** Rode o `14`, o `15` e o `16`. O
 > `14` só acrescenta uma coluna nula em `certificates`. O `15` remove tabelas, e
 > **se recusa a rodar** caso alguma delas tenha deixado de estar vazia — nesse
 > caso a mensagem diz qual, e a pergunta passa a ser de onde veio o dado. O
-> bootstrap é o último passo e mudou de número (agora é `16`); reexecutá-lo não
+> O `16` só acrescenta uma coluna com padrão que preserva o comportamento atual.
+> O bootstrap é o último passo e mudou de número (agora é `17`); reexecutá-lo não
 > faz diferença, é idempotente.
 
 Antes de executar o passo 14, edite as duas linhas marcadas:
@@ -96,6 +98,7 @@ Copie `.env.example` para `.env` se ainda não existir. O `.env` é ignorado pel
 git — nunca comite.
 
 ```bash
+AUDIT_ENV=dev
 DATABASE_URL=postgresql://postgres.SEU-REF:SENHA@aws-0-SUA-REGIAO.pooler.supabase.com:5432/postgres
 SUPABASE_URL=https://SEU-REF.supabase.co
 SUPABASE_ANON_KEY=sua-chave-anon
@@ -103,6 +106,12 @@ SUPABASE_JWKS_URL=https://SEU-REF.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_JWT_AUDIENCE=authenticated
 CERTIFICATE_MASTER_KEY=gere-com-openssl-rand-base64-48
 ```
+
+**`AUDIT_ENV`** — `dev` ou `prod`, obrigatória e sem padrão. Os dois ambientes
+usam o mesmo projeto Supabase e o mesmo banco. Com `prod`, `CORS_ORIGINS` passa a
+ser obrigatória, e a cobrança exige a URL de produção do Asaas e o token do
+webhook. Com `dev`, o Asaas de produção é recusado. Ver
+[SEGREDOS.md](SEGREDOS.md#ambientes-dev-e-prod).
 
 **`DATABASE_URL`** — copie do painel em **Connect**. Prefira **Session pooler**
 ou **Transaction pooler**; evite *Direct connection* (motivo abaixo, em

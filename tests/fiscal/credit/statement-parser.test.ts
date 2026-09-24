@@ -87,10 +87,32 @@ describe('extrato bancário — leitura', () => {
 
     it('extrai o CNPJ da contraparte do histórico quando ele está lá', () => {
       const r = parseStatement(
-        ofx(trn('<DTPOSTED>20271125<TRNAMT>-10.00<FITID>A<MEMO>PIX 98.765.432/0001-99')),
+        ofx(trn('<DTPOSTED>20271125<TRNAMT>-10.00<FITID>A<MEMO>PIX 98.765.432/0001-98')),
       );
 
-      expect(r.lines[0]!.counterpartyDoc).toBe('98765432000199');
+      expect(r.lines[0]!.counterpartyDoc).toBe('98765432000198');
+    });
+
+    /** Fornecedor aberto de 31/07/2026 em diante tem CNPJ com letras. */
+    it('extrai CNPJ alfanumérico do histórico', () => {
+      const r = parseStatement(
+        ofx(trn('<DTPOSTED>20271125<TRNAMT>-10.00<FITID>B<MEMO>PIX 12.ABC.345/01DE-35')),
+      );
+
+      expect(r.lines[0]!.counterpartyDoc).toBe('12ABC34501DE35');
+    });
+
+    /**
+     * Com letras admitidas, texto livre vira campo minado: `PAGAMENTO-MENSAL-X`
+     * tem formato de CNPJ depois de juntar os hifens. O dígito verificador é o
+     * que impede o extrato de inventar um fornecedor.
+     */
+    it('não inventa contraparte a partir de palavra de 14 posições', () => {
+      const r = parseStatement(
+        ofx(trn('<DTPOSTED>20271125<TRNAMT>-10.00<FITID>C<MEMO>RAZAOSOCIALLT 00')),
+      );
+
+      expect(r.lines[0]!.counterpartyDoc).toBeUndefined();
     });
 
     it('arquivo OFX só com saldo é recusado, apontando a causa provável', () => {
@@ -173,10 +195,10 @@ describe('extrato bancário — leitura', () => {
 
     it('lê a coluna documento como CNPJ da contraparte', () => {
       const r = parseStatement(
-        'data;valor;historico;documento\n2027-11-25;-10,00;x;98765432000199',
+        'data;valor;historico;documento\n2027-11-25;-10,00;x;98765432000198',
       );
 
-      expect(r.lines[0]!.counterpartyDoc).toBe('98765432000199');
+      expect(r.lines[0]!.counterpartyDoc).toBe('98765432000198');
     });
   });
 

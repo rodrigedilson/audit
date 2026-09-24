@@ -82,6 +82,9 @@ Cabeçalho com razão social, CNPJ, regime e `has_certificate`. Abas:
 ### 5. Cofre de certificados A1
 `GET|PUT|DELETE /v1/clients/{cnpj}/certificate` · `GET .../certificate/usage` · `GET /v1/certificates/expiring`
 
+`usable_for_sync: false` no `GET` do certificado quer dizer que ele foi enviado
+antes da coleta de DF-e, e precisa ser reenviado para buscar notas na SEFAZ.
+
 - **Sem certificado:** upload (`PUT`, multipart `pfx` + `password`), **somente
   `owner`**. Avise que o arquivo é cifrado e que a senha **não** é guardada.
 - **Com certificado:** titular, emissor, serial, validade, `days_to_expiry`
@@ -123,9 +126,29 @@ Documento item a item, com `legacy_taxes` (ICMS, IPI, PIS, COFINS) e
 Esta é a tela que materializa o diferencial: os dois sistemas no mesmo item.
 Valores vêm em centavos inteiros — divida por 100 na apresentação, nunca antes.
 
-`POST /sync`, `/sped`, `/bank-statements` respondem **501** por enquanto e
-apontam o upload manual: enfileirar sem consumidor deixaria o escritório
-esperando um job que nunca sai de `queued`.
+**Coleta na SEFAZ** (ADR-006). O botão "Buscar notas na SEFAZ" chama
+`POST /clients/{cnpj}/sync`, que responde **202** com um `Job`. Acompanhe por
+`GET /jobs/{job_id}` até `done` ou `failed`. O `result` traz os números da
+coleta.
+
+- `GET /clients/{cnpj}/dfe` alimenta o painel da coleta:
+  - `next_allowed_at`: antes desse horário o botão fica desabilitado, e a tela
+    mostra o horário;
+  - `summaries.awaiting_full_xml`: notas de entrada com ciência feita, cujo XML
+    chega na próxima coleta;
+  - `documents.awaiting_period_open`: notas baixadas de competência ainda não
+    aberta. Mostre "abra a competência para incluí-las": elas entram na coleta
+    seguinte, e não viram rejeição.
+- Erros que a tela trata:
+  - **429**: a SEFAZ pune consulta repetida com uma hora de bloqueio. Mostre
+    `retry_at` e não ofereça tentar de novo;
+  - **409 `dfe_certificate_not_usable`**: certificado enviado antes da coleta.
+    Leve à aba do certificado para reenviar;
+  - **409 `dfe_missing_uf`**: leve ao cadastro da empresa;
+  - **503 `dfe_gateway_not_configured`**: o esperado em dev. O upload manual
+    continua em `POST /clients/{cnpj}/documents`.
+
+O SPED (`/sped`) e o extrato (`/bank-statements`) têm rota própria, por upload.
 
 ### 7. Saúde do cadastro de itens (Onda 5)
 `GET /v1/clients/{cnpj}/items?health` · `PUT .../items/{item_id}/classification` · `GET .../items/health`
@@ -455,7 +478,25 @@ vai no site, antes de qualquer contato comercial.
 - Mostre `subtotal_cents`, `minimum_adjustment_cents` e `total_cents`
   separados. O ajuste de mínimo existe para ser explicado, não escondido atrás
   de um total.
-- `GET /v1/subscription` traz status, fim do trial e a cotação do mês corrente.
+- `GET /v1/subscription` traz status, fim do trial, `billing_activated` e a
+  cotação do mês corrente.
+- `POST /v1/subscription/activate` (`owner`), com `document` (CPF ou CNPJ, com
+  ou sem máscara), `email` e `billing_type` (`PIX`, `BOLETO`, `CREDIT_CARD` ou
+  `UNDEFINED`), cria a cobrança no Asaas.
+  - Sem ativação, nada é cobrado: o trial acaba sem virar fatura. Com
+    `billing_activated: false`, a tela oferece a ativação e não fala em débito.
+  - A cobrança é **pós-paga**: a fatura que vence em dezembro cobra novembro. A
+    resposta traz `first_reference_month` e `first_due_date`; mostre os dois,
+    porque "vence em dezembro" sozinho parece cobrança adiantada.
+  - `estimate_cents` é estimativa pela carteira de hoje. O valor de cada fatura
+    é fechado quando o mês de referência acaba.
+  - `201` na primeira ativação, `200` com `already_active: true` se já estava
+    ativa. `400` para documento com dígito verificador errado e `409` para
+    assinatura cancelada. `503` com `billing_gateway_not_configured` é o
+    esperado em dev, que não fala com o Asaas.
+- `GET /v1/subscription/invoices/{period}`: um mês sem CNPJ ativo aparece como
+  fatura `canceled` de R$ 0. Carteira vazia não paga o mínimo, e a cobrança é
+  removida no Asaas.
 - `POST /v1/subscription/cancel` (`owner`): **um clique, sem diálogo de
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.

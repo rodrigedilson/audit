@@ -11,6 +11,7 @@
  * vezes dobraria o pagamento, e um crédito apareceria liberado por um pagamento
  * que aconteceu uma vez só.
  */
+import { cnpjValido } from '../../esaa/shared/domain/cnpj.js';
 
 export interface StatementLine {
   /** `FITID` do OFX, ou uma chave derivada no CSV. Nunca vazio. */
@@ -130,7 +131,7 @@ function lancamentoDoOfx(bloco: string): StatementLine {
     .filter((t): t is string => t !== undefined && t.length > 0)
     .join(' — ');
 
-  const documento = digitos(descricao);
+  const documento = inscricao(descricao);
 
   return {
     fitid,
@@ -234,7 +235,7 @@ function lancamentoDoCsv(
       ? informado
       : `csv:${data}:${valor}:${descricao.slice(0, 40)}:${numeroDaLinha}`;
 
-  const documento = digitos(`${ler('documento')} ${descricao}`);
+  const documento = inscricao(`${ler('documento')} ${descricao}`);
 
   return {
     fitid,
@@ -312,10 +313,33 @@ function paraCentavos(bruto: string): number {
   return negativo ? -centavos : centavos;
 }
 
-/** Primeiro CNPJ de 14 dígitos no texto, se houver. */
-function digitos(texto: string): string | undefined {
-  const juntado = texto.replace(/(?<=\d)[\s.\-/]+(?=\d)/g, '');
-  return /(?<!\d)(\d{14})(?!\d)/.exec(juntado)?.[1];
+/**
+ * Primeiro CNPJ válido no texto do lançamento, se houver.
+ *
+ * O extrato é texto livre, e desde 31/07/2026 o CNPJ pode ter letras — o que
+ * torna a busca bem mais perigosa: qualquer palavra de 14 posições passaria a
+ * parecer um CNPJ. Por isso o dígito verificador é conferido, e por isso a
+ * junção de separadores é feita em dois passos com regras diferentes.
+ *
+ * Entre dígitos vale até espaço, como já valia, para pegar `12 345 678 0001 95`.
+ * Entre alfanuméricos valem só `.`, `-` e `/`, que são os da máscara: aceitar
+ * espaço ali grudaria duas palavras vizinhas num candidato inventado.
+ */
+function inscricao(texto: string): string | undefined {
+  const juntado = texto
+    .toUpperCase()
+    .replace(/(?<=\d)[\s.\-/]+(?=\d)/g, '')
+    .replace(/(?<=[0-9A-Z])[.\-/]+(?=[0-9A-Z])/g, '');
+
+  for (const [candidato] of juntado.matchAll(
+    /(?<![0-9A-Z])[0-9A-Z]{12}[0-9]{2}(?![0-9A-Z])/g,
+  )) {
+    if (cnpjValido(candidato)) {
+      return candidato;
+    }
+  }
+
+  return undefined;
 }
 
 function normalizarColuna(bruto: string): string {

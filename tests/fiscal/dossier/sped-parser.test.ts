@@ -158,7 +158,7 @@ describe('EFD-Contribuições — leitura', () => {
     it('recusa CNPJ com tamanho errado', () => {
       const ruim = ABERTURA.replace('|12345678000195|', '|123|');
 
-      expect(() => parseSped(ruim)).toThrow(/CNPJ com 3 dígitos/);
+      expect(() => parseSped(ruim)).toThrow(/Campo CNPJ não é CNPJ/);
     });
 
     it('recusa data de início fora do formato DDMMAAAA', () => {
@@ -343,5 +343,70 @@ describe('EFD-Contribuições — leitura', () => {
 
     expect(r.counts['0140']).toBe(1);
     expect(r.rejected).toHaveLength(0);
+  });
+});
+
+/**
+ * O arquivo do leiaute errado.
+ *
+ * A EFD ICMS/IPI e a EFD-Contribuições se parecem o bastante para uma ser lida
+ * como a outra sem erro de parse. Onde divergem é no `0000`:
+ *
+ * | Campo | EFD-Contribuições | EFD ICMS/IPI |
+ * |-------|-------------------|--------------|
+ * | 04    | `IND_SIT_ESP`     | `DT_INI`     |
+ * | 06    | `DT_INI`          | `NOME`       |
+ * | 09    | `CNPJ`            | `UF`         |
+ *
+ * Conferido contra o Guia Prático EFD-ICMS/IPI 3.2.2 pelo script
+ * `scripts/extrair-layout-efd.ts`. A mesma conferência desfez uma suposição que
+ * estava escrita aqui: o `C100` e o `C170` **não** mudam de posição entre os
+ * dois leiautes — são idênticos. O que quebra é o cabeçalho, e é por ele que a
+ * recusa tem de acontecer, antes de qualquer valor ser lido.
+ *
+ * A defesa é a versão de leiaute, e estes testes existem para que ela não seja
+ * afrouxada sem querer — por exemplo ao acrescentar uma versão nova à lista.
+ */
+describe('parseSped — arquivo do leiaute errado', () => {
+  /**
+   * Abertura real de EFD ICMS/IPI no leiaute 020, obrigatório desde 01/01/2026
+   * (Tabela Versão do Leiaute, item 3.1.1 da Nota Técnica EFD ICMS IPI 2026.001).
+   */
+  const ABERTURA_ICMS_IPI = reg(
+    '0000',
+    '020',
+    '0',
+    '01012026',
+    '31012026',
+    'EMPRESA DE TESTE LTDA',
+    '12345678000195',
+    '',
+    'SP',
+    '110042490114',
+    '3550308',
+    '',
+    '',
+    'A',
+    '0',
+  );
+
+  it('recusa o arquivo de EFD ICMS/IPI pela versão de leiaute', () => {
+    expect(() => parseSped(ABERTURA_ICMS_IPI)).toThrow(SpedFormatError);
+    expect(() => parseSped(ABERTURA_ICMS_IPI)).toThrow(/não suportada/);
+  });
+
+  /** A recusa diz por que, e não só que não deu. */
+  it('a recusa explica que posição errada trocaria base por valor', () => {
+    expect(() => parseSped(ABERTURA_ICMS_IPI)).toThrow(/trocaria base por valor/);
+  });
+
+  /**
+   * As numerações de versão são independentes entre as duas escriturações, e se
+   * sobrepõem: `006` é válido nas duas, significando leiautes diferentes. Por
+   * isso a lista de cada leitor tem de ser conferida contra o guia dela, e não
+   * herdada da outra.
+   */
+  it('a versão do ICMS/IPI não está entre as suportadas', () => {
+    expect(VERSOES_SUPORTADAS.has('020')).toBe(false);
   });
 });

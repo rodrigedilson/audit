@@ -31,6 +31,7 @@
   "license": "ISC",
   "description": "audit — motor de conciliação da transição tributária (SaaS fiscal sobre o kernel ESAA-Flow de event sourcing)",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "@fastify/cors": "^11.3.0",
     "@fastify/multipart": "^10.1.1",
     "fast-xml-parser": "^4.5.7",
@@ -47,10 +48,12 @@
     "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.23.1",
     "@vitest/coverage-v8": "^3.2.7",
+    "@xmldom/xmldom": "^0.9.12",
     "form-data": "^4.0.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
-    "vitest": "^3.0.5"
+    "vitest": "^3.0.5",
+    "xml-crypto": "^6.3.1"
   },
   "types": "dist/index.d.ts",
   "bin": {
