@@ -48,14 +48,14 @@ export async function registerAssistantRoutes(
   app: FastifyInstance,
   deps: ApiDeps,
 ): Promise<void> {
-  const assistant = new AssistantService(deps.pool);
+  const assistant = new AssistantService(deps.pool, deps.languageModel);
 
   /** O catálogo de perguntas, sem CNPJ: serve de ajuda e de material de venda. */
   app.get('/assistant/capabilities', async () => {
     /**
      * Declarado no contrato porque muda o que o usuário pode esperar: camada 1
      * é consulta determinística e reproduzível; a 3 depende de modelo de
-     * linguagem. Derivado do serviço, e não escrito aqui, para a resposta não
+     * linguagem, que responde só sobre as evidências da camada 1. Derivado do serviço, e não escrito aqui, para a resposta não
      * continuar dizendo "sem modelo" no dia em que um for ligado.
      */
     const configured = assistant.languageModelName !== undefined;
@@ -66,6 +66,7 @@ export async function registerAssistantRoutes(
       })),
       deterministic_only: !configured,
       language_model_configured: configured,
+      ...(configured ? { language_model: assistant.languageModelName } : {}),
     };
   });
 

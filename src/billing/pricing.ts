@@ -100,3 +100,24 @@ export function quote(clients: readonly BillableClient[], rules: PricingRules): 
 export function formatBRL(cents: number): string {
   return (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
+
+/**
+ * Cotação no formato da API. É também o `snapshot` gravado na fatura: a prévia
+ * que a tela mostrou e a fatura emitida têm a mesma forma, e a fatura continua
+ * explicável depois de o preço da tabela mudar.
+ */
+export function serializeQuote(result: PriceQuote): Record<string, unknown> {
+  return {
+    billable_clients: result.billableClients,
+    lines: result.lines.map((line) => ({
+      regime: line.regime,
+      quantity: line.quantity,
+      unit_cents: line.unitCents,
+      subtotal_cents: line.subtotalCents,
+    })),
+    subtotal_cents: result.subtotalCents,
+    minimum_adjustment_cents: result.minimumAdjustmentCents,
+    total_cents: result.totalCents,
+    total_formatted: formatBRL(result.totalCents),
+  };
+}

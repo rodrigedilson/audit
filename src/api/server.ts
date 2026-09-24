@@ -22,7 +22,9 @@ import { registerCreditRoutes } from './routes/credit.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
 import { registerDossierRoutes } from './routes/dossier.routes.js';
 import { registerEfdIcmsIpiRoutes } from './routes/efd-icms-ipi.routes.js';
-import { AsaasClient } from '../billing/asaas-client.js';
+import { AsaasClient, type AsaasGateway } from '../billing/asaas-client.js';
+import type { LanguageModelPort } from '../fiscal/assistant/language-model.port.js';
+import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
@@ -46,7 +48,9 @@ export interface ApiDeps {
    * nada é enviado ao gateway. É o que permite operar as primeiras ondas sem
    * credencial de pagamento.
    */
-  asaas?: AsaasClient;
+  asaas?: AsaasGateway;
+  /** Camada 3 do assistente. Ausente sem `ANTHROPIC_API_KEY`. */
+  languageModel?: LanguageModelPort;
 }
 
 declare module 'fastify' {
@@ -85,6 +89,13 @@ export const PUBLIC_ROUTES = new Set([
 export interface BuildServerOptions {
   env: Env;
   pool?: pg.Pool;
+  /**
+   * Gateway de cobrança. Os testes injetam um dublê; sem ele, o cliente HTTP é
+   * montado a partir de `ASAAS_API_KEY`, e sem a chave não há gateway.
+   */
+  asaas?: AsaasGateway;
+  /** Modelo de linguagem. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
+  languageModel?: LanguageModelPort;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -109,9 +120,21 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     pool,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
-    ...(env.asaas === undefined
-      ? {}
-      : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
+    ...(options.asaas !== undefined
+      ? { asaas: options.asaas }
+      : env.asaas === undefined
+        ? {}
+        : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
+    ...(options.languageModel !== undefined
+      ? { languageModel: options.languageModel }
+      : env.anthropic === undefined
+        ? {}
+        : {
+            languageModel: new ClaudeLanguageModel({
+              apiKey: env.anthropic.apiKey,
+              model: env.anthropic.model,
+            }),
+          }),
     orchestratorFor: async (scope) => {
       const orchestrator = new FiscalOrchestratorService(
         new PostgresEventStoreRepository(pool, scope),

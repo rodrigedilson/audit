@@ -1227,8 +1227,10 @@ paths:
       description: >
         Independe de CNPJ. A lista é fechada de propósito: são as perguntas que o
         produto responde a partir dos dados, com citação conferível. Pergunta fora
-        dela recebe "não sei, e eis o que sei" — `deterministic_only: true` diz
-        exatamente isso, e `language_model_configured: false` diz por quê.
+        dela vai para a camada 3 quando há modelo configurado: o modelo responde
+        só sobre os fatos que as consultas da lista trouxeram, cita-os, e a
+        resposta passa pela mesma checagem de citação. Sem modelo, a pergunta
+        fora da lista recebe "não sei, e eis o que sei".
       responses:
         "200":
           description: OK
@@ -1252,6 +1254,10 @@ paths:
                       é reproduzível e tem citação — nenhum modelo de linguagem no
                       caminho.
                   language_model_configured: { type: boolean }
+                  language_model:
+                    type: string
+                    description: Modelo da camada 3. Presente só quando configurado.
+                    example: claude-opus-5
 
   /clients/{cnpj}/assistant/usage:
     parameters:
@@ -2625,7 +2631,10 @@ components:
           enum: [1, 3]
           description: >
             1 = consulta determinística, reproduzível, sem modelo nenhum.
-            3 = exigiria raciocínio livre de um modelo de linguagem. A camada 2
+            3 = modelo de linguagem compondo a resposta sobre os fatos da camada
+            1: cada afirmação cita as mesmas evidências, e valor em R$ ou
+            competência que não esteja na evidência citada derruba a resposta.
+            Sai com `confidence: medium`. A camada 2
             do ADR-026 é classificação de item em lote, trabalho do catálogo e
             não de conversa.
         confidence: { type: string, enum: [high, medium, low] }

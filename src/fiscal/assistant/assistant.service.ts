@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import type { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { classify, PERGUNTAS_SUPORTADAS, type Classification } from './intent-classifier.js';
 import { routeTier, type LanguageModelPort } from './language-model.port.js';
+import { responderComModelo } from './tier3.js';
 import {
   assertGrounded,
   Evidence,
@@ -208,7 +209,7 @@ export class AssistantService {
 
     const classificacao = classify(question);
     const evidencia = new Evidence();
-    const answer = await this.build(scope, classificacao, evidencia);
+    const answer = await this.build(scope, classificacao, evidencia, question);
 
     // A checagem roda aqui, e não na borda: uma resposta sem lastro não deve
     // nem chegar a ser gravada.
@@ -246,11 +247,14 @@ export class AssistantService {
     scope: EventScope,
     classificacao: Classification,
     evidencia: Evidence,
+    question: string,
   ): Promise<Answer> {
     const tier = routeTier(classificacao.intent);
 
     if (classificacao.intent === 'desconhecido') {
-      return this.semIntencao(tier);
+      return this.model === undefined
+        ? this.semIntencao(tier)
+        : this.comModelo(scope, question, evidencia, this.model);
     }
 
     const period = classificacao.period ?? (await this.periodoRelevante(scope));
@@ -297,13 +301,40 @@ export class AssistantService {
   }
 
   /**
+   * Camada 3. O modelo responde sobre as evidências da camada 1 (ver `tier3`).
+   *
+   * Falha do modelo — recusa, formato, rede — e resposta sem lastro viram o
+   * mesmo "não sei, e eis o que sei", com o motivo. Um erro 500 aqui faria o
+   * contador perder a pergunta, que já contou na cota.
+   */
+  private async comModelo(
+    scope: EventScope,
+    question: string,
+    evidencia: Evidence,
+    model: LanguageModelPort,
+  ): Promise<Answer> {
+    let motivo: string;
+    try {
+      const period = await this.periodoRelevante(scope);
+      const resultado = await responderComModelo(model, this.pool, scope, question, period, evidencia);
+      if ('answer' in resultado) {
+        return resultado.answer;
+      }
+      motivo = `A resposta foi descartada porque ${resultado.rejeitada}.`;
+    } catch (erro) {
+      motivo = `O modelo ${model.name} não respondeu: ${erro instanceof Error ? erro.message : String(erro)}.`;
+    }
+    return this.semIntencao(3, motivo);
+  }
+
+  /**
    * Sem intenção reconhecida, a resposta é "não entendi, e eis o que sei".
    *
    * É onde entraria a camada 3. Sem provedor configurado, dizer o que não sabe
    * responder é verdadeiro; devolver algo plausível seria o modo de falha que
    * este produto não pode ter.
    */
-  private semIntencao(tier: 1 | 3): Answer {
+  private semIntencao(tier: 1 | 3, motivo?: string): Answer {
     const suportadas = Object.values(PERGUNTAS_SUPORTADAS);
 
     return {
@@ -319,6 +350,7 @@ export class AssistantService {
             'interpretá-la. '
           : `Não reconheci a pergunta, e o modelo ${this.model.name} não encontrou ` +
             'lastro nos dados deste CNPJ para responder. ') +
+        (motivo === undefined ? '' : `${motivo} `) +
         `Sei responder: ${suportadas.map((s) => `(${s})`).join('; ')}.`,
     };
   }
