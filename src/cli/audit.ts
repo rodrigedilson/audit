@@ -9,6 +9,9 @@ import { ignorarErroDeClienteOcioso } from '../infrastructure/persistence/pool-e
 import { buildServer } from '../api/server.js';
 import { diagnosticar, type Checagem } from '../infrastructure/diagnostics/environment-doctor.js';
 import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { IngestionService } from '../fiscal/ingestion/ingestion.service.js';
 
 /**
  * Carrega o `.env` antes de qualquer coisa.
@@ -36,18 +39,21 @@ Comandos disponíveis
   serve                           Sobe a API HTTP (docs/api/openapi.yaml)
   verify                          Reprojeta o event log e confere o hash (INV-006)
   status                          Resumo da projeção corrente
+  ingest <pasta>                  Ingere os XML de NF-e da pasta, pelo pipeline
+                                  (exige --tenant, --cnpj, --actor e DATABASE_URL)
   help                            Esta ajuda
   version                         Versão do pacote e do schema de eventos
 
 Comandos previstos (ainda não implementados)
-  ingest <cnpj>                   Coleta DF-e e ingere documentos           [Onda 4]
   close <cnpj> <competencia>      Fecha a competência de um CNPJ            [Onda 6]
 
 Opções
   --config <caminho>              Padrão: config/esaa.config.yaml
   --strict                        verify falha (3) se não houver o que verificar
   --tenant <uuid>                 Escritório (tenant). Padrão: escopo de dev
-  --cnpj <14 dígitos>             CNPJ do cliente. Padrão: escopo de dev
+  --cnpj <14 posições>            CNPJ do cliente, numérico ou alfanumérico.
+                                  Padrão: escopo de dev
+  --actor <uuid>                  Usuário em nome de quem o ingest grava no log
 `;
 
 interface PendingCommand {
@@ -56,10 +62,6 @@ interface PendingCommand {
 }
 
 const PENDING: Record<string, PendingCommand> = {
-  ingest: {
-    wave: 'Onda 4',
-    reason: 'depende do bounded context ingestion/ e do cofre de certificados A1 (Onda 2)',
-  },
   close: {
     wave: 'Onda 6',
     reason: 'depende do motor de regras rules/ e da apuração dual assessment/',
@@ -89,6 +91,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return runServe();
     case 'doctor':
       return runDoctor();
+    case 'ingest':
+      return runIngest(options, rest);
     default:
       return reportUnavailable(command);
   }
@@ -230,6 +234,56 @@ async function runServe(): Promise<number> {
   await app.listen({ port: env.port, host: env.host });
   // `listen` resolve e o processo segue vivo; o await acima nunca "termina".
   return EXIT_OK;
+}
+
+/**
+ * Ingere uma pasta de XML pelo mesmo caminho do upload da API: as 7 camadas, o
+ * `doc.received` no log e a rejeição registrada com motivo. A coleta na SEFAZ
+ * é pela API (`POST /clients/{cnpj}/sync`); isto é para carga em lote de
+ * arquivos que o escritório já tem.
+ *
+ * Tudo explícito, sem cair no escopo de dev: gravar no log de um CNPJ errado
+ * não se desfaz, porque o log é append-only.
+ */
+async function runIngest(options: BootstrapOptions, args: readonly string[]): Promise<number> {
+  const pasta = args.find((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]!.startsWith('--')));
+  const actor = readOption(args, '--actor');
+  if (!pasta || readOption(args, '--tenant') === undefined || readOption(args, '--cnpj') === undefined || !actor) {
+    throw new UsageError('ingest exige a pasta, --tenant, --cnpj e --actor (uuid de um usuário do escritório).');
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actor)) {
+    throw new UsageError('--actor deve ser o uuid de um usuário: é em nome dele que o log registra.');
+  }
+
+  const { orchestrator, scope, pool } = await bootstrap(options);
+  if (pool === undefined) {
+    throw new UsageError('ingest grava no event log do Postgres: defina DATABASE_URL.');
+  }
+
+  try {
+    const nomes = (await readdir(pasta)).filter((n) => n.toLowerCase().endsWith('.xml')).sort();
+    if (nomes.length === 0) {
+      process.stderr.write(`Nenhum .xml em ${pasta}.\n`);
+      return EXIT_ERROR;
+    }
+    const arquivos = await Promise.all(
+      nomes.map(async (filename) => ({ filename, content: await readFile(join(pasta, filename), 'utf8') })),
+    );
+
+    const resultado = await new IngestionService(pool, orchestrator, scope).ingestXmlBatch(arquivos, actor);
+
+    process.stdout.write(
+      `escopo      ${scope.toKey()}\n` +
+        `aceitos     ${resultado.accepted.length}\n` +
+        `rejeitados  ${resultado.rejected.length}\n`,
+    );
+    for (const r of resultado.rejected) {
+      process.stdout.write(`  ${r.filename}: camada ${r.layer} · ${r.reason} · ${r.message}\n`);
+    }
+    return resultado.rejected.length === 0 ? EXIT_OK : EXIT_ERROR;
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
 }
 
 async function runVersion(options: BootstrapOptions): Promise<number> {

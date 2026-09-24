@@ -45,12 +45,12 @@ outro controle; estão abertos.
 | Lacuna | Consequência | Esforço |
 |---|---|---|
 | **Backup com restauração testada** | O Supabase faz backup; **ninguém nunca restaurou**. Backup não testado é hipótese, não controle. É a lacuna mais séria da lista | 4–8h |
-| **Rate limit na API** | Nada limita tentativas por IP ou por token. Enumeração de CNPJ e abuso de rota autenticada são possíveis | 2–3h |
+| **Rate limit nas rotas autenticadas** | As rotas públicas já têm limite: login (5/min e 20/h, por IP e por e-mail), calculadora (30/min), `/plans` (60/min) e diagnóstico público (rajada + quota diária no banco). Falta limitar as autenticadas, por token, contra enumeração de CNPJ. O limitador é em memória por processo: suficiente com uma instância, e com mais de uma o limite efetivo multiplica pelo número de instâncias | 2h |
 | **Revisão de acesso** | Não há registro de quem tem acesso a Doppler, Supabase, Render e GitHub, nem revisão periódica. `GET /v1/users` lista o acesso ao produto, não à infraestrutura | 2h + recorrência |
 | **MFA obrigatório nos consoles** | Não verificado nem exigido nos provedores | 1h |
 | **Retenção e descarte** | Sem política de retenção nem procedimento de exclusão a pedido do titular. O event log é append-only **por projeto**, o que torna "apagar dado pessoal" uma questão de arquitetura e não de rotina — precisa de decisão antes de virar procedimento | 8h + decisão |
 | **Classificação de dados** | Sem inventário formal do que é dado pessoal, fiscal e segredo | 3h |
-| **Lista de sub-processadores** | Supabase, Render, Doppler e Asaas processam dado de cliente e não estão declarados em lugar nenhum | 2h |
+| **Lista de sub-processadores** | Supabase, Render, Doppler e Asaas processam dado de cliente e não estão declarados em lugar nenhum. Entram também a **Anthropic** (com `ANTHROPIC_API_KEY`, recebe a pergunta e as evidências fiscais do CNPJ na camada 3 do assistente) e o **provedor de e-mail** do diagnóstico público, quando ligado. A SEFAZ recebe o certificado pela coleta de DF-e, mas é o Fisco, não suboperador | 2h |
 | **Resposta a incidente** | Só o caso de perda da chave mestra está escrito. Falta o resto: quem aciona, em quanto tempo, como comunica | 6h |
 | **Log centralizado e retenção** | Os logs ficam no provedor, com retenção curta. Uma investigação de seis meses atrás não teria material — exceto pelo event log, que cobre o fiscal e não o operacional | 6h |
 

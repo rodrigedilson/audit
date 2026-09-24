@@ -1,3 +1,4 @@
+import { MODELO_PADRAO } from '../fiscal/assistant/claude-language-model.js';
 /**
  * Configuração vinda do ambiente. Nada aqui tem default de produção: uma chave
  * ausente falha no start, não na primeira requisição. Ver `.env.example`.
@@ -68,11 +69,11 @@ export interface Env {
    */
   anthropic?: { apiKey: string; model: string };
   /**
-   * Confiar no `X-Forwarded-For`. Obrigatório em produção, onde a API fica
-   * atrás de proxy: sem isso todo visitante chega com o IP do proxy, e a quota
-   * do diagnóstico público vira um balde único que derruba o funil legítimo.
-   * Ligado por engano sem proxy na frente permitiria forjar o IP, daí o padrão
-   * ser `false`.
+   * Confiar no `X-Forwarded-For`. **Exigido em produção** (`loadEnv` recusa
+   * `AUDIT_ENV=prod` sem ele), onde a API fica atrás de proxy: sem isso todo
+   * visitante chega com o IP do proxy, e a quota do diagnóstico público e os
+   * limites de login viram um balde único. Ligado por engano sem proxy na
+   * frente permitiria forjar o IP, daí o padrão ser `false` fora de prod.
    */
   trustProxy: boolean;
   /**
@@ -153,6 +154,12 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
         missing.push('ASAAS_WEBHOOK_TOKEN');
       }
     }
+    // Atrás do proxy do Render, sem isto todo visitante chega com o IP do
+    // proxy: a quota do diagnóstico público e os limites de login viram um
+    // balde único, e um visitante bloqueia todos.
+    if (!lerBooleano(source['TRUST_PROXY'], false)) {
+      invalid.push('em prod, TRUST_PROXY deve ser true: a API fica atrás do proxy do Render');
+    }
   }
   // Dev cobrando cliente de verdade é pior do que dev sem cobrança. O banco é o
   // mesmo nos dois ambientes; o que dev não pode é falar com o gateway real.
@@ -201,7 +208,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     env.anthropic = {
       apiKey: anthropicKey,
       // O ADR-026 reserva a camada 3 a Sonnet/Opus.
-      model: source['ASSISTANT_MODEL']?.trim() || 'claude-opus-5',
+      model: source['ASSISTANT_MODEL']?.trim() || MODELO_PADRAO,
     };
   }
 

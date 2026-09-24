@@ -166,6 +166,26 @@ describe.skipIf(!DATABASE_URL)('API — planos e cobrança', () => {
     });
 
     /**
+     * Escada agendada: as faixas com `effective_from` futuro não valem antes do
+     * dia. A data é 2999 para não afetar os outros testes que leem a escada
+     * vigente em paralelo.
+     */
+    it('escada com data futura não vale antes do dia', async () => {
+      await pool.query(
+        `insert into pricing_tiers (from_clients, discount_bps, label, effective_from)
+         values (1, 0, 'futura', '2999-01-01'), (2, 5000, 'futura', '2999-01-01')`,
+      );
+      try {
+        const body = (await app.inject({ method: 'GET', url: '/v1/plans' })).json();
+
+        expect(body.tiers).toHaveLength(5);
+        expect(body.tiers.some((t: { label: string }) => t.label === 'futura')).toBe(false);
+      } finally {
+        await pool.query("delete from pricing_tiers where effective_from = '2999-01-01'");
+      }
+    });
+
+    /**
      * Sem isto o frontend traduz `saude_cadastro` por conta própria, e foi o que
      * aconteceu: a página de preço saiu com nomes inventados por quem não
      * conhece o produto.

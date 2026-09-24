@@ -2,6 +2,8 @@ import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from
 import { UnauthorizedError } from '../auth/jwt-verifier.js';
 import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { BillingSettingsMissingError } from '../../billing/billing.service.js';
+import { PricingError } from '../../billing/pricing.js';
+import { TierScheduleError } from '../../billing/volume-tiers.js';
 import { BillingConflictError, BillingInputError } from '../../billing/billing-activation.service.js';
 import { DfeSyncRefusedError } from '../../fiscal/dfe/dfe-sync.service.js';
 import { RateLimitedError } from './rate-limit.js';
@@ -34,6 +36,13 @@ export function registerErrorHandler(app: FastifyInstance): void {
 
     // Configuração do servidor, não erro do cliente: 503 diz "tente depois" e
     // não esconde a causa atrás de um 500 genérico.
+    // Escada de faixas ou tabela de preço inválida é configuração do servidor,
+    // não pedido errado: 503 com a causa no log, em vez de um 500 genérico.
+    if (error instanceof TierScheduleError || error instanceof PricingError) {
+      request.log.error({ err: error }, 'tabela de preço inválida');
+      return reply.code(503).send({ code: 'pricing_misconfigured', message: 'A tabela de preços está em manutenção.' });
+    }
+
     if (error instanceof BillingSettingsMissingError) {
       request.log.error({ err: error }, 'billing_settings ausente');
       return reply.code(503).send({ code: 'billing_not_configured', message: error.message });

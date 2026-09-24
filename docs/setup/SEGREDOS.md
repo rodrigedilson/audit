@@ -33,6 +33,7 @@ config do Doppler e a variável `AUDIT_ENV`.
 | `AUDIT_ENV` | `dev` | `prod` |
 | Asaas | sem chave | produção |
 | `CORS_ORIGINS` | opcional (padrão: Vite local) | obrigatória |
+| `TRUST_PROXY` | opcional (padrão `false`) | obrigatória, `true` |
 
 ### O banco é compartilhado
 
@@ -57,7 +58,10 @@ Tudo o que se faz em dev grava no banco de produção. Consequências:
 Não há padrão: se a variável faltar, a API e a CLI não sobem
 (`src/config/env.ts`).
 
-- **prod** exige `CORS_ORIGINS`. Se houver `ASAAS_API_KEY`, exige também
+- **prod** exige `CORS_ORIGINS` e `TRUST_PROXY=true`: a API fica atrás do proxy do
+  Render, e sem ele todo visitante chega com o IP do proxy, e a quota do
+  diagnóstico público e o limite de login viram um balde único. Se houver
+  `ASAAS_API_KEY`, exige também
   `ASAAS_BASE_URL=https://api.asaas.com/v3` e `ASAAS_WEBHOOK_TOKEN`: sem a URL, a
   chave de produção ia para o sandbox sem erro nenhum.
 - **dev** recusa `ASAAS_BASE_URL` de produção.
@@ -100,7 +104,7 @@ curl -Ls https://cli.doppler.com/install.sh | sh -s -- --install-path "$HOME/.lo
 
 doppler login
 
-doppler secrets set AUDIT_ENV=prod --project audit --config prd
+doppler secrets set AUDIT_ENV=prod TRUST_PROXY=true --project audit --config prd
 doppler secrets set CORS_ORIGINS=https://sped-genius-hub.vercel.app --project audit --config prd
 
 doppler secrets set AUDIT_ENV=dev --project audit --config dev

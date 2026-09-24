@@ -7,6 +7,8 @@ import { quoteFromCounts, formatBRL, serializeQuote } from '../../billing/pricin
 import { REGIMES, type Regime } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
+import { createBurstLimiter, exigirLimite } from '../plugins/rate-limit.js';
+import { assertValidSchedule } from '../../billing/volume-tiers.js';
 
 const PERIOD_PATTERN = '^[0-9]{4}-(0[1-9]|1[0-2])$';
 
@@ -34,8 +36,17 @@ interface CalculatorBody {
 export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
   const billing = new BillingService(deps.pool);
 
-  app.get('/plans', async (_request, reply) => {
+  // Rotas públicas, e a calculadora faz conta de até 20 mil CNPJs por chamada:
+  // sem limite, servia de gerador de carga anônimo.
+  const limitePlanos = createBurstLimiter({ windowMs: 60_000, max: 60 });
+  const limiteCalculadora = createBurstLimiter({ windowMs: 60_000, max: 30 });
+
+  app.get('/plans', async (request, reply) => {
+    exigirLimite([limitePlanos], [request.ip], 'Muitas consultas seguidas. Aguarde alguns instantes.');
     const rules = await billing.pricingRules();
+    // A escada é validada antes de ir para a página de preço: publicada inválida,
+    // a vitrine prometeria um desconto que o faturamento depois recusa.
+    assertValidSchedule(rules.tiers ?? []);
     const { rows } = await deps.pool.query<{ regime: Regime; features: string[] }>(
       'select regime, features from plans',
     );
@@ -117,6 +128,7 @@ export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps)
       },
     },
     async (request, reply) => {
+      exigirLimite([limiteCalculadora], [request.ip], 'Muitos cálculos seguidos. Aguarde alguns instantes.');
       const total = request.body.clients.reduce((soma, entry) => soma + entry.quantity, 0);
       if (total > MAX_CNPJS_SIMULADOS) {
         throw new ValidationError(
