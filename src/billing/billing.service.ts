@@ -133,6 +133,15 @@ export class BillingService {
     return (await this.subscriptionFor(tenantId))!;
   }
 
+  /** O webhook já processou este evento do Asaas? */
+  async billingEventExists(externalId: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      'select 1 from billing_events where external_id = $1',
+      [externalId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   /**
    * Registra evento de cobrança. `externalId` dá idempotência de webhook: o
    * Asaas reentrega, e processar duas vezes um `PAYMENT_RECEIVED` marcaria a
