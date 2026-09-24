@@ -430,6 +430,53 @@ paths:
                         type: integer
                         description: NF-e baixada de competência ainda não aberta; entra na coleta seguinte à abertura.
                       rejected_by_pipeline: { type: integer }
+                  auto_sync:
+                    $ref: "#/components/schemas/DfeAutoSync"
+                  cancellations_needing_rectification:
+                    type: array
+                    description: Nota cancelada na SEFAZ depois da confirmação da competência; a correção é a retificação.
+                    items:
+                      type: object
+                      properties:
+                        access_key: { type: string }
+                        tp_evento: { type: string }
+                        protocol: { type: string, nullable: true }
+                        cancelled_at: { type: string, format: date-time, nullable: true }
+
+  /clients/{cnpj}/dfe/auto:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    put:
+      tags: [ingestion]
+      summary: Liga ou desliga a coleta agendada do CNPJ (ADR-007)
+      description: >
+        Só o owner. Com a opção ligada, o agendador enfileira a coleta sozinho,
+        uma vez por hora no máximo, e o A1 é usado em nome do orquestrador
+        (`closer`), com quem ligou no payload do `certificate.used`. Ligar exige
+        certificado utilizável (`409 dfe_certificate_not_usable` ou
+        `dfe_no_certificate`). Onde não há gateway da SEFAZ (dev), `503`. A
+        mudança vai para o log como `client.updated`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Estado da opção depois da mudança.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cnpj: { type: string }
+                  auto_sync:
+                    $ref: "#/components/schemas/DfeAutoSync"
 
   /clients/{cnpj}/sped:
     parameters:
@@ -1963,6 +2010,12 @@ components:
           schema: { $ref: "#/components/schemas/Rejection" }
 
   schemas:
+    DfeAutoSync:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        enabled_by: { type: string, format: uuid, nullable: true }
+        enabled_at: { type: string, format: date-time, nullable: true }
     PriceQuote:
       type: object
       description: >

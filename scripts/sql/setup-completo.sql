@@ -31,7 +31,7 @@
 -- =============================================================================
 
 -- =============================================================================
--- PARTE 1 — migrations (29 arquivos, na ordem de aplicação)
+-- PARTE 1 — migrations (30 arquivos, na ordem de aplicação)
 -- =============================================================================
 
 
@@ -3106,6 +3106,61 @@ end $$;
 -- preserva o `accepted` de um achado já revisado por humano.
 -- =============================================================================
 
+-- ------------------------------------------------- pré-condições do passo
+/**
+ * Confere o que este passo pressupõe, e falha dizendo o que falta.
+ *
+ * Sem isto, um banco que não passou pelos passos anteriores quebra no primeiro
+ * `foreign key (tenant_id, cnpj) references public.clients` com
+ * `column "tenant_id" does not exist` — mensagem que aponta para a coluna
+ * errada e não diz qual passo ficou para trás. A guarda custa dez linhas e
+ * troca meia hora de investigação por uma frase.
+ */
+do $$
+begin
+  if to_regclass('public.clients') is null then
+    raise exception
+      'Pré-condição ausente: a tabela public.clients não existe. '
+      'Aplique o passo 01 (multi-tenancy) antes deste.';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'clients'
+       and column_name in ('tenant_id', 'cnpj')
+     group by table_name having count(*) = 2
+  ) then
+    raise exception
+      'Pré-condição ausente: public.clients não tem as colunas tenant_id e cnpj. '
+      'O banco não está no estado que o passo 01 deixa.';
+  end if;
+
+  if not exists (
+    select 1
+      from pg_constraint con
+      join pg_class rel on rel.oid = con.conrelid
+      join pg_namespace n on n.oid = rel.relnamespace
+     where n.nspname = 'public' and rel.relname = 'clients'
+       and con.contype in ('p', 'u')
+       and con.conkey @> array[
+             (select attnum from pg_attribute
+               where attrelid = rel.oid and attname = 'tenant_id'),
+             (select attnum from pg_attribute
+               where attrelid = rel.oid and attname = 'cnpj')
+           ]::smallint[]
+  ) then
+    raise exception
+      'Pré-condição ausente: public.clients não tem chave única em '
+      '(tenant_id, cnpj). As tabelas deste passo a referenciam.';
+  end if;
+
+  if to_regprocedure('public.is_member_of(uuid)') is null then
+    raise exception
+      'Pré-condição ausente: a função public.is_member_of(uuid) não existe. '
+      'Ela vem do passo 01 e é o que as policies de RLS usam.';
+  end if;
+end $$;
+
 -- --------------------------------------------------------- critérios
 create table if not exists public.evaluation_criteria (
   criterion_id  text primary key,
@@ -3425,6 +3480,46 @@ $$;
 
 -- `document_coverage` continua contando a cancelada: ela prova que a coleta
 -- daquele mês existiu, que é o que a cobertura mede.
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260926140000_coleta_agendada.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Coleta de DF-e agendada, por opt-in do cliente (ADR-007)
+--
+-- A coleta só rodava quando alguém pedia. Com a opção ligada pelo owner, o
+-- agendador enfileira a coleta sozinho: o A1 passa a ser usado sem alguém
+-- acionando, e por isso é opt-in por CNPJ, com quem ligou e quando.
+-- =============================================================================
+
+alter table public.clients
+  add column if not exists dfe_auto_sync    boolean not null default false,
+  add column if not exists dfe_auto_sync_by uuid,
+  add column if not exists dfe_auto_sync_at timestamptz;
+
+comment on column public.clients.dfe_auto_sync is
+  'Coleta de DF-e agendada ligada pelo owner (ADR-007). O A1 é usado sem alguém acionando.';
+
+-- Job do agendador não tem quem pediu: `requested_by` fica nulo, e o `trigger`
+-- diz por quê. O uso do certificado sai em nome do orquestrador (`closer`),
+-- com quem ligou a opção no payload do `certificate.used`.
+alter table public.jobs
+  add column if not exists trigger text not null default 'manual'
+    check (trigger in ('manual', 'schedule'));
+
+create index if not exists clients_dfe_auto_sync_idx
+  on public.clients (tenant_id, cnpj)
+  where dfe_auto_sync;
+
+-- O rótulo prometia "automática" antes de haver agendamento. Agora há, e só
+-- quando o cliente liga.
+update public.plan_features
+   set description = 'Busca as notas na SEFAZ com o certificado A1: sozinha, a cada hora, quando '
+                  || 'o owner liga a coleta agendada, ou quando alguém pede.',
+       updated_at = now()
+ where key = 'coleta_dfe';
 
 
 -- =============================================================================

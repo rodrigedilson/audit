@@ -19,6 +19,7 @@ export const FEATURE_POR_ROTA: Readonly<Record<string, string>> = {
 
   '/clients/:cnpj/sync': 'coleta_dfe',
   '/clients/:cnpj/dfe': 'coleta_dfe',
+  '/clients/:cnpj/dfe/auto': 'coleta_dfe',
 
   '/clients/:cnpj/simulations': 'simulador_opcao',
 

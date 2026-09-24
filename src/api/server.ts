@@ -31,7 +31,7 @@ import type { LanguageModelPort } from '../fiscal/assistant/language-model.port.
 import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.js';
 import { SefazSoapClient, type SefazDfeGateway } from '../fiscal/dfe/sefaz-gateway.js';
 import { DfeSyncService } from '../fiscal/dfe/dfe-sync.service.js';
-import { startDfeWorker } from '../fiscal/dfe/dfe-worker.js';
+import { startDfeScheduler, startDfeWorker } from '../fiscal/dfe/dfe-worker.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
@@ -219,7 +219,13 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     const worker = startDfeWorker(deps.dfe, {
       onError: (erro) => app.log.error({ err: erro }, 'worker da coleta de DF-e'),
     });
-    app.addHook('onClose', async () => worker.stop());
+    const agendador = startDfeScheduler(deps.dfe, {
+      onError: (erro) => app.log.error({ err: erro }, 'agendador da coleta de DF-e'),
+    });
+    app.addHook('onClose', async () => {
+      await agendador.stop();
+      await worker.stop();
+    });
   }
 
   await app.register(cors, {

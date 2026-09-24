@@ -38,6 +38,61 @@
 -- preserva o `accepted` de um achado já revisado por humano.
 -- =============================================================================
 
+-- ------------------------------------------------- pré-condições do passo
+/**
+ * Confere o que este passo pressupõe, e falha dizendo o que falta.
+ *
+ * Sem isto, um banco que não passou pelos passos anteriores quebra no primeiro
+ * `foreign key (tenant_id, cnpj) references public.clients` com
+ * `column "tenant_id" does not exist` — mensagem que aponta para a coluna
+ * errada e não diz qual passo ficou para trás. A guarda custa dez linhas e
+ * troca meia hora de investigação por uma frase.
+ */
+do $$
+begin
+  if to_regclass('public.clients') is null then
+    raise exception
+      'Pré-condição ausente: a tabela public.clients não existe. '
+      'Aplique o passo 01 (multi-tenancy) antes deste.';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'clients'
+       and column_name in ('tenant_id', 'cnpj')
+     group by table_name having count(*) = 2
+  ) then
+    raise exception
+      'Pré-condição ausente: public.clients não tem as colunas tenant_id e cnpj. '
+      'O banco não está no estado que o passo 01 deixa.';
+  end if;
+
+  if not exists (
+    select 1
+      from pg_constraint con
+      join pg_class rel on rel.oid = con.conrelid
+      join pg_namespace n on n.oid = rel.relnamespace
+     where n.nspname = 'public' and rel.relname = 'clients'
+       and con.contype in ('p', 'u')
+       and con.conkey @> array[
+             (select attnum from pg_attribute
+               where attrelid = rel.oid and attname = 'tenant_id'),
+             (select attnum from pg_attribute
+               where attrelid = rel.oid and attname = 'cnpj')
+           ]::smallint[]
+  ) then
+    raise exception
+      'Pré-condição ausente: public.clients não tem chave única em '
+      '(tenant_id, cnpj). As tabelas deste passo a referenciam.';
+  end if;
+
+  if to_regprocedure('public.is_member_of(uuid)') is null then
+    raise exception
+      'Pré-condição ausente: a função public.is_member_of(uuid) não existe. '
+      'Ela vem do passo 01 e é o que as policies de RLS usam.';
+  end if;
+end $$;
+
 -- --------------------------------------------------------- critérios
 create table if not exists public.evaluation_criteria (
   criterion_id  text primary key,

@@ -90,6 +90,11 @@ agents:
       - credit.conditioned
       - credit.released
       - output.rejected
+      # Coleta de DF-e agendada (ADR-007): sem quem pediu, o uso do A1, a nota
+      # que ele traz e o cancelamento dela saem em nome do orquestrador.
+      - certificate.used
+      - doc.received
+      - doc.cancelled
     boundaries:
       readable:
         - data/

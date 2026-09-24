@@ -13,12 +13,9 @@
  * página. Sem certificado, cai na raspagem, que entrega a mesma tabela e depende
  * da forma da página.
  *
- * O certificado **não vem do cofre**, e isso não é esquecimento: o cofre não
- * guarda a senha do PFX, de propósito, e sem ela não há uso não assistido. É
- * decisão de arquitetura pendente — ver
- * `docs/adr/ADR-007-uso-nao-assistido-do-certificado.md`. Quando ela for tomada,
- * a chamada passa a emitir `certificate.used` com `purpose` próprio, que é o que
- * torna o uso auditável.
+ * O certificado **não vem do cofre**, e isso não é esquecimento: o cofre guarda
+ * o A1 de cada cliente, e este é da operação, para carregar tabela global de
+ * referência — ver `docs/adr/ADR-007-uso-nao-assistido-do-certificado.md`.
  *
  * O que entra:
  *
