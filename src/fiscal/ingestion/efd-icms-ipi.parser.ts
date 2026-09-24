@@ -142,9 +142,13 @@ export interface EfdIcmsAnalytic {
 /** E110 — apuração do ICMS do período. */
 export interface EfdIcmsAssessment {
   totalDebitsCents: number;
+  /** `VL_AJ_DEBITOS` — ajustes que vêm do próprio documento fiscal. */
+  documentDebitAdjustmentsCents: number;
   adjustmentDebitsCents: number;
   creditReversalsCents: number;
   totalCreditsCents: number;
+  /** `VL_AJ_CREDITOS` — ajustes que vêm do próprio documento fiscal. */
+  documentCreditAdjustmentsCents: number;
   adjustmentCreditsCents: number;
   debitReversalsCents: number;
   previousCreditBalanceCents: number;
@@ -377,9 +381,11 @@ function lerAnalitico(campos: readonly string[]): EfdIcmsAnalytic {
 function lerApuracaoIcms(campos: readonly string[]): EfdIcmsAssessment {
   return {
     totalDebitsCents: centavos(campos[2], 'VL_TOT_DEBITOS'),
+    documentDebitAdjustmentsCents: centavos(campos[3], 'VL_AJ_DEBITOS'),
     adjustmentDebitsCents: centavos(campos[4], 'VL_TOT_AJ_DEBITOS'),
     creditReversalsCents: centavos(campos[5], 'VL_ESTORNOS_CRED'),
     totalCreditsCents: centavos(campos[6], 'VL_TOT_CREDITOS'),
+    documentCreditAdjustmentsCents: centavos(campos[7], 'VL_AJ_CREDITOS'),
     adjustmentCreditsCents: centavos(campos[8], 'VL_TOT_AJ_CREDITOS'),
     debitReversalsCents: centavos(campos[9], 'VL_ESTORNOS_DEB'),
     previousCreditBalanceCents: centavos(campos[10], 'VL_SLD_CREDOR_ANT'),

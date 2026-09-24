@@ -287,9 +287,11 @@ describe('parseEfdIcmsIpi — apuração', () => {
 
     expect(icmsAssessment).toEqual({
       totalDebitsCents: 500_000,
+      documentDebitAdjustmentsCents: 1_000,
       adjustmentDebitsCents: 2_000,
       creditReversalsCents: 3_000,
       totalCreditsCents: 400_000,
+      documentCreditAdjustmentsCents: 1_100,
       adjustmentCreditsCents: 4_000,
       debitReversalsCents: 5_000,
       previousCreditBalanceCents: 6_000,
