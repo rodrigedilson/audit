@@ -20,6 +20,7 @@ import { registerReportingRoutes } from './routes/reporting.routes.js';
 import { registerReconciliationRoutes } from './routes/reconciliation.routes.js';
 import { registerAssistantRoutes } from './routes/assistant.routes.js';
 import { registerCreditRoutes } from './routes/credit.routes.js';
+import { registerAuditRoutes } from './routes/audit.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
 import { registerDossierRoutes } from './routes/dossier.routes.js';
 import { registerEfdIcmsIpiRoutes } from './routes/efd-icms-ipi.routes.js';
@@ -273,6 +274,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerReconciliationRoutes(instance, deps);
       await registerAssistantRoutes(instance, deps);
       await registerCreditRoutes(instance, deps);
+    await registerAuditRoutes(instance, deps);
       await registerSimulationRoutes(instance, deps);
       await registerDossierRoutes(instance, deps);
       await registerEfdIcmsIpiRoutes(instance, deps);
