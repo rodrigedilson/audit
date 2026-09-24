@@ -41,9 +41,13 @@ const TITULOS: Record<string, string> = {
   '20260922100000_propagacao_de_item_nao_classificado.sql': 'correcao-propagacao',
   '20260924100000_ativacao_da_cobranca.sql': 'ativacao-da-cobranca',
   '20260924130000_coleta_dfe.sql': 'coleta-dfe',
+  '20260924150000_chave_alfanumerica.sql': 'chave-alfanumerica',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260924150000_chave_alfanumerica.sql':
+    'Chave de acesso com CNPJ alfanumérico: letras nas 12 posições do CNPJ do\n' +
+    '-- emitente. Troca toda restrição que ainda exija a chave só de dígitos.',
   '20260924130000_coleta_dfe.sql':
     'Coleta de DF-e na SEFAZ (ADR-006): formato da credencial no cofre, fila de\n' +
     '-- jobs, estado do NSU por CNPJ, resumos para ciência e NF-e baixadas que\n' +

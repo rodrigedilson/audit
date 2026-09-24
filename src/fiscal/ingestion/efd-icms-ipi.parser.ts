@@ -29,11 +29,11 @@
  * | `E110`   | apuração do ICMS do período |
  * | `E520`   | apuração do IPI do período |
  *
- * **Procedência das posições.** Nenhuma foi escrita de memória. Todas saíram do
- * Guia Prático EFD-ICMS/IPI versão 3.2.2 (11/02/2026), extraídas pelo script
- * `scripts/extrair-layout-efd.ts`, e conferidas contra a Nota Técnica 2026.001
- * v1.0. Ao mexer neste arquivo, rode o script de novo — não confie no que está
- * escrito aqui, nem no que você lembra.
+ * **Procedência das posições.** Nenhuma foi escrita de memória. Saíram dos Guias
+ * Práticos EFD-ICMS/IPI 3.1.9 (13/05/2025, leiaute 019) e 3.2.2 (11/02/2026,
+ * leiaute 020), extraídas pelo script `scripts/extrair-layout-efd.ts`. Os seis
+ * registros lidos têm campos idênticos nos dois. Ao mexer neste arquivo, rode o
+ * script de novo — não confie no que está escrito aqui, nem no que você lembra.
  */
 import {
   MAX_LINHAS_SPED,
@@ -53,19 +53,21 @@ export { MAX_LINHAS_SPED, SpedFormatError, type RejectedRecord };
 /**
  * Códigos de versão de leiaute cujas posições este leitor conhece.
  *
- * `020` é o leiaute 119, obrigatório desde 01/01/2026, que é o documentado pelo
- * Guia Prático 3.2.2 contra o qual estas posições foram conferidas.
+ * `019` é o leiaute 118, obrigatório desde 01/01/2025, e `020` é o 119,
+ * obrigatório desde 01/01/2026. Os seis registros lidos aqui foram extraídos dos
+ * guias dos dois e comparados campo a campo: são idênticos. Sem o `019` não se
+ * lia nenhuma competência de 2025, que é o ano que o escritório ainda concilia.
  *
- * O `021` (leiaute 120, obrigatório em 01/01/2027) **não** está aqui, embora a
- * conferência do `0000` e do `C170` contra a Nota Técnica 2026.001 tenha dado
- * posições idênticas: a conferência foi parcial, e "parcial" não é conferido.
- * O `019` e anteriores também não — ler a EFD de 2025 exige o guia de 2025, que
- * o script de extração agora torna barato conferir.
+ * O `021` (leiaute 120, obrigatório em 01/01/2027) **não** está aqui. A
+ * comparação contra a Nota Técnica 2026.001 bate onde alcança, mas a conversão
+ * do PDF dela perde uma linha no meio do `C100` — o script avisa e para no campo
+ * 15 de 29. Conferência incompleta não é conferência, e o momento certo de
+ * incluí-lo é quando sair o Guia Prático de 2027.
  *
  * Aceitar uma versão sem conferir o guia dela é o único jeito de este leitor
  * produzir um número errado em silêncio, e é por isso que a lista é curta.
  */
-export const VERSOES_EFD_ICMS_SUPORTADAS = new Set(['020']);
+export const VERSOES_EFD_ICMS_SUPORTADAS = new Set(['019', '020']);
 
 export interface EfdIcmsHeader {
   layoutVersion: string;

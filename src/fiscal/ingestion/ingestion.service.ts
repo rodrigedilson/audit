@@ -3,6 +3,7 @@ import type { FiscalOrchestratorService } from '../../esaa/orchestrator/fiscal-o
 import type { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { DocumentParseError, parseNfe, type ParsedDocument } from './nfe-parser.js';
 import { CatalogService } from '../catalog/catalog.service.js';
+import { CHAVE_EM_TEXTO } from './access-key.js';
 
 export interface AcceptedDocument {
   access_key: string;
@@ -261,7 +262,7 @@ function describe(error: unknown): string {
 
 /** Recupera a chave da mensagem de erro, quando a rejeição a menciona. */
 function tryReadAccessKey(message: string): string | undefined {
-  return /\b([0-9]{44})\b/.exec(message)?.[1];
+  return CHAVE_EM_TEXTO.exec(message)?.[1];
 }
 
 /**

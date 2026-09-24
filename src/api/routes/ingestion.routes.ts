@@ -4,6 +4,7 @@ import { NotFoundError } from '../auth/tenant-resolver.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { IngestionService, type UploadedFile } from '../../fiscal/ingestion/ingestion.service.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
+import { PADRAO_DA_CHAVE } from '../../fiscal/ingestion/access-key.js';
 
 interface CnpjParams {
   cnpj: string;
@@ -132,7 +133,7 @@ export async function registerIngestionRoutes(
           required: ['cnpj', 'access_key'],
           properties: {
             cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
-            access_key: { type: 'string', pattern: '^[0-9]{44}$' },
+            access_key: { type: 'string', pattern: PADRAO_DA_CHAVE },
           },
         },
       },

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { computeCheckDigit } from '../../../src/fiscal/ingestion/access-key.js';
+import { digitosVerificadoresDeCnpj } from '../../../src/esaa/shared/domain/cnpj.js';
 import {
   classify,
   PERGUNTAS_SUPORTADAS,
@@ -134,6 +136,35 @@ describe('classificação da pergunta', () => {
 
     it('número de 43 dígitos não é chave de acesso', () => {
       expect(classify(`e sobre ${CHAVE.slice(0, 43)}?`).accessKey).toBeUndefined();
+    });
+
+    describe('chave com CNPJ alfanumérico', () => {
+      // Emitente 12ABC345DE01 + DV; chave montada com o DV da NT 2025.001.
+      const base43 = '352711' + '12ABC345DE01' + digitosVerificadoresDeCnpj('12ABC345DE01') + '55001000000015123456789';
+      const ALFA = base43 + computeCheckDigit(base43);
+
+      it('reconhece a chave crua', () => {
+        expect(classify(`o que aconteceu com ${ALFA}?`)).toMatchObject({
+          intent: 'historico_do_documento',
+          accessKey: ALFA,
+        });
+      });
+
+      /** Em grupos de 4, um grupo termina em letra e o seguinte começa em dígito. */
+      it('reconhece a chave digitada em grupos, e em minúsculas', () => {
+        const mascarada = ALFA.toLowerCase().replace(/(.{4})/g, '$1 ').trim();
+        expect(classify(`histórico de ${mascarada}`).accessKey).toBe(ALFA);
+      });
+
+      it('não cola a palavra anterior na chave', () => {
+        expect(classify(`com ${ALFA}`).accessKey).toBe(ALFA);
+      });
+
+      /** Com letras, é o dígito verificador que separa a chave do texto em volta. */
+      it('com o dígito verificador errado, não é chave', () => {
+        const errada = ALFA.slice(0, 43) + String((Number(ALFA[43]) + 1) % 10);
+        expect(classify(`o que aconteceu com ${errada}?`).accessKey).toBeUndefined();
+      });
     });
   });
 
