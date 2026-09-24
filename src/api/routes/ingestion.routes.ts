@@ -3,6 +3,7 @@ import type { ApiDeps } from '../server.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { IngestionService, type UploadedFile } from '../../fiscal/ingestion/ingestion.service.js';
+import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
 interface CnpjParams {
   cnpj: string;
@@ -27,7 +28,7 @@ export async function registerIngestionRoutes(
         params: {
           type: 'object',
           required: ['cnpj'],
-          properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+          properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
         },
       },
     },
@@ -65,7 +66,7 @@ export async function registerIngestionRoutes(
         params: {
           type: 'object',
           required: ['cnpj'],
-          properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
+          properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
         },
         querystring: {
           type: 'object',
@@ -130,7 +131,7 @@ export async function registerIngestionRoutes(
           type: 'object',
           required: ['cnpj', 'access_key'],
           properties: {
-            cnpj: { type: 'string', pattern: '^[0-9]{14}$' },
+            cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ },
             access_key: { type: 'string', pattern: '^[0-9]{44}$' },
           },
         },
@@ -191,7 +192,7 @@ export async function registerIngestionRoutes(
     async (request, reply) => {
       const { rows } = await deps.pool.query(
         `select id as job_id, kind, status, progress, accepted, rejected, error,
-                created_at, finished_at
+                result, created_at, started_at, finished_at
            from jobs where id = $1::uuid and tenant_id = $2::uuid`,
         [request.params.job_id, request.tenant.tenantId],
       );
@@ -208,44 +209,112 @@ export async function registerIngestionRoutes(
   );
 
   /**
-   * Coleta na distribuição DF-e. Depende de fonte externa — certificado A1
-   * contra o webservice da SEFAZ — e o worker que consome a fila entra junto da
-   * coleta real. Enfileirar sem consumidor seria pior do que dizer que ainda não
-   * está pronto, porque o escritório ficaria esperando um job que nunca sai de
-   * `queued`.
+   * Coleta na distribuição DF-e (ADR-006). Enfileira e responde 202: o worker
+   * do processo consome a fila, consulta a SEFAZ por NSU com o A1 do cliente,
+   * ingere as NF-e completas pelo mesmo caminho do upload e registra a ciência
+   * da operação dos resumos de entrada.
    *
-   * Duas importações saíram desta lista, porque deixaram de ser promessa:
-   * o extrato bancário na Onda 10 (`POST /bank-statements`, OFX ou CSV) e a
-   * EFD-Contribuições na Onda 12 (`POST /sped`, upload do arquivo que o cliente
-   * já gera). Nos dois casos o caminho automático continua desejável, e quando
-   * existir entra como outra origem do mesmo módulo.
+   * Em dev não há gateway, e a rota responde 503: o banco é o de produção.
    */
-  for (const [path, kind] of [['sync', 'dfe_sync']] as const) {
-    app.post<{ Params: CnpjParams }>(
-      `/clients/:cnpj/${path}`,
-      {
-        schema: {
-          params: {
-            type: 'object',
-            required: ['cnpj'],
-            properties: { cnpj: { type: 'string', pattern: '^[0-9]{14}$' } },
-          },
+  app.post<{ Params: CnpjParams }>(
+    '/clients/:cnpj/sync',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['cnpj'],
+          properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
         },
       },
-      async (request, reply) => {
-        const context = request.tenant;
-        deps.tenantResolver.assertCanWrite(context);
-        await deps.tenantResolver.scopeFor(context, request.params.cnpj);
+    },
+    async (request, reply) => {
+      const context = request.tenant;
+      deps.tenantResolver.assertCanWrite(context);
+      const scope = await deps.tenantResolver.scopeFor(context, request.params.cnpj);
 
-        return reply.code(501).send({
-          code: 'not_implemented',
+      if (deps.dfe === undefined) {
+        return reply.code(503).send({
+          code: 'dfe_gateway_not_configured',
           message:
-            `Importação '${kind}' ainda não está disponível. ` +
-            'Use o upload manual de XML em POST /clients/{cnpj}/documents.',
+            'Coleta de DF-e indisponível neste ambiente. Em dev isso é esperado: o banco é ' +
+            'compartilhado com produção, e dev não fala com a SEFAZ. Use o upload manual em ' +
+            'POST /clients/{cnpj}/documents.',
         });
+      }
+
+      const job = await deps.dfe.enqueue(scope, context.user.userId);
+      const { rows } = await deps.pool.query(
+        `select id as job_id, kind, status, progress, accepted, rejected, error,
+                result, created_at, started_at, finished_at
+           from jobs where id = $1::uuid`,
+        [job.jobId],
+      );
+      // O mesmo `Job` de GET /jobs/{job_id}, mais `reused`: pedir de novo com
+      // coleta pendente devolve a mesma, em vez de enfileirar outra.
+      return reply.code(202).send({ ...rows[0], reused: job.reused });
+    },
+  );
+
+  /** Estado da coleta: último NSU, próxima consulta permitida e resumos sem XML. */
+  app.get<{ Params: CnpjParams }>(
+    '/clients/:cnpj/dfe',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['cnpj'],
+          properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
+        },
       },
-    );
-  }
+    },
+    async (request, reply) => {
+      const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
+      const [estado, resumos, documentos] = await Promise.all([
+        deps.pool.query(
+          `select ult_nsu, max_nsu, last_cstat, last_motivo, last_run_at, blocked_until
+             from dfe_sync_state where tenant_id = $1::uuid and cnpj = $2::char(14)`,
+          [scope.tenantId, scope.cnpj],
+        ),
+        deps.pool.query<{ aguardando_ciencia: string; aguardando_xml: string; com_falha: string }>(
+          `select count(*) filter (where manifested_at is null and received_at is null and manifest_cstat is null)::text as aguardando_ciencia,
+                  count(*) filter (where manifested_at is not null and received_at is null)::text as aguardando_xml,
+                  count(*) filter (where manifested_at is null and manifest_cstat is not null)::text as com_falha
+             from dfe_summaries where tenant_id = $1::uuid and cnpj = $2::char(14)`,
+          [scope.tenantId, scope.cnpj],
+        ),
+        deps.pool.query<{ aguardando: string; recusados: string }>(
+          `select count(*) filter (where ingested_at is null and ingest_error is null)::text as aguardando,
+                  count(*) filter (where ingest_error is not null)::text as recusados
+             from dfe_documents where tenant_id = $1::uuid and cnpj = $2::char(14)`,
+          [scope.tenantId, scope.cnpj],
+        ),
+      ]);
+      const d = documentos.rows[0]!;
+      const e = estado.rows[0];
+      const r = resumos.rows[0]!;
+      return reply.code(200).send({
+        cnpj: scope.cnpj,
+        available: deps.dfe !== undefined,
+        ult_nsu: e?.ult_nsu ?? null,
+        max_nsu: e?.max_nsu ?? null,
+        last_cstat: e?.last_cstat ?? null,
+        last_message: e?.last_motivo ?? null,
+        last_run_at: e?.last_run_at ?? null,
+        next_allowed_at: e?.blocked_until ?? null,
+        summaries: {
+          awaiting_acknowledgement: Number(r.aguardando_ciencia),
+          awaiting_full_xml: Number(r.aguardando_xml),
+          acknowledgement_failed: Number(r.com_falha),
+        },
+        documents: {
+          // NF-e baixada de competência ainda não aberta: entra na coleta
+          // seguinte à abertura, e não vira rejeição no log.
+          awaiting_period_open: Number(d.aguardando),
+          rejected_by_pipeline: Number(d.recusados),
+        },
+      });
+    },
+  );
 }
 
 /**

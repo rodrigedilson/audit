@@ -88,6 +88,7 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: DATABASE_URL });
     const env = loadEnv({
+      AUDIT_ENV: 'dev',
       DATABASE_URL,
       SUPABASE_URL: 'https://projeto-de-teste.supabase.co',
       SUPABASE_ANON_KEY: 'chave-anon-de-teste',
@@ -396,6 +397,40 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
      * exibisse com badge de aviso: filtrar pelo valor do proprio badge fazia a
      * linha sumir, e o contador concluia que tinha resolvido o item.
      */
+    /**
+     * A tabela oficial publica NCM e NBS pontuados, e e assim que a pessoa
+     * copia. Sem normalizar, colar o codigo na forma oficial produzia
+     * `unknown_code` de severidade alta sobre um codigo correto — o sistema
+     * acusando erro que nao existe.
+     */
+    it('aceita NCM e NBS na forma pontuada da tabela oficial', async () => {
+      await pool.query(
+        `insert into fiscal_codes (kind, code) values ('nbs','115021000')
+         on conflict do nothing`,
+      );
+
+      const resposta = await call(
+        'PUT',
+        `/v1/clients/${cnpj}/items/SKU-PONTUADO/classification`,
+        owner,
+        { effective_from: '2027-09', ncm: '7318.15.00', nbs: '1.1502.10.00' },
+      );
+
+      expect(resposta.statusCode).toBe(200);
+      const issues = resposta.json().issues as { field: string; reason: string }[];
+      expect(issues.filter((i) => i.field === 'ncm' && i.reason === 'unknown_code')).toEqual([]);
+      expect(issues.filter((i) => i.field === 'nbs' && i.reason === 'unknown_code')).toEqual([]);
+
+      // E o que ficou guardado sao os digitos, iguais aos da tabela oficial.
+      const { rows } = await pool.query<{ ncm: string; nbs: string }>(
+        `select ncm, nbs from item_classifications
+          where tenant_id = $1::uuid and cnpj = $2::char(14) and item_id = 'SKU-PONTUADO'`,
+        [tenantId, cnpj],
+      );
+      expect(rows[0]?.ncm?.trim()).toBe('73181500');
+      expect(rows[0]?.nbs?.trim()).toBe('115021000');
+    });
+
     it('o filtro never isola o item nunca classificado', async () => {
       await pool.query(
         `insert into items (tenant_id, cnpj, item_id, description)
@@ -457,24 +492,19 @@ describe.skipIf(!DATABASE_URL)('API — catálogo e saúde do cadastro', () => {
     });
 
     /**
-     * A decisão que mantém o resultado honesto: sem as tabelas oficiais, a
-     * resposta diz que a ausência de erro não significa correção.
+     * O caso "tabelas vazias" mudou de lugar, para
+     * `tests/fiscal/catalog/catalog-health.test.ts`.
+     *
+     * Ele produzia o caso com `delete from fiscal_codes`, e essas tabelas são
+     * **globais** — sem coluna de tenant. O vitest roda arquivos em paralelo, e
+     * o delete esvaziava a tabela para todos os outros arquivos durante a
+     * execução: `reporting.test.ts` chegou a ganhar uma leitura defensiva da
+     * contagem antes de afirmar, o que é o sintoma da corrida, não a cura.
+     *
+     * A lógica que se queria verificar é de `health()` e não precisa de banco.
+     * O que fica aqui é o caminho com as tabelas carregadas, que é o estado
+     * real de produção.
      */
-    it('avisa quando as tabelas oficiais não estão carregadas', async () => {
-      await pool.query('delete from cclasstrib_cst');
-      await pool.query('delete from fiscal_codes');
-
-      try {
-        await classificar('SKU-X', classificacaoValida);
-        const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();
-
-        expect(body.reference_tables_loaded).toBe(false);
-        expect(body.notice).toMatch(/não significa que a classificação está correta/);
-        expect(body.not_verified).toBeGreaterThan(0);
-      } finally {
-        await carregarTabelas();
-      }
-    });
 
     it('a resposta não traz notice quando as tabelas estão carregadas', async () => {
       const body = (await call('GET', `/v1/clients/${cnpj}/items/health`, owner)).json();

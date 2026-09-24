@@ -31,7 +31,7 @@
 -- =============================================================================
 
 -- =============================================================================
--- PARTE 1 — migrations (15 arquivos, na ordem de aplicação)
+-- PARTE 1 — migrations (20 arquivos, na ordem de aplicação)
 -- =============================================================================
 
 
@@ -2234,6 +2234,387 @@ drop table if exists public.interop_cross_notes;
 drop table if exists public.interop_custom_rules;
 drop table if exists public.interop_sessions;
 drop table if exists public.analysis_groups;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260923100000_dia_util_nos_prazos.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- Prazo em dia útil, e prazo antecipado para o dia útil anterior.
+--
+-- `deadline_rules` só sabia expressar dia de calendário, e os dois prazos que
+-- mais importam não são dia de calendário:
+--
+--   - EFD-Contribuições vence no **décimo dia útil** do segundo mês subsequente
+--     (IN RFB 1.252/2012, art. 7º).
+--   - O DAS do Simples vence **dia 20, antecipado** para o dia útil anterior
+--     quando cai em fim de semana ou feriado (LC 123/2006, art. 21).
+--
+-- Datá-los como dia de calendário colocaria data errada ao lado de uma citação
+-- legal — e no caso do DAS erraria para FRENTE, dizendo ao contador que ainda há
+-- prazo quando o pagamento já venceu. É a única direção de erro que este
+-- calendário não pode ter.
+--
+-- `exact` é o padrão e preserva o comportamento de toda regra já cadastrada.
+alter table public.deadline_rules
+  add column if not exists day_rule text not null default 'exact'
+    check (day_rule in ('exact', 'nth_business_day', 'anticipate_to_business_day'));
+
+comment on column public.deadline_rules.day_rule is
+  'Como day_of_month vira data: exact (o dia é o dia), nth_business_day (N-ésimo dia útil do mês) ou anticipate_to_business_day (o dia, antecipado para o dia útil anterior). O cálculo de dia útil considera os feriados nacionais mais Carnaval e Corpus Christi; feriado estadual e municipal não são conhecidos, e nesses casos a data sai um dia depois da real — o alerta dispara cedo, nunca tarde.';
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260924100000_ativacao_da_cobranca.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Ativação da cobrança pelo owner
+--
+-- O Asaas exige CPF ou CNPJ de quem paga, e `tenants` só guarda o nome do
+-- escritório. Os dados de cobrança ficam em `subscriptions`, junto dos IDs do
+-- Asaas: são de cobrança, não de identidade do escritório.
+--
+-- Nulos até o owner ativar. Sem ativação não há cliente nem assinatura no
+-- gateway, e nada é cobrado — o trial acaba sem virar cobrança por omissão.
+-- =============================================================================
+
+alter table public.subscriptions
+  add column if not exists billing_document text
+    check (billing_document ~ '^([0-9]{11}|[0-9]{14})$'),
+  add column if not exists billing_email text
+    check (billing_email ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'),
+  add column if not exists billing_type text
+    check (billing_type in ('PIX', 'BOLETO', 'CREDIT_CARD', 'UNDEFINED')),
+  add column if not exists activated_at timestamptz;
+
+comment on column public.subscriptions.billing_document is
+  'CPF (11) ou CNPJ (14) do pagador, só dígitos. Enviado ao Asaas na ativação.';
+comment on column public.subscriptions.activated_at is
+  'Quando o owner ativou a cobrança. Nulo: trial sem cobrança configurada.';
+
+-- O webhook acha a fatura pelo id do pagamento. Índice comum, e não único: um
+-- banco com ids repetidos de antes desta migration (o de testes tem) faria o
+-- `create unique index` falhar, e deduplicar fatura dentro de migration é pior
+-- do que não ter a restrição. A unicidade que importa — uma fatura por mês e
+-- escritório — já é a chave `(tenant_id, reference_month)`.
+create index if not exists invoices_asaas_payment_idx
+  on public.invoices (asaas_payment_id)
+  where asaas_payment_id is not null;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260924120000_efd_icms_ipi.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- EFD ICMS/IPI: a segunda escrituração.
+--
+-- A `sped_files` nasceu para a EFD-Contribuições e tem `unique (tenant_id, cnpj,
+-- period)`. Agora há duas escriturações por competência — a federal de PIS/Cofins
+-- e a estadual de ICMS/IPI — e a unicidade passa a incluir qual delas é. Sem
+-- isso, importar a EFD ICMS/IPI de janeiro apagaria a EFD-Contribuições do mesmo
+-- mês, e o dossiê de saldo credor sumiria sem aviso.
+
+alter table public.sped_files
+  add column if not exists layout text not null default 'contribuicoes'
+  check (layout in ('contribuicoes', 'icms_ipi'));
+
+comment on column public.sped_files.layout is
+  'Qual escrituração este arquivo é. As linhas que já existiam são todas de '
+  'EFD-Contribuições, que era a única que o produto lia.';
+
+-- A constraint antiga não tem nome declarado, então foi o Postgres que o deu.
+-- Procurá-la pela definição, em vez de chutar o nome, deixa esta migration
+-- rodar tanto num banco que já a tem quanto num criado do zero depois dela.
+do $$
+declare
+  antiga text;
+begin
+  select conname into antiga
+    from pg_constraint
+   where conrelid = 'public.sped_files'::regclass
+     and contype = 'u'
+     and pg_get_constraintdef(oid) = 'UNIQUE (tenant_id, cnpj, period)';
+
+  if antiga is not null then
+    execute format('alter table public.sped_files drop constraint %I', antiga);
+  end if;
+end
+$$;
+
+alter table public.sped_files
+  drop constraint if exists sped_files_escrituracao_unica;
+
+alter table public.sped_files
+  add constraint sped_files_escrituracao_unica
+  unique (tenant_id, cnpj, period, layout);
+
+/**
+ * Documentos da EFD ICMS/IPI, reduzidos ao que as conferências usam.
+ *
+ * Guardar item a item (C170) custaria milhões de linhas por carteira para
+ * responder às mesmas somas. O que a conciliação precisa é, por documento: o
+ * total de ICMS dos itens, o total da consolidação (C190) e o do próprio C100.
+ *
+ * `has_items` e `has_analytics` existem porque soma zero e registro ausente não
+ * são a mesma coisa: NF-e de emissão própria costuma vir sem C170, e tratar isso
+ * como divergência acusaria o cliente por seguir o guia.
+ */
+create table if not exists public.efd_icms_documents (
+  id            bigserial primary key,
+  tenant_id     uuid not null,
+  cnpj          char(14) not null,
+  sped_file_id  uuid not null references public.sped_files (id) on delete cascade,
+
+  subject       text not null,
+  operation     text not null check (operation in ('inbound', 'outbound')),
+  -- COD_SIT cru: 02 e 03 cancelado, 04 denegado, 05 numeração inutilizada.
+  situation     char(2) not null,
+
+  has_items     boolean not null default false,
+  has_analytics boolean not null default false,
+
+  items_icms_cents     bigint not null default 0,
+  analytics_icms_cents bigint not null default 0,
+  document_icms_cents  bigint not null default 0
+);
+
+create index if not exists efd_icms_documents_arquivo_idx
+  on public.efd_icms_documents (sped_file_id);
+
+alter table public.efd_icms_documents enable row level security;
+drop policy if exists efd_icms_documents_select_own on public.efd_icms_documents;
+create policy efd_icms_documents_select_own on public.efd_icms_documents
+  for select using (public.is_member_of(tenant_id));
+
+/**
+ * Apuração declarada: E110 para o ICMS, E520 para o IPI.
+ *
+ * Todo campo é anulável porque o arquivo pode trazer um registro e não o outro,
+ * e arquivo sem E110 não é arquivo com ICMS zerado. Gravar zero aqui faria a
+ * conferência dizer "confere" sobre algo que o arquivo não declarou.
+ */
+create table if not exists public.efd_icms_assessments (
+  sped_file_id  uuid primary key references public.sped_files (id) on delete cascade,
+  tenant_id     uuid not null,
+  cnpj          char(14) not null,
+
+  -- E110, campos 2 a 15.
+  icms_total_debits_cents              bigint,
+  icms_document_debit_adjustments_cents bigint,
+  icms_adjustment_debits_cents         bigint,
+  icms_credit_reversals_cents          bigint,
+  icms_total_credits_cents             bigint,
+  icms_document_credit_adjustments_cents bigint,
+  icms_adjustment_credits_cents        bigint,
+  icms_debit_reversals_cents           bigint,
+  icms_previous_credit_balance_cents   bigint,
+  icms_assessed_balance_cents          bigint,
+  icms_deductions_cents                bigint,
+  icms_payable_cents                   bigint,
+  icms_carried_credit_balance_cents    bigint,
+  icms_extra_assessment_cents          bigint,
+
+  -- E520, campos 2 a 8.
+  ipi_previous_credit_balance_cents bigint,
+  ipi_debits_cents                  bigint,
+  ipi_credits_cents                 bigint,
+  ipi_other_debits_cents            bigint,
+  ipi_other_credits_cents           bigint,
+  ipi_carried_credit_balance_cents  bigint,
+  ipi_payable_cents                 bigint,
+
+  -- `true` quando o arquivo trouxe o registro. Distingue ausência de zero.
+  has_icms boolean not null default false,
+  has_ipi  boolean not null default false
+);
+
+alter table public.efd_icms_assessments enable row level security;
+drop policy if exists efd_icms_assessments_select_own on public.efd_icms_assessments;
+create policy efd_icms_assessments_select_own on public.efd_icms_assessments
+  for select using (public.is_member_of(tenant_id));
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260924130000_coleta_dfe.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Coleta de DF-e na SEFAZ (ADR-006)
+--
+-- Distribuição por NSU e ciência da operação, pelo certificado A1 do cliente.
+-- =============================================================================
+
+-- O cofre passa a guardar a credencial (chave e cadeia em PEM), e não o PFX
+-- protegido por uma senha que o sistema descartou. Linha antiga continua
+-- legível para metadados, mas não serve para coleta: pede reenvio.
+alter table public.certificates
+  add column if not exists credential_format text not null default 'pfx_protected'
+    check (credential_format in ('pfx_protected', 'pem_bundle'));
+
+comment on column public.certificates.credential_format is
+  'pem_bundle: chave e cadeia cifradas, utilizáveis pela coleta. pfx_protected: PFX com senha descartada, não utilizável — reenviar.';
+
+-- Quem pediu a coleta. É em nome dessa pessoa que cada uso do A1 vira
+-- `certificate.used` no log.
+alter table public.jobs
+  add column if not exists requested_by uuid,
+  add column if not exists started_at timestamptz,
+  add column if not exists result jsonb;
+
+-- O worker toma o próximo job com `for update skip locked`.
+create index if not exists jobs_fila_idx
+  on public.jobs (kind, created_at)
+  where status = 'queued';
+
+-- Estado da distribuição por CNPJ. A SEFAZ pune consumo indevido (cStat 656)
+-- com uma hora sem resposta, e pedir de novo depois de alcançar o `maxNSU`
+-- conta como indevido.
+create table if not exists public.dfe_sync_state (
+  tenant_id      uuid not null,
+  cnpj           char(14) not null,
+  ult_nsu        char(15) not null default '000000000000000' check (ult_nsu ~ '^[0-9]{15}$'),
+  max_nsu        char(15) check (max_nsu is null or max_nsu ~ '^[0-9]{15}$'),
+  last_cstat     text,
+  last_motivo    text,
+  last_run_at    timestamptz,
+  -- Até quando não se pede nada: 656, ou fila alcançada.
+  blocked_until  timestamptz,
+  primary key (tenant_id, cnpj),
+  foreign key (tenant_id, cnpj) references public.clients (tenant_id, cnpj) on delete cascade
+);
+
+-- Resumos (resNFe) de notas em que o CNPJ é destinatário. A NF-e completa só
+-- vem depois da ciência da operação; esta tabela é o que falta chegar.
+create table if not exists public.dfe_summaries (
+  tenant_id        uuid not null,
+  cnpj             char(14) not null,
+  access_key       char(44) not null,
+  nsu              char(15) not null,
+  issuer_cnpj      char(14),
+  issuer_name      text,
+  issued_at        timestamptz,
+  total_cents      bigint,
+  -- Ciência da operação (210210): quando foi registrada, e o cStat da SEFAZ.
+  manifested_at    timestamptz,
+  manifest_cstat   text,
+  manifest_motivo  text,
+  -- Quando o XML completo entrou pela distribuição.
+  received_at      timestamptz,
+  created_at       timestamptz not null default now(),
+  primary key (tenant_id, cnpj, access_key),
+  foreign key (tenant_id, cnpj) references public.clients (tenant_id, cnpj) on delete cascade
+);
+
+-- NF-e completas que a distribuição trouxe. A nota só entra no log se a
+-- competência dela estiver aberta (camada 4). A SEFAZ devolve notas dos últimos
+-- 90 dias, e ingerir na hora gravaria `output.rejected` permanente para cada
+-- nota de mês ainda não aberto. A nota espera aqui, e entra na coleta seguinte
+-- à abertura da competência.
+create table if not exists public.dfe_documents (
+  tenant_id     uuid not null,
+  cnpj          char(14) not null,
+  access_key    char(44) not null,
+  nsu           char(15) not null,
+  period        char(7) check (period is null or period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  xml           text not null,
+  received_at   timestamptz not null default now(),
+  -- Entrou no log (ou já estava lá, por upload manual).
+  ingested_at   timestamptz,
+  -- Recusada pelo pipeline: o motivo, e a nota não é tentada de novo.
+  ingest_error  text,
+  primary key (tenant_id, cnpj, access_key),
+  foreign key (tenant_id, cnpj) references public.clients (tenant_id, cnpj) on delete cascade
+);
+
+create index if not exists dfe_documents_pendentes_idx
+  on public.dfe_documents (tenant_id, cnpj, period)
+  where ingested_at is null and ingest_error is null;
+
+create index if not exists dfe_summaries_pendentes_idx
+  on public.dfe_summaries (tenant_id, cnpj)
+  where manifested_at is null;
+
+alter table public.dfe_sync_state enable row level security;
+alter table public.dfe_summaries  enable row level security;
+alter table public.dfe_documents  enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['dfe_sync_state', 'dfe_summaries', 'dfe_documents']
+  loop
+    execute format('drop policy if exists %I_select_own on public.%I', t, t);
+    execute format(
+      'create policy %I_select_own on public.%I for select using (public.is_member_of(tenant_id))',
+      t, t
+    );
+  end loop;
+end $$;
+
+-- Chave de acesso com CNPJ alfanumérico (NT Conjunta CNPJ Alfanumérico
+-- 2025.001): letras só nas 12 posições do CNPJ do emitente. A restrição tem
+-- nome fixo, e é trocada aqui em vez de declarada inline, para valer também no
+-- banco onde esta migration já tinha rodado com a regra só de dígitos.
+do $$
+declare t text;
+begin
+  foreach t in array array['dfe_summaries', 'dfe_documents']
+  loop
+    execute format('alter table public.%I drop constraint if exists %I', t, t || '_access_key_check');
+    execute format(
+      'alter table public.%I add constraint %I check (access_key ~ ''^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$'')',
+      t, t || '_access_key_check'
+    );
+  end loop;
+end $$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260924140000_cnpj_alfanumerico.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- CNPJ alfanumérico.
+--
+-- Desde 31/07/2026 a Receita emite CNPJ alfanumérico para inscrições novas
+-- (IN RFB 2.229/2024). São as mesmas 14 posições: 12 alfanuméricas e 2 dígitos
+-- verificadores, que continuam numéricos. Os CNPJs já existentes não mudaram.
+--
+-- Cinco tabelas exigiam `^[0-9]{14}$`. Com a restrição antiga, cadastrar uma
+-- empresa aberta de agosto em diante devolvia erro de banco — 500 na API, não
+-- mensagem de validação. O tipo `char(14)` continua servindo: o que muda é o
+-- alfabeto, não o tamanho.
+--
+-- A restrição nova é mais larga, então nenhuma linha existente passa a violá-la:
+-- todo CNPJ numérico de 14 dígitos também casa com o padrão novo.
+--
+-- O dígito verificador **não** é conferido aqui. Uma restrição de banco que
+-- rodasse módulo 11 faria uma linha gravada hoje virar erro de leitura amanhã se
+-- a regra mudasse, e o event log é append-only. A conferência fica na fronteira
+-- de entrada, em `exigirCnpj`.
+
+do $$
+declare
+  alvo record;
+begin
+  for alvo in
+    select rel.relname as tabela, con.conname as restricao
+      from pg_constraint con
+      join pg_class rel on rel.oid = con.conrelid
+      join pg_namespace n on n.oid = rel.relnamespace
+     where n.nspname = 'public'
+       and con.contype = 'c'
+       and pg_get_constraintdef(con.oid) = 'CHECK ((cnpj ~ ''^[0-9]{14}$''::text))'
+  loop
+    execute format('alter table public.%I drop constraint %I', alvo.tabela, alvo.restricao);
+    execute format(
+      'alter table public.%I add constraint %I check (cnpj ~ ''^[0-9A-Z]{12}[0-9]{2}$'')',
+      alvo.tabela,
+      alvo.restricao
+    );
+  end loop;
+end
+$$;
 
 
 -- =============================================================================

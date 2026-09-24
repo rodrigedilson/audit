@@ -1,11 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import type { ApiDeps } from '../server.js';
 import { BillingService } from '../../billing/billing.service.js';
-import { quote, formatBRL, type BillableClient } from '../../billing/pricing.js';
+import { BillingActivationService } from '../../billing/billing-activation.service.js';
+import type { BillingType } from '../../billing/asaas-client.js';
+import { quote, formatBRL, serializeQuote, type BillableClient } from '../../billing/pricing.js';
 import { REGIMES, type Regime } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { NotFoundError } from '../auth/tenant-resolver.js';
 
 const PERIOD_PATTERN = '^[0-9]{4}-(0[1-9]|1[0-2])$';
+
+interface ActivationBody {
+  document: string;
+  email: string;
+  billing_type: BillingType;
+}
 
 interface CalculatorBody {
   clients: { regime: Regime; quantity: number }[];
@@ -103,6 +111,8 @@ export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps)
       status: subscription.status,
       trial_ends_on: subscription.trialEndsOn,
       canceled_at: subscription.canceledAt,
+      // Sem ativação não há cobrança: o trial acaba sem virar fatura.
+      billing_activated: subscription.asaasSubscriptionId !== null,
       reference_month: referenceMonth,
       ...serializeQuote(result),
     });
@@ -156,6 +166,64 @@ export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps)
         reference_month: period,
         status: 'preview',
         ...serializeQuote(result),
+      });
+    },
+  );
+
+  /**
+   * Ativação da cobrança pelo owner: CPF/CNPJ, e-mail e forma de pagamento.
+   * Cria o cliente e a assinatura no Asaas. Pós-pago: o primeiro mês cobrado é
+   * o primeiro mês cheio depois do trial e da ativação, com vencimento no mês
+   * seguinte a ele.
+   */
+  app.post<{ Body: ActivationBody }>(
+    '/subscription/activate',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['document', 'email', 'billing_type'],
+          additionalProperties: false,
+          properties: {
+            document: { type: 'string', minLength: 11, maxLength: 18 },
+            email: { type: 'string', format: 'email', maxLength: 254 },
+            billing_type: { type: 'string', enum: ['PIX', 'BOLETO', 'CREDIT_CARD', 'UNDEFINED'] },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = request.tenant;
+      deps.tenantResolver.assertIsOwner(context);
+
+      if (deps.asaas === undefined) {
+        return reply.code(503).send({
+          code: 'billing_gateway_not_configured',
+          message:
+            'Gateway de cobrança não configurado neste ambiente. Em dev isso é esperado: ' +
+            'o banco é compartilhado com produção, e dev não fala com o Asaas.',
+        });
+      }
+
+      const activation = await new BillingActivationService(deps.pool, deps.asaas).activate(
+        context.tenantId,
+        {
+          document: request.body.document,
+          email: request.body.email,
+          billingType: request.body.billing_type,
+        },
+        new Date().toISOString().slice(0, 10),
+      );
+
+      return reply.code(activation.alreadyActive ? 200 : 201).send({
+        already_active: activation.alreadyActive,
+        first_due_date: activation.firstDueDate,
+        first_reference_month: activation.firstReferenceMonth,
+        estimate_cents: activation.estimateCents,
+        estimate_formatted: formatBRL(activation.estimateCents),
+        message:
+          `A primeira fatura cobra ${activation.firstReferenceMonth} e vence em ` +
+          `${activation.firstDueDate}. O valor é fechado quando o mês de referência acaba.`,
       });
     },
   );
@@ -246,22 +314,27 @@ export async function registerBillingWebhook(app: FastifyInstance, deps: ApiDeps
       }
 
       const body = request.body;
-      const externalReference = body.payment?.externalReference;
-      const tenantId = isUuid(externalReference) ? externalReference : null;
 
-      const isNew = await billing.recordBillingEvent(
+      // Reentrega é normal, não erro: responder 200 evita o Asaas insistir.
+      if (body.id !== undefined && (await billing.billingEventExists(body.id))) {
+        return reply.code(200).send({ status: 'duplicate_ignored' });
+      }
+
+      const tenantId = await tenantOfWebhook(deps, body);
+
+      // O efeito vem ANTES do registro. Gravar primeiro fazia uma falha no meio
+      // (o Asaas fora do ar ao ajustar o valor, por exemplo) virar evento
+      // "processado": a reentrega era ignorada como duplicata e a fatura do mês
+      // nunca era gravada. Os efeitos são idempotentes, então reprocessar é
+      // seguro; perder o evento, não.
+      await applyPaymentEffect(deps, body, tenantId);
+
+      await billing.recordBillingEvent(
         tenantId,
         body.event,
         body as unknown as Record<string, unknown>,
         body.id,
       );
-
-      // Reentrega é normal, não erro: responder 200 evita o Asaas insistir.
-      if (!isNew) {
-        return reply.code(200).send({ status: 'duplicate_ignored' });
-      }
-
-      await applyPaymentEffect(deps, body, tenantId);
 
       return reply.code(200).send({ status: 'processed' });
     },
@@ -273,10 +346,29 @@ interface AsaasWebhookBody {
   event: string;
   payment?: {
     id?: string;
+    subscription?: string;
     externalReference?: string;
     value?: number;
+    dueDate?: string;
     paymentDate?: string;
   };
+}
+
+/** Tenant do evento: `externalReference`, ou a assinatura quando ela faltar. */
+async function tenantOfWebhook(deps: ApiDeps, body: AsaasWebhookBody): Promise<string | null> {
+  const externalReference = body.payment?.externalReference;
+  if (isUuid(externalReference)) {
+    return externalReference;
+  }
+  const subscriptionId = body.payment?.subscription;
+  if (subscriptionId === undefined) {
+    return null;
+  }
+  const { rows } = await deps.pool.query<{ tenant_id: string }>(
+    'select tenant_id from subscriptions where asaas_subscription_id = $1',
+    [subscriptionId],
+  );
+  return rows[0]?.tenant_id ?? null;
 }
 
 /**
@@ -291,6 +383,20 @@ async function applyPaymentEffect(
 ): Promise<void> {
   const paymentId = body.payment?.id;
   if (!paymentId) {
+    return;
+  }
+
+  // A cobrança do mês nasceu com a estimativa: fecha o valor pelo mês de
+  // referência e grava a fatura, que é o que os eventos seguintes atualizam.
+  if (body.event === 'PAYMENT_CREATED') {
+    if (deps.asaas === undefined) {
+      throw new Error('PAYMENT_CREATED recebido sem gateway configurado para fechar o valor.');
+    }
+    await new BillingActivationService(deps.pool, deps.asaas).closeInvoice({
+      ...body.payment,
+      id: paymentId,
+      ...(tenantId === null ? {} : { externalReference: tenantId }),
+    });
     return;
   }
 
@@ -329,22 +435,6 @@ function isUuid(value: string | undefined): value is string {
     value !== undefined &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
   );
-}
-
-function serializeQuote(result: ReturnType<typeof quote>): Record<string, unknown> {
-  return {
-    billable_clients: result.billableClients,
-    lines: result.lines.map((line) => ({
-      regime: line.regime,
-      quantity: line.quantity,
-      unit_cents: line.unitCents,
-      subtotal_cents: line.subtotalCents,
-    })),
-    subtotal_cents: result.subtotalCents,
-    minimum_adjustment_cents: result.minimumAdjustmentCents,
-    total_cents: result.totalCents,
-    total_formatted: formatBRL(result.totalCents),
-  };
 }
 
 function currentMonth(now: Date = new Date()): string {

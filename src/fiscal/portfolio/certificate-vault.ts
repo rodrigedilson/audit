@@ -233,3 +233,80 @@ export function daysToExpiry(validTo: string, now: Date = new Date()): number {
   const millis = new Date(validTo).getTime() - now.getTime();
   return Math.floor(millis / 86_400_000);
 }
+
+/**
+ * O que a coleta usa: a chave privada e a cadeia, em PEM. É isto, e não o PFX,
+ * que o cofre cifra (ADR-006).
+ *
+ * O PFX chegava protegido por uma senha que o sistema descarta, e decifrá-lo
+ * devolvia um arquivo que ninguém conseguia abrir: sem a chave privada não há
+ * mTLS com a SEFAZ nem assinatura de evento. A senha continua sem ser guardada.
+ * Ela abre o PFX uma vez, no upload, e a proteção em repouso passa a ser só a
+ * chave mestra, que já era a proteção real.
+ */
+export interface CredencialA1 {
+  /** Chave privada, PKCS#8 em PEM. */
+  key: string;
+  /** Certificado do titular, em PEM. */
+  cert: string;
+  /** Intermediárias que vieram no PFX, em PEM. */
+  chain: string[];
+}
+
+/** Abre o PFX com a senha e devolve a credencial serializada, pronta para cifrar. */
+export function extrairCredencial(pfx: Buffer, password: string): Buffer {
+  let p12: forge.pkcs12.Pkcs12Pfx;
+  try {
+    const asn1 = forge.asn1.fromDer(forge.util.createBuffer(pfx.toString('binary')));
+    p12 = forge.pkcs12.pkcs12FromAsn1(asn1, password);
+  } catch {
+    throw new CertificateError('Não foi possível abrir o certificado: arquivo ou senha inválidos.');
+  }
+
+  const chaves = [
+    ...(p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] ?? []),
+    ...(p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] ?? []),
+  ];
+  const chave = chaves.map((bag) => bag.key).find((k): k is forge.pki.rsa.PrivateKey => !!k);
+  if (!chave) {
+    throw new CertificateError('O arquivo não contém a chave privada do certificado.');
+  }
+
+  const certs = (p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ?? [])
+    .map((bag) => bag.cert)
+    .filter((c): c is forge.pki.Certificate => !!c);
+
+  // O titular é o certificado cuja chave pública casa com a privada. A ordem
+  // das bags no PFX não é garantida, e assinar com a intermediária seria
+  // assinar em nome de outra entidade.
+  const modulo = chave.n.toString(16);
+  const titular = certs.find((c) => (c.publicKey as forge.pki.rsa.PublicKey).n.toString(16) === modulo);
+  if (!titular) {
+    throw new CertificateError('O certificado do titular não corresponde à chave privada do arquivo.');
+  }
+
+  const credencial: CredencialA1 = {
+    key: forge.pki.privateKeyInfoToPem(forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(chave))),
+    cert: forge.pki.certificateToPem(titular),
+    chain: certs.filter((c) => c !== titular).map((c) => forge.pki.certificateToPem(c)),
+  };
+  return Buffer.from(JSON.stringify(credencial), 'utf8');
+}
+
+/** Lê a credencial decifrada pelo cofre. */
+export function lerCredencial(material: Buffer): CredencialA1 {
+  let bruto: unknown;
+  try {
+    bruto = JSON.parse(material.toString('utf8'));
+  } catch {
+    throw new CertificateError(
+      'O material guardado não é uma credencial utilizável. Certificados enviados antes da ' +
+        'coleta de DF-e precisam ser reenviados.',
+    );
+  }
+  const c = bruto as Partial<CredencialA1>;
+  if (typeof c.key !== 'string' || typeof c.cert !== 'string' || !Array.isArray(c.chain)) {
+    throw new CertificateError('Credencial guardada em formato inválido.');
+  }
+  return { key: c.key, cert: c.cert, chain: c.chain };
+}

@@ -12,6 +12,22 @@ export interface Subscription {
 }
 
 /**
+ * `billing_settings` sem a linha única. A migration a semeia; faltar é schema
+ * aplicado pela metade. Antes, o serviço caía em `15000` e `30` escritos no
+ * código: a calculadora pública mostrava um mínimo que não estava em lugar
+ * nenhum do banco, e mudar o preço na tabela deixava de ter efeito sem aviso.
+ */
+export class BillingSettingsMissingError extends Error {
+  constructor() {
+    super(
+      'Parâmetros de cobrança ausentes (billing_settings). Rode `npm run doctor` ' +
+        'e aplique a carga de cobrança.',
+    );
+    this.name = 'BillingSettingsMissingError';
+  }
+}
+
+/**
  * Lê planos e carteira e produz a cotação do mês. Não fala com o gateway: quem
  * integra é a rota, para que o cálculo do preço continue testável sem rede.
  */
@@ -28,7 +44,7 @@ export class BillingService {
 
     return {
       prices: prices.map((row) => ({ regime: row.regime, monthlyCents: row.monthly_cents })),
-      minimumCents: settings[0]?.minimum_cents ?? 15000,
+      minimumCents: exigirParametros(settings).minimum_cents,
     };
   }
 
@@ -87,7 +103,7 @@ export class BillingService {
     const { rows: settings } = await this.pool.query<{ trial_days: number }>(
       'select trial_days from billing_settings where id = true',
     );
-    const trialDays = settings[0]?.trial_days ?? 30;
+    const trialDays = exigirParametros(settings).trial_days;
 
     await this.pool.query(
       `insert into subscriptions (tenant_id, status, trial_ends_on)
@@ -115,6 +131,15 @@ export class BillingService {
     await this.recordBillingEvent(tenantId, 'subscription.canceled', { reason: reason ?? null });
 
     return (await this.subscriptionFor(tenantId))!;
+  }
+
+  /** O webhook já processou este evento do Asaas? */
+  async billingEventExists(externalId: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      'select 1 from billing_events where external_id = $1',
+      [externalId],
+    );
+    return (rowCount ?? 0) > 0;
   }
 
   /**
@@ -145,4 +170,12 @@ export class BillingService {
 
 function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+function exigirParametros<T>(rows: T[]): T {
+  const row = rows[0];
+  if (row === undefined) {
+    throw new BillingSettingsMissingError();
+  }
+  return row;
 }

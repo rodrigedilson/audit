@@ -66,6 +66,21 @@ const PARTIDA = {
 } as const;
 
 /**
+ * Data em que cada cenário é avaliado contra `tax_rules`.
+ *
+ * A alíquota tem de ser a vigente **no ano simulado**, não hoje. Consultar em
+ * `current_date` faria as alíquotas de teste de 2026 (LC 214/2025: CBS 0,9% e
+ * IBS 0,1%) virarem a alíquota do regime pleno de 2033, marcadas como
+ * `published`: a comparação entre regimes sairia com ~1% de IBS/CBS e cara de
+ * norma. Com a data do cenário, uma alíquota de referência que o Senado publicar
+ * com vigência futura já vale para o cenário dela antes de entrar em vigor.
+ */
+const DATA_DO_CENARIO: Record<Scenario, string> = {
+  transition_2027_2028: '2027-01-01',
+  full_2033: '2033-01-01',
+};
+
+/**
  * Simulador de regime — diferencial #8.
  *
  * Somente leitura: o serviço não recebe orquestrador, então não há caminho de
@@ -91,7 +106,7 @@ export class SimulationService {
     }
 
     // `tax_rules` é dado normativo global, não por escritório: sem escopo.
-    const publicada = await this.loadPublishedRate();
+    const publicada = await this.loadPublishedRate(request.scenario);
     const overrides = request.overrides ?? {};
 
     const inputs: SimulationInputs = {
@@ -226,7 +241,9 @@ export class SimulationService {
    * e nesse caso a premissa aparece como `provided`, com a nota de que o valor
    * é ponto de partida e não norma.
    */
-  private async loadPublishedRate(): Promise<{ rate: number; source: string } | undefined> {
+  private async loadPublishedRate(
+    scenario: Scenario,
+  ): Promise<{ rate: number; source: string } | undefined> {
     /**
      * A alíquota conjunta é a soma das publicadas para IBS-UF, IBS-Mun e CBS.
      * Somar é necessário porque a norma publica cada uma em separado, e o
@@ -238,9 +255,10 @@ export class SimulationService {
       `select distinct on (tax) tax, value, source
          from tax_rules
         where kind = 'rate' and tax in ('ibs_uf', 'ibs_mun', 'cbs')
-          and valid_from <= current_date
-          and (valid_to is null or valid_to >= current_date)
+          and valid_from <= $1::date
+          and (valid_to is null or valid_to >= $1::date)
         order by tax, valid_from desc`,
+      [DATA_DO_CENARIO[scenario]],
     );
 
     if (rows.length < 3) {
