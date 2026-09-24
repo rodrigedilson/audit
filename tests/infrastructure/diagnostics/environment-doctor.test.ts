@@ -6,6 +6,7 @@ import {
   checarTrilhas,
   checarPrazosNormativos,
   checarCotaDoAssistente,
+  checarCnpjAlfanumerico,
   checarCobranca,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
@@ -632,5 +633,33 @@ describe('checarCobranca', () => {
 
     expect(r.estado).toBe('aviso');
     expect(r.acao).toContain('produção');
+  });
+});
+
+/**
+ * A falha que esta checagem existe para evitar é muda: sem a migration, a `check`
+ * do banco recusa o CNPJ alfanumérico e a API devolve 500 — o escritório vê
+ * "erro no sistema" ao cadastrar a empresa nova que acabou de captar.
+ */
+describe('checarCnpjAlfanumerico', () => {
+  const poolFalso = (tabelas: string[]): pg.Pool =>
+    ({
+      query: async () => ({ rows: tabelas.map((tabela) => ({ tabela })) }),
+    }) as unknown as pg.Pool;
+
+  it('aprova quando nenhuma restrição limita o CNPJ a dígitos', async () => {
+    const r = await checarCnpjAlfanumerico(poolFalso([]));
+
+    expect(r.estado).toBe('ok');
+  });
+
+  /** Falha, e não aviso: com a restrição antiga o cadastro simplesmente quebra. */
+  it('falha nomeando as tabelas e o arquivo a rodar', async () => {
+    const r = await checarCnpjAlfanumerico(poolFalso(['clients', 'events']));
+
+    expect(r.estado).toBe('falha');
+    expect(r.detalhe).toContain('clients, events');
+    expect(r.detalhe).toContain('500');
+    expect(r.acao).toContain('19-cnpj_alfanumerico.sql');
   });
 });

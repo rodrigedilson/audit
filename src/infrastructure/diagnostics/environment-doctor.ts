@@ -69,6 +69,8 @@ const TABELAS = [
   'simulations',
   'sped_files',
   'sped_documents',
+  'efd_icms_documents',
+  'efd_icms_assessments',
   'sped_carried_credits',
 ] as const;
 
@@ -127,6 +129,8 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   simulations: '11-simulador-de-regime.sql',
   sped_files: '12-dossie-saldo-credor.sql',
   sped_documents: '12-dossie-saldo-credor.sql',
+  efd_icms_documents: '18-efd_icms_ipi.sql',
+  efd_icms_assessments: '18-efd_icms_ipi.sql',
   sped_carried_credits: '12-dossie-saldo-credor.sql',
 };
 
@@ -204,6 +208,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await checarRegrasPublicadas(pool));
     checagens.push(await checarPrazosNormativos(pool));
     checagens.push(await checarCotaDoAssistente(pool));
+    checagens.push(await checarCnpjAlfanumerico(pool));
     checagens.push(await checarCobranca(pool, env));
     checagens.push(await checarEscritorio(pool));
   } finally {
@@ -775,6 +780,50 @@ async function checarRegrasPublicadas(pool: pg.Pool): Promise<Checagem> {
  * Sem um `membership`, a API responde 403 em tudo: o tenant é resolvido pela
  * tabela, nunca por um claim do token.
  */
+/**
+ * As restrições de CNPJ aceitam letras?
+ *
+ * Existe porque a falha é muda e cara: sem a migration, o banco recusa o CNPJ
+ * alfanumérico numa `check` e a API devolve **500**, não mensagem de validação.
+ * O escritório vê "erro no sistema" ao cadastrar justamente a empresa nova que
+ * acabou de captar — e a Receita emite CNPJ alfanumérico desde 31/07/2026.
+ *
+ * A checagem não tenta inserir nada: lê a definição das restrições e procura
+ * pela antiga, só de dígitos.
+ */
+export async function checarCnpjAlfanumerico(pool: pg.Pool): Promise<Checagem> {
+  const { rows } = await pool.query<{ tabela: string }>(
+    `select rel.relname as tabela
+       from pg_constraint con
+       join pg_class rel on rel.oid = con.conrelid
+       join pg_namespace n on n.oid = rel.relnamespace
+      where n.nspname = 'public'
+        and con.contype = 'c'
+        and pg_get_constraintdef(con.oid) like '%cnpj%'
+        and pg_get_constraintdef(con.oid) like '%[0-9]{14}%'
+      order by rel.relname`,
+  );
+
+  if (rows.length === 0) {
+    return {
+      nome: 'CNPJ alfanumérico',
+      estado: 'ok',
+      detalhe: 'nenhuma restrição limita o CNPJ a dígitos',
+    };
+  }
+
+  const tabelas = rows.map((r) => r.tabela).join(', ');
+
+  return {
+    nome: 'CNPJ alfanumérico',
+    estado: 'falha',
+    detalhe:
+      `${rows.length} tabela(s) ainda exigem CNPJ só de dígitos: ${tabelas}. ` +
+      'Cadastrar empresa aberta de 31/07/2026 em diante devolve 500.',
+    acao: 'Rode scripts/sql/migracoes/19-cnpj_alfanumerico.sql.',
+  };
+}
+
 async function checarEscritorio(pool: pg.Pool): Promise<Checagem> {
   const { rows } = await pool.query<{ escritorios: string; owners: string }>(
     `select (select count(*)::text from tenants) as escritorios,
