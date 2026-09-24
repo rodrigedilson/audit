@@ -27,7 +27,14 @@ function capturar(fn: () => void): ValidationError {
   throw new Error('esperava ValidationError, e nada foi lançado');
 }
 
-const intencao = (over: Partial<ESAAIntention> = {}): ESAAIntention =>
+/**
+ * `action` entra como `string` e não como ação do vocabulário: metade destes
+ * testes precisa justamente de uma ação inexistente, que é o que a camada 3
+ * recusa.
+ */
+const intencao = (
+  over: Partial<Omit<ESAAIntention, 'action'>> & { action?: string } = {},
+): ESAAIntention =>
   ({
     action: 'client.enrolled',
     task_id: '11222333000181',
