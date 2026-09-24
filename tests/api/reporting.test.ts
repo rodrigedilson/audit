@@ -133,6 +133,24 @@ describe.skipIf(!DATABASE_URL)('API — trilhas de auditoria e Book de fechament
   });
 
   beforeEach(async () => {
+    /**
+     * Semeia as tabelas de código de forma **aditiva**.
+     *
+     * `on conflict do nothing`, nunca delete: elas são globais e os arquivos
+     * rodam em paralelo, então apagar aqui quebraria os outros — foi
+     * exatamente o que acontecia antes. Acrescentar é seguro porque o teste só
+     * precisa que existam, não que sejam só estas.
+     */
+    await pool.query(
+      `insert into fiscal_codes (kind, code) values
+         ('cst_ibs_cbs','000'),('cclasstrib','000001')
+       on conflict do nothing`,
+    );
+    await pool.query(
+      `insert into cclasstrib_cst (cclasstrib, cst_ibs_cbs) values ('000001','000')
+       on conflict do nothing`,
+    );
+
     tenantId = await createTenant(pool, 'Escritório do Book');
     owner = await createMembership(pool, tenantId, 'owner');
     cnpj = randomCnpj();
@@ -215,15 +233,18 @@ describe.skipIf(!DATABASE_URL)('API — trilhas de auditoria e Book de fechament
      * O ponto de honestidade da onda: sem tabela oficial carregada as trilhas de
      * código não conferiram nada, e reportar `passed` afirmaria uma verificação
      * que não aconteceu.
+     *
+     * A asserção era condicional — lia a contagem e esperava `passed` ou
+     * `not_applicable` conforme o que encontrasse. Isso não era zelo: era
+     * convivência com a corrida de um outro arquivo que apagava `fiscal_codes`,
+     * tabela global sem coluna de tenant. Aquele delete saiu, e o caso vazio
+     * virou teste de unidade em `tests/fiscal/catalog/catalog-health.test.ts`.
+     * Aqui a fixture é semeada de forma aditiva, e a asserção é direta.
      */
-    it('trilha de código fica not_applicable quando a tabela oficial está vazia', async () => {
-      const { rows } = await pool.query<{ total: string }>(
-        'select count(*)::text as total from fiscal_codes',
-      );
-      const carregadas = Number(rows[0]!.total) > 0;
-
+    it('trilha de código confere quando a tabela oficial está carregada', async () => {
       const t = await trilha('cclasstrib_vs_cst');
-      expect(t.status).toBe(carregadas ? 'passed' : 'not_applicable');
+
+      expect(t.status).toBe('passed');
     });
 
     it('o relatório declara se as tabelas de referência estavam carregadas', async () => {
