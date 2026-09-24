@@ -52,6 +52,13 @@ jobs:
       - name: Typecheck (src + tests)
         run: npm run lint
 
+      # Dependência com vulnerabilidade conhecida é o caminho de entrada mais
+      # barato num sistema que custodia certificado A1 de terceiro. Falha em
+      # `high` e `critical`; `moderate` não trava o build para não virar ruído
+      # que todo mundo aprende a ignorar.
+      - name: Vulnerabilidade em dependência
+        run: npm audit --audit-level=high
+
       - name: Build
         run: npm run build
 
@@ -82,6 +89,31 @@ jobs:
           npx tsx src/cli/audit.ts verify --strict \
             --tenant 11111111-1111-1111-1111-111111111111 \
             --cnpj 11222333000181
+
+  # Job próprio por causa do `fetch-depth: 0`.
+  #
+  # O `actions/checkout` traz só o último commit por padrão, e o gitleaks varre
+  # faixas de commit: com o histórico raso ele morre em `unknown revision` no
+  # `<sha>^`. Foi exatamente o que aconteceu quando este passo vivia dentro do
+  # build — e o comentário ali dizia "roda no histórico inteiro", que era falso.
+  #
+  # Clonar o histórico inteiro custa tempo, então custa só aqui, e não no job que
+  # compila e roda a suíte.
+  segredos:
+    name: Segredo no repositório
+    runs-on: ubuntu-latest
+
+    steps:
+      # Segredo commitado não é hipótese neste projeto: o `.env` do frontend
+      # ficou versionado por meses (só com variáveis públicas, mas sem nada
+      # impedindo a próxima).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   contract:
     name: Contrato OpenAPI

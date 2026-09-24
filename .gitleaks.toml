@@ -1,0 +1,36 @@
+# Configuração do gitleaks.
+#
+# A varredura roda no histórico inteiro, e três achados são falsos positivos.
+# Cada um está liberado pelo caminho ou pelo commit exato, e **não** pela
+# desativação da regra: uma allowlist larga transforma o controle em carimbo, que
+# é pior do que não ter controle nenhum — dá a sensação de que alguém está
+# olhando.
+#
+# Ao acrescentar entrada aqui, escreva por que o achado não é segredo. Se não
+# souber escrever, provavelmente é segredo.
+
+title = "audit"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Falsos positivos conferidos um a um"
+
+paths = [
+  # Fixtures de um teste que lê `.env`: o arquivo existe justamente para exercitar
+  # o parse de valores com formato de segredo. São valores inventados — a chave
+  # "JWT" termina em `abc==` e a mestra é uma frase.
+  '''tests/config/dotenv\.test\.ts''',
+
+  # Documentação dos agentes, com exemplos de chamada. O achado é o literal
+  # `"ed25519_private_key"`, que é o nome do parâmetro escrito como exemplo.
+  '''\.claude/agents/.*\.md''',
+]
+
+commits = [
+  # A regra `curl-auth-header` disparou em
+  # `curl -s https://status.supabase.com/api/v2/incidents/unresolved.json`,
+  # uma URL pública de status, sem cabeçalho de autenticação nenhum.
+  "fa1d40f6de6ed4c5ff3e2ed0ded1e5038c9d1022",
+]

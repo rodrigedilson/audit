@@ -18,6 +18,10 @@ coverage.xml
 
 # === Node.js ===
 node_modules/
+# Sem a barra também: com ela o padrão casa só diretório, e um symlink chamado
+# `node_modules` — que se cria à mão para reaproveitar dependências entre
+# worktrees — passava direto por um `git add -A`. Aconteceu.
+node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
