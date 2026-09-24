@@ -44,7 +44,7 @@ outro controle; estão abertos.
 
 | Lacuna | Consequência | Esforço |
 |---|---|---|
-| **Backup com restauração testada** | O Supabase faz backup; **ninguém nunca restaurou**. Backup não testado é hipótese, não controle. É a lacuna mais séria da lista | 4–8h |
+| **Backup com restauração testada** | O Supabase faz backup; **ninguém nunca restaurou**. Backup não testado é hipótese, não controle. É a lacuna mais séria da lista. A ferramenta de conferência já existe ([`conferir-restauracao.ts`](../../scripts/conferir-restauracao.ts), procedimento abaixo); falta executar o ensaio contra um backup de verdade | 1–2h |
 | **Rate limit nas rotas autenticadas** | As rotas públicas já têm limite: login (5/min e 20/h, por IP e por e-mail), calculadora (30/min), `/plans` (60/min) e diagnóstico público (rajada + quota diária no banco). Falta limitar as autenticadas, por token, contra enumeração de CNPJ. O limitador é em memória por processo: suficiente com uma instância, e com mais de uma o limite efetivo multiplica pelo número de instâncias | 2h |
 | **Revisão de acesso** | Não há registro de quem tem acesso a Doppler, Supabase, Render e GitHub, nem revisão periódica. `GET /v1/users` lista o acesso ao produto, não à infraestrutura | 2h + recorrência |
 | **MFA obrigatório nos consoles** | Não verificado nem exigido nos provedores | 1h |
@@ -66,6 +66,48 @@ resto:
   certo" de "não conferi" em quatro módulos, e a tela não colapsa os dois. Numa
   auditoria isso aparece como maturidade de controle, não como funcionalidade.
 - **O PFX nunca sai.** Não existe rota de download; a ausência é o controle.
+
+## Ensaio de restauração
+
+O procedimento existe para que a lacuna se feche com **evidência**, e não com a
+afirmação de que alguém restaurou uma vez. Quem repetir isto daqui a um ano tem
+de chegar ao mesmo resultado sem perguntar nada a ninguém.
+
+A conferência aproveita o que este produto tem de incomum: o log é append-only e
+a sequência é densa por `(tenant_id, cnpj)`. Um log restaurado ou é **idêntico**
+ao de origem, evento por evento, ou está errado — não há meio-termo a
+interpretar, e por isso o resultado é binário.
+
+1. No painel do Supabase, restaure o backup mais recente **num projeto novo**.
+   Nunca por cima do de produção: se a restauração vier ruim, o ensaio teria
+   destruído o que ele existe para proteger.
+
+2. Pegue a string de conexão do projeto restaurado e rode:
+
+   ```bash
+   ORIGEM_DATABASE_URL="$(doppler secrets get DATABASE_URL --plain --project audit --config prd)"    RESTAURADO_DATABASE_URL='postgresql://…projeto-restaurado…'      npx tsx scripts/conferir-restauracao.ts
+   ```
+
+   As duas conexões abrem em transação somente-leitura. O script recusa rodar
+   com as duas URLs iguais e recusa passar sobre um banco sem eventos — nos dois
+   casos ele "passaria" sem ter comparado nada, que é pior do que falhar.
+
+3. Guarde a saída com a data. Uma auditoria pede a evidência, não a lembrança.
+
+4. Apague o projeto restaurado.
+
+O que é conferido, e por quê:
+
+| Conferência | O que pega |
+|---|---|
+| Gatilho `events_append_only` e índice único de `event_id` | Restauração que perdeu o gatilho aceita `update` no log, e o banco deixa de ser trilha de defesa **sem nenhum sintoma visível** |
+| Digest SHA-256 do fluxo de eventos, por escopo | Alteração de conteúdo ou de ordem que a contagem não vê. A mensagem distingue "a contagem bate e o conteúdo não — é alteração, não perda" de perda de evento |
+| Hash de projeção, por escopo | O mesmo hash que o cliente vê na tela e que `POST /verify` recalcula |
+
+A ferramenta foi exercitada contra uma cópia real de 86.312 eventos em 27.860
+escopos: a cópia fiel passa, e as três adulterações testadas — gatilho removido,
+um `payload` alterado e um evento apagado — foram todas acusadas, cada uma com
+sua mensagem.
 
 ## Ordem sugerida
 
