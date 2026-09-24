@@ -22,6 +22,7 @@ const ACTION_TO_STATE: Partial<Record<FiscalAction, PeriodState>> = {
 const MUTATING_ACTIONS: readonly FiscalAction[] = [
   'doc.received',
   'doc.manifested',
+  'doc.cancelled',
   'sped.imported',
   'bank.statement.imported',
   'item.classified',

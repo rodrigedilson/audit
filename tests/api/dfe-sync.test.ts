@@ -18,7 +18,7 @@ import type { CredencialA1 } from '../../src/fiscal/portfolio/certificate-vault.
 import { computeCheckDigit } from '../../src/fiscal/ingestion/access-key.js';
 import { createClient, createMembership, createTenant, randomCnpj } from '../helpers/db.js';
 import { pfxDeTeste } from '../helpers/certificado.js';
-import { respostaDistribuicao, respostaEvento, resNFe } from '../helpers/sefaz.js';
+import { procEventoNFe, resEvento, respostaDistribuicao, respostaEvento, resNFe } from '../helpers/sefaz.js';
 
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 const JWT_SECRET = 'segredo-de-teste-que-nao-vai-para-producao';
@@ -399,6 +399,140 @@ describe.skipIf(!DATABASE_URL)('API — coleta de DF-e na SEFAZ (ADR-006)', () =
 
       expect(job.status).toBe('failed');
       expect(job.error).toMatch(/593/);
+    });
+
+    describe('cancelamento', () => {
+      const liberar = () =>
+        pool.query('update dfe_sync_state set blocked_until = null where tenant_id = $1::uuid and cnpj = $2::char(14)', [tenantId, cnpj]);
+
+      const documento = async (k: string) =>
+        (
+          await pool.query<{ cancelled_at: Date | null; cancel_protocol: string | null; cancel_event_seq: string | null }>(
+            'select cancelled_at, cancel_protocol, cancel_event_seq from documents where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3',
+            [tenantId, cnpj, k],
+          )
+        ).rows[0]!;
+
+      const lote = (...docs: { nsu: string; schema: string; xml: string }[]) =>
+        respostaDistribuicao('138', docs, '000000000000009', '000000000000009');
+
+      /** Antes, o evento era só contado, e a apuração somava a nota cancelada. */
+      it('nota ingerida e depois cancelada vira doc.cancelled e sai das somas', async () => {
+        await abrirCompetencia();
+        const k = chave(fornecedor, '30');
+        sefaz.distribuicoes = [lote({ nsu: '1', schema: 'procNFe_v4.00.xsd', xml: procNFe(fornecedor, cnpj, '30') })];
+        await coletar();
+        await liberar();
+
+        sefaz.distribuicoes = [lote({ nsu: '2', schema: 'procEventoNFe_v1.00.xsd', xml: procEventoNFe(k) })];
+        const job = await coletar();
+
+        expect((job.result as Record<string, number>).cancellations).toBe(1);
+        const cancelados = await eventos('doc.cancelled');
+        expect(cancelados).toHaveLength(1);
+        expect(cancelados[0]!.payload).toMatchObject({ access_key: k, tp_evento: '110111', protocol: '135270000009999' });
+        const d = await documento(k);
+        expect(d.cancelled_at).not.toBeNull();
+        expect(d.cancel_protocol).toBe('135270000009999');
+
+        const prova = (await call('GET', `/v1/clients/${cnpj}/periods/2027-11/proof`)).json();
+        expect(prova.documents).toMatchObject({ inbound: 0, total: 0, cancelled: 1 });
+        const lista = (await call('GET', `/v1/clients/${cnpj}/documents`)).json();
+        expect(lista.items[0].cancelled_at).not.toBeNull();
+      });
+
+      it('cancelamento que chega no mesmo lote da nota, antes dela, também se aplica', async () => {
+        await abrirCompetencia();
+        const k = chave(fornecedor, '31');
+        sefaz.distribuicoes = [
+          lote(
+            { nsu: '1', schema: 'resEvento_v1.01.xsd', xml: resEvento(k) },
+            { nsu: '2', schema: 'procNFe_v4.00.xsd', xml: procNFe(fornecedor, cnpj, '31') },
+          ),
+        ];
+
+        const job = await coletar();
+
+        expect(job).toMatchObject({ status: 'done', accepted: 1 });
+        expect((job.result as Record<string, number>).cancellations).toBe(1);
+        expect((await documento(k)).cancelled_at).not.toBeNull();
+      });
+
+      /**
+       * INV-001: número confirmado não muda por baixo. O cancelamento fica como
+       * pendência de retificação, sem output.rejected a cada coleta.
+       */
+      it('competência confirmada não muda: o cancelamento vira pendência de retificação', async () => {
+        await abrirCompetencia();
+        const k = chave(fornecedor, '32');
+        sefaz.distribuicoes = [lote({ nsu: '1', schema: 'procNFe_v4.00.xsd', xml: procNFe(fornecedor, cnpj, '32') })];
+        await coletar();
+        await liberar();
+        // Confirmada pelo caminho real: apura, lê o hash e confirma.
+        const auth = { authorization: `Bearer ${await token(owner)}` };
+        await app.inject({ method: 'POST', url: `/v1/clients/${cnpj}/assessments/2027-11`, headers: auth });
+        // A máquina de estados exige reconciled antes de confirmed.
+        await pool.query(
+          `select append_event($1::uuid, $2::char(14), gen_random_uuid(), 'assessment.compared',
+                               '2027-11', $3::text, '2027-11', now(), '0.5.0', '{}'::jsonb)`,
+          [tenantId, cnpj, owner],
+        );
+        const atual = (await app.inject({ method: 'POST', url: `/v1/clients/${cnpj}/verify`, headers: auth })).json();
+        const confirmada = await app.inject({
+          method: 'POST',
+          url: `/v1/clients/${cnpj}/assessments/2027-11/confirm`,
+          headers: auth,
+          payload: { projection_hash: atual.stored_hash },
+        });
+        if (confirmada.statusCode !== 200) throw new Error(`confirmação: ${confirmada.statusCode} ${confirmada.body}`);
+
+        sefaz.distribuicoes = [lote({ nsu: '2', schema: 'procEventoNFe_v1.00.xsd', xml: procEventoNFe(k) })];
+        const job = await coletar();
+
+        expect((job.result as Record<string, number>).cancellations_blocked).toBe(1);
+        expect(await eventos('doc.cancelled')).toHaveLength(0);
+        expect(await eventos('output.rejected')).toHaveLength(0);
+        expect((await documento(k)).cancelled_at).toBeNull();
+        const dfe = (await call('GET', `/v1/clients/${cnpj}/dfe`)).json();
+        expect(dfe.cancellations_needing_rectification).toEqual([
+          expect.objectContaining({ access_key: k, tp_evento: '110111', protocol: '135270000009999' }),
+        ]);
+      });
+
+      it('evento sem vínculo (136) fica guardado, e não cancela', async () => {
+        await abrirCompetencia();
+        const k = chave(fornecedor, '33');
+        sefaz.distribuicoes = [
+          lote(
+            { nsu: '1', schema: 'procNFe_v4.00.xsd', xml: procNFe(fornecedor, cnpj, '33') },
+            { nsu: '2', schema: 'procEventoNFe_v1.00.xsd', xml: procEventoNFe(k, '136') },
+          ),
+        ];
+
+        const job = await coletar();
+
+        expect((job.result as Record<string, number>).cancellations).toBe(0);
+        expect((await documento(k)).cancelled_at).toBeNull();
+        const { rows } = await pool.query(
+          'select cstat, blocked_reason from dfe_events where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3',
+          [tenantId, cnpj, k],
+        );
+        expect(rows).toEqual([{ cstat: '136', blocked_reason: expect.stringMatching(/136/) }]);
+      });
+
+      it('cancelamento de nota que ainda não chegou espera a coleta seguinte', async () => {
+        await abrirCompetencia();
+        const k = chave(fornecedor, '34');
+        sefaz.distribuicoes = [lote({ nsu: '1', schema: 'procEventoNFe_v1.00.xsd', xml: procEventoNFe(k) })];
+        expect(((await coletar()).result as Record<string, number>).cancellations).toBe(0);
+        await liberar();
+
+        sefaz.distribuicoes = [lote({ nsu: '2', schema: 'procNFe_v4.00.xsd', xml: procNFe(fornecedor, cnpj, '34') })];
+        const job = await coletar();
+
+        expect((job.result as Record<string, number>).cancellations).toBe(1);
+        expect((await documento(k)).cancelled_at).not.toBeNull();
+      });
     });
 
     /** Job inserido por fora da API, sem CNPJ, não pode travar o worker. */

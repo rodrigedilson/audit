@@ -327,6 +327,7 @@ export class CreditService {
       `select access_key, number, issuer_cnpj, issuer_name, issued_at, total_cents
          from documents
         where tenant_id = $1::uuid and cnpj = $2::char(14) and direction = 'inbound'
+          and cancelled_at is null
         order by issued_at`,
       [scope.tenantId, scope.cnpj],
     );
@@ -402,7 +403,7 @@ export class CreditService {
            on m.tenant_id = d.tenant_id and m.cnpj = d.cnpj and m.access_key = d.access_key
          left join bank_statement_lines l on l.id = m.line_id
         where d.tenant_id = $1::uuid and d.cnpj = $2::char(14)
-          and d.direction = 'inbound'
+          and d.direction = 'inbound' and d.cancelled_at is null
           and ($3::char(7) is null or d.period = $3::char(7))
         order by d.issued_at, d.access_key, i.line`,
       [scope.tenantId, scope.cnpj, period ?? null],

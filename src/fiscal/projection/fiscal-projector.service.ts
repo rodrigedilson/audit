@@ -112,6 +112,9 @@ export class FiscalProjectorService {
       case 'doc.received':
         projection.stats.documents_received += 1;
         break;
+      case 'doc.cancelled':
+        projection.stats.documents_cancelled = (projection.stats.documents_cancelled ?? 0) + 1;
+        break;
 
       // -------------------------------------------------- catalog (Onda 5)
       case 'item.classified':

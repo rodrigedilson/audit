@@ -160,8 +160,9 @@ export async function registerEventRoutes(app: FastifyInstance, deps: ApiDeps): 
         throw new NotFoundError(`Competência ${period} não existe para este CNPJ.`);
       }
 
-      const { rows: documentos } = await deps.pool.query<{ direction: string; total: string }>(
-        `select direction, count(*) as total
+      const { rows: documentos } = await deps.pool.query<{ direction: string; total: string; canceladas: string }>(
+        `select direction, count(*) filter (where cancelled_at is null) as total,
+                count(*) filter (where cancelled_at is not null) as canceladas
            from documents
           where tenant_id = $1::uuid and cnpj = $2 and period = $3::char(7)
           group by direction`,
@@ -169,6 +170,7 @@ export async function registerEventRoutes(app: FastifyInstance, deps: ApiDeps): 
       );
 
       const porDirecao = new Map(documentos.map((row) => [row.direction, Number(row.total)]));
+      const canceladas = documentos.reduce((soma, row) => soma + Number(row.canceladas), 0);
 
       // Eventos da competência: é o que liga o hash ao trabalho feito no mês.
       const eventosDaCompetencia = events.filter((evento) => evento.period === period);
@@ -218,6 +220,9 @@ export async function registerEventRoutes(app: FastifyInstance, deps: ApiDeps): 
           inbound: porDirecao.get('inbound') ?? 0,
           outbound: porDirecao.get('outbound') ?? 0,
           total: [...porDirecao.values()].reduce((soma, n) => soma + n, 0),
+          // Canceladas na SEFAZ: ficam na base e fora das somas, e aparecem à
+          // parte para o total bater com o que foi recebido.
+          cancelled: canceladas,
         },
       });
     },

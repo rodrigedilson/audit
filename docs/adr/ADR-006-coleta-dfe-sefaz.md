@@ -86,7 +86,15 @@ resultado e `blocked_until`. A SEFAZ pune consumo indevido:
 - **`resNFe`** de nota em que o CNPJ é destinatário: ciência da operação, uma
   por chave, com teto por execução. A resposta `573` (duplicidade) conta como
   sucesso: a ciência já existia.
-- **Eventos** (`resEvento`, `procEventoNFe`) ficam só na contagem, nesta onda.
+- **Eventos** (`resEvento`, `procEventoNFe`) ficam todos em `dfe_events`,
+  aplicados ou não. O cancelamento (110111, e 110112 por substituição) com
+  `cStat` 135 ou 155 de nota que está na base vira `doc.cancelled`: a nota fica
+  em `documents`, marcada em `cancelled_at`, e sai das somas (apuração, crédito,
+  dossiê, simulador, propagação). Cancelamento de nota que ainda não chegou
+  espera a coleta seguinte. Em competência **confirmada** nada muda (INV-001): o
+  evento fica com `blocked_reason` e aparece em `GET /clients/{cnpj}/dfe` como
+  `cancellations_needing_rectification`, e a correção é a retificação. Os demais
+  eventos só ficam guardados.
 
 Cada chamada à SEFAZ emite `certificate.used` (`dfe_distribution` ou
 `manifestation`, com o resultado), em nome de **quem pediu** a sincronização.

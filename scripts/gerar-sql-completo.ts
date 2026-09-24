@@ -47,9 +47,14 @@ const TITULOS: Record<string, string> = {
   '20260924200000_teto_da_assinatura.sql': 'teto-da-assinatura',
   '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
   '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
+  '20260926100000_cancelamento_de_nfe.sql': 'cancelamento-de-nfe',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260926100000_cancelamento_de_nfe.sql':
+    'Cancelamento de NF-e pela distribuição: a nota cancelada fica marcada e\n' +
+    '-- sai das somas, e todo evento trazido pela SEFAZ é guardado, inclusive o\n' +
+    '-- que não pode ser aplicado por a competência já estar confirmada.',
   '20260925120000_versao_das_faixas.sql':
     'Escada de faixas versionada por data: vale a de maior effective_from até\n' +
     '-- hoje, inteira. Agendar uma escada é inserir as faixas com data futura.',

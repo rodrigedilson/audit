@@ -5,6 +5,7 @@ import { IngestionService } from '../../fiscal/ingestion/ingestion.service.js';
 import { readXmlUpload } from '../multipart.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 import { PADRAO_DA_CHAVE } from '../../fiscal/ingestion/access-key.js';
+import { CANCELAMENTO_EXIGE_RETIFICACAO } from '../../fiscal/dfe/dfe-sync.service.js';
 
 interface CnpjParams {
   cnpj: string;
@@ -92,7 +93,7 @@ export async function registerIngestionRoutes(
       const { rows } = await deps.pool.query(
         `select access_key, model, direction, series, number, issued_at, period,
                 counterparty_cnpj, counterparty_name, total_cents, has_reform_group,
-                event_seq, count(*) over () as total
+                event_seq, cancelled_at, count(*) over () as total
            from documents
           where tenant_id = $1::uuid and cnpj = $2::char(14)
             and ($3::char(7) is null or period = $3::char(7))
@@ -148,7 +149,7 @@ export async function registerIngestionRoutes(
       const { rows } = await deps.pool.query(
         `select access_key, model, direction, series, number, issued_at, period,
                 issuer_cnpj, issuer_name, counterparty_cnpj, counterparty_name,
-                total_cents, has_reform_group, event_seq
+                total_cents, has_reform_group, event_seq, cancelled_at, cancel_protocol
            from documents
           where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3::char(44)`,
         [scope.tenantId, scope.cnpj, accessKey],
@@ -273,7 +274,7 @@ export async function registerIngestionRoutes(
     },
     async (request, reply) => {
       const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
-      const [estado, resumos, documentos] = await Promise.all([
+      const [estado, resumos, documentos, eventos] = await Promise.all([
         deps.pool.query(
           `select ult_nsu, max_nsu, last_cstat, last_motivo, last_run_at, blocked_until
              from dfe_sync_state where tenant_id = $1::uuid and cnpj = $2::char(14)`,
@@ -291,6 +292,13 @@ export async function registerIngestionRoutes(
                   count(*) filter (where ingest_error is not null)::text as recusados
              from dfe_documents where tenant_id = $1::uuid and cnpj = $2::char(14)`,
           [scope.tenantId, scope.cnpj],
+        ),
+        deps.pool.query<{ access_key: string; tp_evento: string; protocolo: string | null; dh_evento: Date | null }>(
+          `select access_key, tp_evento, protocolo, dh_evento
+             from dfe_events
+            where tenant_id = $1::uuid and cnpj = $2::char(14) and blocked_reason = $3
+            order by dh_evento`,
+          [scope.tenantId, scope.cnpj, CANCELAMENTO_EXIGE_RETIFICACAO],
         ),
       ]);
       const d = documentos.rows[0]!;
@@ -316,6 +324,14 @@ export async function registerIngestionRoutes(
           awaiting_period_open: Number(d.aguardando),
           rejected_by_pipeline: Number(d.recusados),
         },
+        // Nota cancelada na SEFAZ depois de a competência ser confirmada. O número
+        // confirmado não muda sozinho (INV-001): a correção é a retificação.
+        cancellations_needing_rectification: eventos.rows.map((x) => ({
+          access_key: x.access_key,
+          tp_evento: x.tp_evento,
+          protocol: x.protocolo,
+          cancelled_at: x.dh_evento,
+        })),
       });
     },
   );
