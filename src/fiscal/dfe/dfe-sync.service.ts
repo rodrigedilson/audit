@@ -8,7 +8,10 @@ import {
   NSU_ZERO,
   cienciaRegistrada,
   dataHoraBrasilia,
+  eventoVinculado,
+  lerEventoNfe,
   lerResumoNfe,
+  TP_CANCELAMENTO,
   type RespostaDistribuicao,
 } from './dfe-xml.js';
 import type { SefazDfeGateway } from './sefaz-gateway.js';
@@ -69,8 +72,15 @@ export interface SyncSummary {
   ciencias: number;
   ciencia_failures: number;
   events_seen: number;
+  /** Cancelamentos aplicados: viraram `doc.cancelled` e saíram das somas. */
+  cancellations: number;
+  /** Cancelamentos de competência confirmada: ficam como pendência de retificação. */
+  cancellations_blocked: number;
   blocked_until: string | null;
 }
+
+/** Motivo gravado em `dfe_events` quando o cancelamento esbarra no INV-001. */
+export const CANCELAMENTO_EXIGE_RETIFICACAO = 'competência confirmada: exige retificação';
 
 export class DfeSyncService {
   private readonly vault: CertificateVault;
@@ -214,6 +224,8 @@ export class DfeSyncService {
       ciencias: 0,
       ciencia_failures: 0,
       events_seen: 0,
+      cancellations: 0,
+      cancellations_blocked: 0,
       blocked_until: null,
     };
 
@@ -257,6 +269,9 @@ export class DfeSyncService {
         } else if (doc.esquema === 'resNFe') {
           await this.guardarResumo(scope, doc.nsu, doc.xml);
           resumo.summaries += 1;
+        } else if (doc.esquema === 'resEvento' || doc.esquema === 'procEventoNFe') {
+          await this.guardarEvento(scope, doc.nsu, doc.xml);
+          resumo.events_seen += 1;
         } else {
           resumo.events_seen += 1;
         }
@@ -280,6 +295,10 @@ export class DfeSyncService {
     resumo.rejected_documents = ingestao.rejected;
     resumo.already_present = ingestao.alreadyPresent;
     resumo.awaiting_period = ingestao.awaitingPeriod;
+
+    // Depois da ingestão: o cancelamento pode ter chegado no mesmo lote da nota,
+    // ou antes dela, e só se aplica a nota que já está na base.
+    await this.aplicarCancelamentos(scope, orchestrator, actor, resumo);
 
     await this.manifestar(scope, credencial, orchestrator, actor, resumo);
 
@@ -342,6 +361,104 @@ export class DfeSyncService {
         resumo.ciencia_failures += 1;
       }
     }
+  }
+
+  /**
+   * Cancelamento homologado de nota que está na base vira `doc.cancelled`, e a
+   * nota sai das somas. Competência confirmada não muda (INV-001): o evento fica
+   * em `dfe_events` com o motivo, e a correção é a retificação. A checagem é
+   * feita antes de propor, para não gravar um `output.rejected` a cada coleta.
+   * Cancelamento de nota que ainda não chegou espera a coleta seguinte.
+   */
+  private async aplicarCancelamentos(
+    scope: EventScope,
+    orchestrator: FiscalOrchestratorService,
+    actor: string,
+    resumo: SyncSummary,
+  ): Promise<void> {
+    const { rows } = await this.pool.query<{
+      access_key: string;
+      tp_evento: string;
+      n_seq_evento: number;
+      protocolo: string | null;
+      dh_evento: Date | null;
+      period: string;
+      state: string | null;
+    }>(
+      `select e.access_key, e.tp_evento, e.n_seq_evento, e.protocolo, e.dh_evento, d.period, p.state
+         from dfe_events e
+         join documents d
+           on d.tenant_id = e.tenant_id and d.cnpj = e.cnpj and d.access_key = e.access_key
+         left join periods p
+           on p.tenant_id = d.tenant_id and p.cnpj = d.cnpj and p.period = d.period
+        where e.tenant_id = $1::uuid and e.cnpj = $2::char(14)
+          and e.applied_at is null and e.blocked_reason is null
+          and e.tp_evento = any($3::text[])
+          and (e.cstat is null or e.cstat in ('135', '155'))
+          and d.cancelled_at is null
+        order by e.received_at`,
+      [scope.tenantId, scope.cnpj, TP_CANCELAMENTO],
+    );
+
+    const aplicados = new Set<string>();
+    for (const e of rows) {
+      const chave = e.access_key.trim();
+      // Cancelamento e cancelamento por substituição da mesma nota: um basta.
+      if (aplicados.has(chave)) continue;
+
+      if (e.state === 'confirmed') {
+        await this.bloquearEvento(scope, e, CANCELAMENTO_EXIGE_RETIFICACAO);
+        resumo.cancellations_blocked += 1;
+        continue;
+      }
+
+      const r = await orchestrator.processIntention({
+        action: 'doc.cancelled',
+        task_id: chave,
+        actor,
+        period: e.period,
+        payload: {
+          access_key: chave,
+          tp_evento: e.tp_evento,
+          n_seq_evento: e.n_seq_evento,
+          protocol: e.protocolo,
+          cancelled_at: e.dh_evento === null ? null : e.dh_evento.toISOString(),
+        },
+      });
+      if (!r.accepted) {
+        await this.bloquearEvento(scope, e, r.rejectionReason ?? 'recusado pelo pipeline');
+        resumo.cancellations_blocked += 1;
+        continue;
+      }
+
+      await this.pool.query(
+        `update documents
+            set cancelled_at = coalesce($4::timestamptz, now()), cancel_protocol = $5, cancel_event_seq = $6
+          where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3`,
+        [scope.tenantId, scope.cnpj, chave, e.dh_evento, e.protocolo, r.event!.event_seq],
+      );
+      await this.pool.query(
+        `update dfe_events set applied_at = now()
+          where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3
+            and tp_evento = any($4::text[]) and applied_at is null`,
+        [scope.tenantId, scope.cnpj, chave, TP_CANCELAMENTO],
+      );
+      aplicados.add(chave);
+      resumo.cancellations += 1;
+    }
+  }
+
+  private async bloquearEvento(
+    scope: EventScope,
+    e: { access_key: string; tp_evento: string; n_seq_evento: number },
+    motivo: string,
+  ): Promise<void> {
+    await this.pool.query(
+      `update dfe_events set blocked_reason = $6
+        where tenant_id = $1::uuid and cnpj = $2::char(14) and access_key = $3
+          and tp_evento = $4 and n_seq_evento = $5`,
+      [scope.tenantId, scope.cnpj, e.access_key, e.tp_evento, e.n_seq_evento, motivo],
+    );
   }
 
   // ------------------------------------------------------------ apoio
@@ -410,6 +527,32 @@ export class DfeSyncService {
        values ($1::uuid, $2::char(14), $3, $4, $5, $6, $7::timestamptz, $8)
        on conflict (tenant_id, cnpj, access_key) do nothing`,
       [scope.tenantId, scope.cnpj, r.accessKey, nsu, r.issuerCnpj, r.issuerName, r.issuedAt, r.totalCents],
+    );
+  }
+
+  /**
+   * Todo evento fica guardado, aplicado ou não. Evento ilegível não trava a
+   * coleta: o NSU já avançou, e ele segue contado em `events_seen`.
+   */
+  private async guardarEvento(scope: EventScope, nsu: string, xml: string): Promise<void> {
+    let e;
+    try {
+      e = lerEventoNfe(xml);
+    } catch {
+      return;
+    }
+    // Evento que não vale contra a nota (136, rejeição) fica registrado já com o
+    // motivo, e não é tentado.
+    const motivo = eventoVinculado(e) ? null : `evento sem vínculo com a NF-e: cStat ${e.cStat ?? '?'}`;
+    await this.pool.query(
+      `insert into dfe_events (tenant_id, cnpj, access_key, tp_evento, n_seq_evento, nsu, cstat,
+                               protocolo, dh_evento, xml, blocked_reason)
+       values ($1::uuid, $2::char(14), $3, $4, $5, $6, $7, $8, $9::timestamptz, $10, $11)
+       on conflict (tenant_id, cnpj, access_key, tp_evento, n_seq_evento) do update
+         set cstat = coalesce(excluded.cstat, dfe_events.cstat),
+             protocolo = coalesce(excluded.protocolo, dfe_events.protocolo),
+             xml = case when excluded.cstat is not null then excluded.xml else dfe_events.xml end`,
+      [scope.tenantId, scope.cnpj, e.accessKey, e.tpEvento, e.nSeqEvento, nsu, e.cStat, e.protocolo, e.dhEvento, xml, motivo],
     );
   }
 

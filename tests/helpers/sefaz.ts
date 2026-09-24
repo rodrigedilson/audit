@@ -47,3 +47,28 @@ export function respostaEvento(cStat: string, cStatLote = '128'): string {
   );
 }
 
+
+/** Evento de NF-e completo, como a distribuição o traz (cancelamento por padrão). */
+export function procEventoNFe(chave: string, cStat = '135', tpEvento = '110111', nProt = '135270000009999'): string {
+  return (
+    '<procEventoNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><evento versao="1.00">' +
+    `<infEvento Id="ID${tpEvento}${chave}01"><cOrgao>35</cOrgao><tpAmb>1</tpAmb><CNPJ>01234567000100</CNPJ>` +
+    `<chNFe>${chave}</chNFe><dhEvento>2027-11-16T09:00:00-03:00</dhEvento><tpEvento>${tpEvento}</tpEvento>` +
+    '<nSeqEvento>1</nSeqEvento><verEvento>1.00</verEvento><detEvento versao="1.00">' +
+    '<descEvento>Cancelamento</descEvento><nProt>135270000000001</nProt><xJust>Erro na emissao da nota</xJust>' +
+    '</detEvento></infEvento></evento><retEvento versao="1.00"><infEvento><tpAmb>1</tpAmb><verAplic>SP</verAplic>' +
+    `<cOrgao>35</cOrgao><cStat>${cStat}</cStat><xMotivo>Evento registrado</xMotivo><chNFe>${chave}</chNFe>` +
+    `<tpEvento>${tpEvento}</tpEvento><nSeqEvento>1</nSeqEvento><dhRegEvento>2027-11-16T09:00:05-03:00</dhRegEvento>` +
+    `<nProt>${nProt}</nProt></infEvento></retEvento></procEventoNFe>`
+  );
+}
+
+/** Resumo de evento: só existe para evento já registrado, e não traz cStat. */
+export function resEvento(chave: string, tpEvento = '110111'): string {
+  return (
+    `<resEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><cOrgao>35</cOrgao><CNPJ>01234567000100</CNPJ>` +
+    `<chNFe>${chave}</chNFe><dhEvento>2027-11-16T09:00:00-03:00</dhEvento><tpEvento>${tpEvento}</tpEvento>` +
+    '<nSeqEvento>1</nSeqEvento><xEvento>Cancelamento</xEvento><dhRecbto>2027-11-16T09:00:05-03:00</dhRecbto>' +
+    '<nProt>135270000009998</nProt></resEvento>'
+  );
+}

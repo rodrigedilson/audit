@@ -216,7 +216,8 @@ export class SimulationService {
               count(distinct period)::text as meses
          from documents
         where tenant_id = $1::uuid and cnpj = $2::char(14)
-          and period >= $3::char(7) and period <= $4::char(7)`,
+          and period >= $3::char(7) and period <= $4::char(7)
+          and cancelled_at is null`,
       [scope.tenantId, scope.cnpj, request.base_from, request.base_to],
     );
 

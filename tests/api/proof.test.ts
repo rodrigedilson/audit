@@ -100,7 +100,7 @@ describe.skipIf(!DATABASE_URL)('API — comprovante de integridade da competênc
 
     expect(body).toMatchObject({ cnpj, period: PERIODO, state: 'open', ok: true });
     expect(body.replayed_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(body.documents).toEqual({ inbound: 0, outbound: 0, total: 0 });
+    expect(body.documents).toEqual({ inbound: 0, outbound: 0, total: 0, cancelled: 0 });
     expect(body.confirmed_hash).toBeNull();
   });
 

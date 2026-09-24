@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   cienciaRegistrada,
   dataHoraBrasilia,
+  eventoVinculado,
+  lerEventoNfe,
   envelopeDistribuicao,
   lerRespostaDistribuicao,
   lerRespostaEvento,
@@ -12,7 +14,7 @@ import {
 import { SefazSoapClient, type TransporteSoap } from '../../../src/fiscal/dfe/sefaz-gateway.js';
 import { extrairCredencial, lerCredencial } from '../../../src/fiscal/portfolio/certificate-vault.js';
 import { pfxDeTeste } from '../../helpers/certificado.js';
-import { respostaDistribuicao, respostaEvento, resNFe } from '../../helpers/sefaz.js';
+import { procEventoNFe, resEvento, respostaDistribuicao, respostaEvento, resNFe } from '../../helpers/sefaz.js';
 
 const CHAVE = '35271112345678000195550010000000151234567890';
 
@@ -131,5 +133,40 @@ describe('SefazSoapClient', () => {
     expect(t.chamadas[0]!.url).toBe('https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx');
     expect(t.chamadas[0]!.corpo).toMatch(/<envEvento xmlns="http:\/\/www.portalfiscal.inf.br\/nfe" versao="1.00"><idLote>\d{1,15}<\/idLote><evento /);
     expect(t.chamadas[0]!.corpo).toContain('<SignatureValue>');
+  });
+});
+
+describe('distribuição — evento de NF-e', () => {
+  it('lê o cancelamento completo: tipo, sequência, cStat e o protocolo do evento', () => {
+    const e = lerEventoNfe(procEventoNFe(CHAVE));
+
+    expect(e).toEqual({
+      accessKey: CHAVE,
+      tpEvento: '110111',
+      nSeqEvento: 1,
+      cStat: '135',
+      // O do evento, e não o nProt da autorização que vem no detEvento.
+      protocolo: '135270000009999',
+      dhEvento: '2027-11-16T09:00:00-03:00',
+    });
+    expect(eventoVinculado(e)).toBe(true);
+  });
+
+  it('resEvento não traz cStat, e vale: só existe para evento registrado', () => {
+    const e = lerEventoNfe(resEvento(CHAVE));
+
+    expect(e).toMatchObject({ accessKey: CHAVE, tpEvento: '110111', cStat: null, protocolo: '135270000009998' });
+    expect(eventoVinculado(e)).toBe(true);
+  });
+
+  it('155 (fora de prazo) vale; 136 (sem vínculo com a NF-e) não', () => {
+    expect(eventoVinculado(lerEventoNfe(procEventoNFe(CHAVE, '155')))).toBe(true);
+    expect(eventoVinculado(lerEventoNfe(procEventoNFe(CHAVE, '136')))).toBe(false);
+  });
+
+  it('evento sem chave válida é recusado', () => {
+    expect(() => lerEventoNfe('<resEvento><chNFe>123</chNFe><tpEvento>110111</tpEvento></resEvento>')).toThrow(
+      RespostaSefazInvalidaError,
+    );
   });
 });

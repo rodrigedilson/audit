@@ -282,6 +282,7 @@ export async function documentos(
     `select direction, count(*)::text as total, coalesce(sum(total_cents), 0)::text as valor
        from documents
       where tenant_id = $1::uuid and cnpj = $2::char(14) and period = $3::char(7)
+        and cancelled_at is null
       group by direction`,
     [scope.tenantId, scope.cnpj, period],
   );
