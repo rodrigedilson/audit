@@ -15,6 +15,7 @@ import {
   type TrailsSummary,
 } from './audit-trails.js';
 import { renderBook, type Audience, type BookInput, type BookTraceLine } from './book-pdf.js';
+import type { CriterionRef } from '../shared/evaluation-criterion.js';
 
 export interface BookOptions {
   audience: Audience;
@@ -320,13 +321,23 @@ export class ReportingService {
       [scope.tenantId, scope.cnpj, period],
     );
 
-    return rows.map((r) => ({
-      reason: String(r.payload['reason'] ?? 'unknown'),
-      layer: Number(r.payload['validation_layer'] ?? 0),
-      details: String(r.payload['details'] ?? ''),
-      subject: String(r.payload['filename'] ?? r.task_id),
-      eventSeq: Number(r.event_seq),
-    }));
+    return rows.map((r) => {
+      // O critério viaja no payload do evento desde a onda do método pericial.
+      // Rejeição antiga não o tem, e rejeição de forma da requisição nunca terá
+      // — nos dois casos a trilha segue funcionando sem ele.
+      const criterion = r.payload['criterion'];
+
+      return {
+        reason: String(r.payload['reason'] ?? 'unknown'),
+        layer: Number(r.payload['validation_layer'] ?? 0),
+        details: String(r.payload['details'] ?? ''),
+        subject: String(r.payload['filename'] ?? r.task_id),
+        eventSeq: Number(r.event_seq),
+        ...(criterion === undefined || criterion === null
+          ? {}
+          : { criterion: criterion as CriterionRef }),
+      };
+    });
   }
 
   /**

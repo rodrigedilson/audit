@@ -1,4 +1,5 @@
 import type { RejectionReason } from '../../../fiscal/shared/fiscal-vocabulary.js';
+import type { EvaluationCriterion } from '../../../fiscal/shared/evaluation-criterion.js';
 
 export class ESAAError extends Error {
   constructor(
@@ -15,6 +16,21 @@ export class ValidationError extends ESAAError {
     public readonly layer: number,
     public readonly reason: RejectionReason,
     public readonly details: string,
+    /**
+     * Contra o quê se julgou. Opcional de propósito, e não por comodidade.
+     *
+     * Das 57 rejeições do repositório, 38 estão em rotas HTTP e recusam a forma
+     * da requisição — CNPJ malformado, arquivo ausente, competência fora do
+     * padrão. Essas não têm fonte normativa, e exigir uma produziria citação
+     * inventada, que é exatamente o defeito que o critério existe para
+     * corrigir.
+     *
+     * Onde há juízo — as 7 camadas do pipeline e, adiante, as verificações do
+     * teste de comprovação — o critério é obrigatório na prática porque a
+     * rejeição sem ele não explica nada ao contador. Ver
+     * `criterios-internos.ts`.
+     */
+    public readonly criterion?: EvaluationCriterion,
   ) {
     super(`Validation failed at layer ${layer}: ${reason} - ${details}`, 'VALIDATION_ERROR');
     this.name = 'ValidationError';

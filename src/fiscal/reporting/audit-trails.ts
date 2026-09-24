@@ -1,4 +1,5 @@
 import type { PeriodState } from '../shared/fiscal-vocabulary.js';
+import type { CriterionRef } from '../shared/evaluation-criterion.js';
 
 /**
  * Trilhas de auditoria: agrupam as inconsistências das 7 camadas em checagens
@@ -38,6 +39,12 @@ export interface TrailIssue {
   message: string;
   severity: Severity;
   layer?: number;
+  /**
+   * A norma ou invariante contra a qual isto foi julgado. É o que transforma a
+   * linha do Book de "o sistema recusou" em "recusou conforme X" — a diferença
+   * entre relatório e prova.
+   */
+  criterion?: CriterionRef;
   /** Notas emitidas afetadas, quando a origem sabe. */
   documentsAffected?: number;
   amountAtStakeCents?: number;
@@ -63,6 +70,8 @@ export interface RejectionRecord {
   details: string;
   subject: string;
   eventSeq: number;
+  /** Contra o quê se julgou. Ausente em rejeição de forma da requisição. */
+  criterion?: CriterionRef;
 }
 
 export interface ClassificationIssueRecord {
@@ -189,6 +198,7 @@ function coletar(definicao: TrailDefinition, input: TrailInput): TrailIssue[] {
           message: r.details,
           severity: definicao.defaultSeverity,
           layer: r.layer,
+          ...(r.criterion === undefined ? {} : { criterion: r.criterion }),
         }));
 
     case 'item_classification':
