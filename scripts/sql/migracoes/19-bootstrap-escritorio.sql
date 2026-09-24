@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 18 de 18: bootstrap do escritório
+-- audit — passo 19 de 19: bootstrap do escritório
 --
 -- Vincula seu usuário do Supabase Auth a um escritório, como owner.
 -- EDITE as duas linhas marcadas com CONFIGURE antes de executar.

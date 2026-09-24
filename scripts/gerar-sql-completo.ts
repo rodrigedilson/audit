@@ -40,9 +40,14 @@ const TITULOS: Record<string, string> = {
   '20260921190000_credit_dossier.sql': 'dossie-saldo-credor',
   '20260922100000_propagacao_de_item_nao_classificado.sql': 'correcao-propagacao',
   '20260924100000_ativacao_da_cobranca.sql': 'ativacao-da-cobranca',
+  '20260924130000_coleta_dfe.sql': 'coleta-dfe',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260924130000_coleta_dfe.sql':
+    'Coleta de DF-e na SEFAZ (ADR-006): formato da credencial no cofre, fila de\n' +
+    '-- jobs, estado do NSU por CNPJ, resumos para ciência e NF-e baixadas que\n' +
+    '-- esperam a competência abrir.',
   '20260924100000_ativacao_da_cobranca.sql':
     'Dados de cobrança do escritório (CPF/CNPJ, e-mail, forma de pagamento),\n' +
     '-- preenchidos quando o owner ativa a cobrança. Sem ativação não há\n' +
