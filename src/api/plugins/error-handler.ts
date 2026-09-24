@@ -4,6 +4,8 @@ import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { BillingSettingsMissingError } from '../../billing/billing.service.js';
 import { BillingConflictError, BillingInputError } from '../../billing/billing-activation.service.js';
 import { DfeSyncRefusedError } from '../../fiscal/dfe/dfe-sync.service.js';
+import { RateLimitedError } from './rate-limit.js';
+import { PublicInputError } from '../public-errors.js';
 import {
   ESAAError,
   IntegrityViolationError,
@@ -50,8 +52,35 @@ export function registerErrorHandler(app: FastifyInstance): void {
       return reply.code(409).send({ code: `dfe_${error.kind}`, message: error.message });
     }
 
+    /**
+     * Limite da rota pública de diagnóstico.
+     *
+     * `code` próprio, e não o mesmo 429 de limite de plano: são dois 429 com
+     * significados opostos, e mandar um visitante anônimo para a tela de
+     * upgrade seria absurdo. A tela bifurca por `code`, nunca por status.
+     */
+    if (error instanceof RateLimitedError) {
+      return reply
+        .code(429)
+        .header('retry-after', String(error.retryAfterSeconds))
+        .send({
+          code: 'rate_limited',
+          message: error.message,
+          retry_after_seconds: error.retryAfterSeconds,
+        });
+    }
+
     if (error instanceof BillingConflictError) {
       return reply.code(409).send({ code: 'billing_conflict', message: error.message });
+    }
+
+    /**
+     * Entrada malformada na superfície pública. `400` com a frase pronta, sem
+     * a camada e o motivo do pipeline: quem lê é um visitante anônimo, não um
+     * contador depurando um XML.
+     */
+    if (error instanceof PublicInputError) {
+      return reply.code(400).send({ code: 'bad_request', message: error.message });
     }
 
     if (error instanceof BillingInputError) {

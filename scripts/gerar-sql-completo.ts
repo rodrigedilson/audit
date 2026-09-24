@@ -42,12 +42,33 @@ const TITULOS: Record<string, string> = {
   '20260924100000_ativacao_da_cobranca.sql': 'ativacao-da-cobranca',
   '20260924130000_coleta_dfe.sql': 'coleta-dfe',
   '20260924150000_chave_alfanumerica.sql': 'chave-alfanumerica',
+  '20260924180000_faixas_de_volume.sql': 'faixas-de-volume',
+  '20260924190000_diagnostico_publico.sql': 'diagnostico-publico',
+  '20260924200000_teto_da_assinatura.sql': 'teto-da-assinatura',
+  '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260925100000_rotulos_de_feature.sql':
+    'Rótulo em PT-BR de cada feature do plano, para a tela de preço não\n' +
+    '-- inventar nomes, e a função que anexa o lead a um diagnóstico já feito,\n' +
+    '-- para a tela não reenviar os XMLs só para registrar o e-mail.',
   '20260924150000_chave_alfanumerica.sql':
     'Chave de acesso com CNPJ alfanumérico: letras nas 12 posições do CNPJ do\n' +
     '-- emitente. Troca toda restrição que ainda exija a chave só de dígitos.',
+  '20260924180000_faixas_de_volume.sql':
+    'Degressão por volume: faixas marginais de desconto por quantidade de CNPJs\n' +
+    '-- faturáveis, e a coluna do teto de assinatura. O desconto marginal é\n' +
+    '-- limitado a 50% por monotonicidade; acima disso quem carrega é o teto.',
+  '20260924190000_diagnostico_publico.sql':
+    'Métrica agregada do diagnóstico público de prontidão. Uma linha por\n' +
+    '-- diagnóstico, sem CNPJ, chave de acesso ou razão social: o relatório é\n' +
+    '-- calculado em memória e nada do documento do visitante é guardado.',
+  '20260924200000_teto_da_assinatura.sql':
+    'Teto global da assinatura em R$ 25.000/mês. O critério é não morder dentro\n' +
+    '-- do ICP (até 300 CNPJs) em nenhum regime — o pior caso é Lucro Real, que a\n' +
+    '-- 300 CNPJs paga R$ 24.030. Carteira acima disso é caso de override por\n' +
+    '-- contrato, em subscriptions.cap_cents_override.',
   '20260924130000_coleta_dfe.sql':
     'Coleta de DF-e na SEFAZ (ADR-006): formato da credencial no cofre, fila de\n' +
     '-- jobs, estado do NSU por CNPJ, resumos para ciência e NF-e baixadas que\n' +

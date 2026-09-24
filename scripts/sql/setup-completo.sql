@@ -31,7 +31,7 @@
 -- =============================================================================
 
 -- =============================================================================
--- PARTE 1 — migrations (21 arquivos, na ordem de aplicação)
+-- PARTE 1 — migrations (25 arquivos, na ordem de aplicação)
 -- =============================================================================
 
 
@@ -2658,6 +2658,301 @@ begin
   end loop;
 end
 $$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260924180000_faixas_de_volume.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Degressão por volume — faixas marginais e teto de assinatura
+--
+-- O preço linear por CNPJ quebra no topo do público-alvo: uma carteira de 1.200
+-- CNPJs de Simples Híbrido custaria R$ 34.800/mês, que nenhum escritório paga.
+--
+-- A escada é MARGINAL, como alíquota de imposto de renda: cada faixa desconta
+-- só as unidades que caem dentro dela. Desconto de faixa aplicado ao total
+-- inteiro criaria penhasco — 100 CNPJs custariam R$ 2.900,00 e 101 custariam
+-- R$ 2.492,15, e acrescentar um cliente BAIXARIA a fatura. Num produto que se
+-- vende contra opacidade de preço, uma tabela onde crescer sai mais barato é
+-- indefensável na tela e vira arbitragem.
+--
+-- Os parâmetros ficam em tabela e não no código pela mesma razão de `plans`:
+-- mudar preço não pode exigir deploy.
+-- =============================================================================
+
+create table if not exists public.pricing_tiers (
+  -- Chave natural: o início da faixa. Impede por construção duas faixas
+  -- começando no mesmo ponto, que um `id serial` deixaria passar.
+  from_clients   integer primary key check (from_clients >= 1),
+
+  -- Desconto MARGINAL em pontos-base (1500 = 15%).
+  --
+  -- O teto de 5000 (50%) NÃO é gosto comercial: é a condição de monotonicidade
+  -- do modelo. Acrescentar um CNPJ caro o insere nas primeiras posições e empurra
+  -- um "atravessador" por fronteira de faixa; o saldo de acrescentá-lo é
+  -- `>= preço × (1 - 2·desconto_máximo)`, positivo se e somente se o desconto
+  -- máximo for menor que 50%. Acima disso, acrescentar um CNPJ passaria a baixar
+  -- a fatura. Degressão maior é caso de teto (`billing_settings.cap_cents`), que
+  -- não depende da posição de ninguém e por isso não quebra a monotonicidade.
+  discount_bps   integer not null check (discount_bps between 0 and 5000),
+
+  label          text,
+  effective_from date not null default current_date,
+  updated_at     timestamptz not null default now()
+);
+
+comment on table public.pricing_tiers is
+  'Faixas marginais de desconto por volume de CNPJs faturáveis. Teto de 50% por monotonicidade.';
+
+insert into public.pricing_tiers (from_clients, discount_bps, label) values
+  (1,    0,    'Até 100 CNPJs'),
+  (101,  1500, '101 a 300 CNPJs'),
+  (301,  3000, '301 a 600 CNPJs'),
+  (601,  4000, '601 a 1.000 CNPJs'),
+  (1001, 5000, 'Acima de 1.000 CNPJs')
+on conflict (from_clients) do nothing;
+
+-- Pública de propósito, como `plans` e `billing_settings`: a escada vai na
+-- página de preço, antes de qualquer contato comercial.
+alter table public.pricing_tiers disable row level security;
+
+-- Teto global da assinatura. Nulo por padrão: o teto é decisão consciente de
+-- contrato, não um default que ninguém escolheu.
+alter table public.billing_settings
+  add column if not exists cap_cents integer;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'billing_settings_cap_acima_do_minimo'
+  ) then
+    alter table public.billing_settings
+      add constraint billing_settings_cap_acima_do_minimo
+      check (cap_cents is null or cap_cents >= minimum_cents);
+  end if;
+end $$;
+
+-- Teto por escritório, para o contrato que foge da tabela. Fica em
+-- `subscriptions` e não em `tenants` porque teto é cláusula de assinatura, e
+-- morre junto com o cancelamento.
+alter table public.subscriptions
+  add column if not exists cap_cents_override integer check (cap_cents_override >= 0);
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260924190000_diagnostico_publico.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Diagnóstico público de prontidão para a reforma
+--
+-- O visitante sobe XMLs no site e recebe o retrato de quantos dos seus
+-- fornecedores já emitem com o grupo UB da NT 2025.002 — sem criar conta.
+--
+-- UMA linha por diagnóstico, e **nada que identifique a carteira do visitante**:
+-- sem CNPJ, sem chave de acesso, sem razão social, sem NCM. O produto promete
+-- que não guarda os documentos de quem experimenta; gravar o que foi
+-- diagnosticado desmentiria a promessa na primeira auditoria. O que fica são
+-- contadores, que servem para medir o funil e para impor a quota diária.
+-- =============================================================================
+
+create table if not exists public.readiness_reports (
+  id                     uuid primary key default gen_random_uuid(),
+  created_at             timestamptz not null default now(),
+
+  -- sha256(salt + ip). O IP cru nunca entra: serve para limitar abuso, não para
+  -- perfilar visitante. Um produto que se vende como custódia responsável não
+  -- guarda IP de anônimo para medir marketing.
+  ip_hash                char(64) not null,
+
+  documents_total        integer not null default 0,
+  documents_parsed       integer not null default 0,
+  documents_rejected     integer not null default 0,
+  documents_with_reform  integer not null default 0,
+  items_total            integer not null default 0,
+  items_with_reform      integer not null default 0,
+  distinct_issuers       integer not null default 0,
+  distinct_ncms          integer not null default 0,
+  periods_covered        integer not null default 0,
+
+  -- Lead. Opcional e sempre POSTERIOR ao relatório: o diagnóstico nunca fica
+  -- atrás do e-mail. Muro de e-mail é a opacidade que o produto combate, e a
+  -- calculadora de preço pública já estabeleceu essa regra.
+  email                  text check (email is null or email ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'),
+  email_consent_at       timestamptz,
+  source                 text,
+
+  -- Consentimento como invariante de banco, não como disciplina de código: um
+  -- bug no handler não consegue gravar lead sem consentimento.
+  constraint readiness_email_exige_consentimento
+    check (email is null or email_consent_at is not null)
+);
+
+comment on table public.readiness_reports is
+  'Métrica agregada do diagnóstico público. Sem CNPJ, chave de acesso ou razão social.';
+
+-- A consulta da quota é sempre (ip_hash, janela recente).
+create index if not exists readiness_reports_quota_idx
+  on public.readiness_reports (ip_hash, created_at desc);
+
+create index if not exists readiness_reports_lead_idx
+  on public.readiness_reports (created_at desc)
+  where email is not null;
+
+-- Sem `tenant_id`: a tabela é anônima por construção e `is_member_of` não se
+-- aplica. RLS ligada SEM policy de select — ninguém lê pelo cliente; a API lê
+-- com a service role. É a mesma "segunda tranca" do resto do schema.
+alter table public.readiness_reports enable row level security;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260924200000_teto_da_assinatura.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Teto global da assinatura
+--
+-- A migration das faixas criou a coluna e deixou `cap_cents` nulo, porque teto é
+-- decisão comercial e não default. Este passo escolhe o número, com o critério
+-- escrito para quem for mudá-lo depois.
+--
+-- CRITÉRIO: o teto não pode morder dentro do ICP declarado (20 a 300 CNPJs), em
+-- nenhum regime. Se mordesse, a degressão estaria dando desconto justamente aos
+-- clientes que o produto foi desenhado para atender, e no regime que mais paga.
+--
+-- Fatura mensal de uma carteira homogênea de 300 CNPJs, com a escada vigente:
+--
+--     MEI/SN integrado   R$  2.430
+--     Simples híbrido    R$  7.830
+--     Lucro presumido    R$ 13.230
+--     Lucro real         R$ 24.030   <- o pior caso manda no número
+--
+-- Daí R$ 25.000: é o primeiro valor redondo acima de R$ 24.030. Onde cada teto
+-- candidato começaria a morder, em nº de CNPJs:
+--
+--     teto          MEI    SN híbrido   LP     LR
+--     R$  9.000    1561        358     199    102   <- morde dentro do ICP
+--     R$ 12.000    2227        506     271    141   <- morde dentro do ICP
+--     R$ 18.000    3561        835     440    221   <- morde dentro do ICP
+--     R$ 25.000   nunca       1285     651    316   <- respeita o ICP inteiro
+--
+-- O QUE ESTE TETO **NÃO** RESOLVE, e é preciso dizer: uma carteira de 1.200
+-- CNPJs de Simples Híbrido custa R$ 23.780/mês e continua abaixo do teto, ou
+-- seja, o teto não a toca. Baixar o teto até alcançá-la machucaria o ICP (ver
+-- tabela acima). Carteira desse porte é caso de `subscriptions.cap_cents_override`,
+-- negociado em contrato — que é exatamente por isso que o override existe.
+-- =============================================================================
+
+update public.billing_settings
+   set cap_cents = 2500000,
+       updated_at = now()
+ where id = true
+   -- Só define o padrão; não sobrescreve um teto já escolhido conscientemente.
+   and cap_cents is null;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260925100000_rotulos_de_feature.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Rótulos das features do plano
+--
+-- `plans.features` guarda chaves (`saude_cadastro`, `apuracao_dual`…), e o
+-- frontend precisava traduzir cada uma para português. Sem esta tabela, quem
+-- constrói a tela inventa os nomes — e foi o que aconteceu: a página de preço
+-- saiu com rótulos escritos por quem não conhece o produto.
+--
+-- O nome comercial de uma funcionalidade é decisão de produto, muda mais que o
+-- preço, e não pode exigir deploy. Mesma razão que já pôs `plans` em tabela.
+-- =============================================================================
+
+create table if not exists public.plan_features (
+  key         text primary key,
+  label       text not null,
+  -- Uma linha explicando o que o escritório ganha. A tela pode usar como
+  -- tooltip ou subtítulo; sem isso o rótulo sozinho não vende nada.
+  description text,
+  -- Ordem de exibição. A lista em `plans.features` está na ordem em que as
+  -- ondas entregaram, que não é a ordem em que o cliente quer ler.
+  sort_order  smallint not null default 100,
+  updated_at  timestamptz not null default now()
+);
+
+comment on table public.plan_features is
+  'Rótulo em PT-BR de cada chave de `plans.features`. Evita o frontend inventar nomes.';
+
+insert into public.plan_features (key, label, description, sort_order) values
+  ('saude_cadastro',     'Saúde do cadastro de itens',
+   'Aponta item sem NCM, código incompatível e classificação que contamina a apuração.', 10),
+  ('coleta_dfe',         'Coleta automática de documentos',
+   'Busca as notas na SEFAZ com o certificado A1, sem alguém baixar XML à mão.', 20),
+  ('simulador_opcao',    'Simulador de opção de regime',
+   'Compara Simples integrado, híbrido e Presumido para decidir dentro do prazo.', 30),
+  ('apuracao_dual',      'Apuração dual, nota a nota',
+   'Tributos atuais e IBS/CBS lado a lado no mesmo item, com memória de cálculo.', 40),
+  ('contra_apuracao',    'Contra-apuração contra o Fisco',
+   'Compara a sua apuração com a proposta do Fisco e lista as divergências.', 50),
+  ('calendario',         'Calendário de prazos',
+   'Prazos de manifestação e fechamento por CNPJ, em dia útil.', 60),
+  ('assistente_fiscal',  'Assistente fiscal',
+   'Responde sobre a carteira citando o evento que sustenta cada resposta. Nunca escreve.', 70),
+  ('credito_em_risco',   'Crédito em risco por fornecedor',
+   'Crédito que depende do pagamento da etapa anterior, cruzado com o extrato.', 80),
+  ('dossie_saldo_credor','Dossiê de saldo credor de PIS/Cofins',
+   'Reúne a evidência do saldo acumulado antes de PIS e Cofins serem extintos.', 90),
+  ('sped_completo',      'SPED completo',
+   'EFD ICMS/IPI e EFD-Contribuições conciliadas com os documentos recebidos.', 100),
+  ('white_label',        'White label',
+   'O escritório entrega os relatórios com a marca dele.', 110)
+on conflict (key) do update
+   set label       = excluded.label,
+       description = excluded.description,
+       sort_order  = excluded.sort_order,
+       updated_at  = now();
+
+-- Pública, como `plans` e `pricing_tiers`: a página de preço não tem sessão.
+alter table public.plan_features disable row level security;
+
+-- =============================================================================
+-- Lead do diagnóstico sem reprocessar o lote
+--
+-- O diagnóstico já aceitava e-mail junto do upload, mas a tela mostra o
+-- relatório primeiro e só depois oferece o envio por e-mail — que é a ordem
+-- correta, porque muro de e-mail é a opacidade que o produto combate. Sem uma
+-- rota própria, a tela reenviava os mesmos XMLs só para registrar o endereço:
+-- parsing duplicado, e uma segunda linha de métrica para o mesmo diagnóstico.
+--
+-- A resposta do diagnóstico passa a devolver o `id` da linha, e o lead é
+-- gravado nela. O `id` é um UUID v4: não é enumerável, e a única coisa que se
+-- pode fazer com um palpite certo é anexar um e-mail a um contador anônimo.
+-- =============================================================================
+
+-- Um lead por diagnóstico. Sem isto, reenviar o formulário sobrescreveria o
+-- endereço já consentido — e a data de consentimento junto.
+create or replace function public.registrar_lead_do_diagnostico(
+  p_report_id uuid,
+  p_email     text,
+  p_source    text
+) returns boolean
+  language plpgsql as $$
+declare
+  atualizadas integer;
+begin
+  update public.readiness_reports
+     set email            = p_email,
+         email_consent_at = now(),
+         source           = coalesce(p_source, source)
+   where id = p_report_id
+     and email is null;
+
+  get diagnostics atualizadas = row_count;
+  return atualizadas > 0;
+end $$;
+
+comment on function public.registrar_lead_do_diagnostico is
+  'Anexa e-mail consentido a um diagnóstico já feito. Falso quando o id não existe ou já tem lead.';
 
 
 -- =============================================================================

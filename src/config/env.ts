@@ -67,6 +67,19 @@ export interface Env {
    * correto sem modelo, não uma falha.
    */
   anthropic?: { apiKey: string; model: string };
+  /**
+   * Confiar no `X-Forwarded-For`. Obrigatório em produção, onde a API fica
+   * atrás de proxy: sem isso todo visitante chega com o IP do proxy, e a quota
+   * do diagnóstico público vira um balde único que derruba o funil legítimo.
+   * Ligado por engano sem proxy na frente permitiria forjar o IP, daí o padrão
+   * ser `false`.
+   */
+  trustProxy: boolean;
+  /**
+   * Killswitch do diagnóstico público. A rota é anônima e o parsing é
+   * CPU-bound; precisa poder ser desligada por variável, sem rollback.
+   */
+  publicDiagnosticEnabled: boolean;
 }
 
 export class EnvError extends Error {
@@ -154,6 +167,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const env: Env = {
     environment,
     port: Number(source['API_PORT'] ?? 3000),
+    trustProxy: lerBooleano(source['TRUST_PROXY'], false),
+    publicDiagnosticEnabled: lerBooleano(source['PUBLIC_DIAGNOSTIC_ENABLED'], true),
     host: source['API_HOST'] ?? '0.0.0.0',
     databaseUrl,
     corsOrigins: parseOrigins(corsRaw),
@@ -211,4 +226,17 @@ function parseOrigins(raw: string | undefined): string[] {
     .split(',')
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
+}
+
+/**
+ * Booleano de variável de ambiente. Aceita as grafias que aparecem em painel de
+ * deploy; qualquer outra coisa cai no padrão em vez de virar `true` por ser
+ * string não-vazia, que é o erro clássico.
+ */
+function lerBooleano(valor: string | undefined, padrao: boolean): boolean {
+  const normalizado = valor?.trim().toLowerCase();
+  if (normalizado === undefined || normalizado === '') {
+    return padrao;
+  }
+  return normalizado === 'true' || normalizado === '1' || normalizado === 'yes';
 }

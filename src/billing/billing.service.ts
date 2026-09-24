@@ -34,18 +34,54 @@ export class BillingSettingsMissingError extends Error {
 export class BillingService {
   constructor(private readonly pool: Pool) {}
 
-  async pricingRules(): Promise<PricingRules> {
-    const { rows: prices } = await this.pool.query<{ regime: Regime; monthly_cents: number }>(
-      'select regime, monthly_cents from plans order by monthly_cents',
-    );
-    const { rows: settings } = await this.pool.query<{ minimum_cents: number }>(
-      'select minimum_cents from billing_settings where id = true',
-    );
+  /**
+   * Preço, piso, escada de volume e teto.
+   *
+   * `tenantId` só é necessário quando o teto do contrato daquele escritório
+   * difere do global — a calculadora pública, que não tem escritório, usa o
+   * global de propósito: o preço anunciado no site não pode depender de uma
+   * negociação que o visitante não fez.
+   */
+  async pricingRules(tenantId?: string): Promise<PricingRules> {
+    const [{ rows: prices }, { rows: settings }, { rows: tiers }] = await Promise.all([
+      this.pool.query<{ regime: Regime; monthly_cents: number }>(
+        'select regime, monthly_cents from plans order by monthly_cents',
+      ),
+      this.pool.query<{ minimum_cents: number; cap_cents: number | null }>(
+        'select minimum_cents, cap_cents from billing_settings where id = true',
+      ),
+      this.pool.query<{ from_clients: number; discount_bps: number; label: string | null }>(
+        `select from_clients, discount_bps, label
+           from pricing_tiers
+          where effective_from <= current_date
+          order by from_clients`,
+      ),
+    ]);
+
+    const parametros = exigirParametros(settings);
+
+    const override = tenantId === undefined ? null : await this.capOverrideFor(tenantId);
+    const capCents = override ?? parametros.cap_cents;
 
     return {
       prices: prices.map((row) => ({ regime: row.regime, monthlyCents: row.monthly_cents })),
-      minimumCents: exigirParametros(settings).minimum_cents,
+      minimumCents: parametros.minimum_cents,
+      tiers: tiers.map((row) => ({
+        fromClients: row.from_clients,
+        discountBps: row.discount_bps,
+        ...(row.label === null ? {} : { label: row.label }),
+      })),
+      ...(capCents === null ? {} : { capCents }),
     };
+  }
+
+  /** Teto negociado em contrato, quando existe. Nulo cai no teto global. */
+  private async capOverrideFor(tenantId: string): Promise<number | null> {
+    const { rows } = await this.pool.query<{ cap_cents_override: number | null }>(
+      'select cap_cents_override from subscriptions where tenant_id = $1::uuid',
+      [tenantId],
+    );
+    return rows[0]?.cap_cents_override ?? null;
   }
 
   /**
@@ -63,7 +99,7 @@ export class BillingService {
   async quoteFor(tenantId: string, referenceMonth: string): Promise<PriceQuote> {
     const [clients, rules] = await Promise.all([
       this.billableClients(tenantId, referenceMonth),
-      this.pricingRules(),
+      this.pricingRules(tenantId),
     ]);
     return quote(clients, rules);
   }

@@ -13,6 +13,7 @@ import { registerEventRoutes } from './routes/events.routes.js';
 import { registerCertificateRoutes } from './routes/certificate.routes.js';
 import { registerBillingRoutes, registerBillingWebhook } from './routes/billing.routes.js';
 import { registerIngestionRoutes } from './routes/ingestion.routes.js';
+import { registerPublicRoutes } from './routes/public.routes.js';
 import { registerCatalogRoutes } from './routes/catalog.routes.js';
 import { registerAssessmentRoutes } from './routes/assessment.routes.js';
 import { registerReportingRoutes } from './routes/reporting.routes.js';
@@ -85,6 +86,12 @@ export const PUBLIC_ROUTES = new Set([
   // Preço público antes de qualquer contato comercial — ver briefing.
   '/v1/plans',
   '/v1/price-calculator',
+  // Diagnóstico de prontidão para a reforma: o visitante sobe XMLs e vê o
+  // tamanho do problema com os próprios dados, antes de qualquer cadastro.
+  '/v1/reform-readiness',
+  // O lead é anexado depois do relatório, e a tela que o envia também não tem
+  // sessão. O id do diagnóstico é o que autoriza a escrita.
+  '/v1/reform-readiness/lead',
   /**
    * Páginas de metodologia. Nenhuma das duas lê `request.tenant`, e as duas
    * existem para ser lidas ANTES de contratar: a do simulador diz o que ele não
@@ -180,6 +187,14 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   }
 
   const app = Fastify({
+    /**
+     * Atrás de proxy (Supabase, Fly, Cloudflare) `request.ip` é o IP do proxy, e
+     * não o do visitante. Isso faria a quota do diagnóstico público virar um
+     * balde único, bloqueando todo mundo depois dos primeiros acessos. Ligar sem
+     * proxy na frente é pior — permitiria forjar o IP por cabeçalho —, então a
+     * escolha é explícita por ambiente.
+     */
+    trustProxy: env.trustProxy,
     logger: {
       level: env.logLevel,
       // Authorization nunca entra no log: um token vazado em arquivo de log é um
@@ -251,6 +266,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerBillingRoutes(instance, deps);
       await registerBillingWebhook(instance, deps);
       await registerIngestionRoutes(instance, deps);
+      await registerPublicRoutes(instance, deps);
       await registerCatalogRoutes(instance, deps);
       await registerAssessmentRoutes(instance, deps);
       await registerReportingRoutes(instance, deps);

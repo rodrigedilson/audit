@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 19 de 22: coleta-dfe
+-- audit — passo 19 de 26: coleta-dfe
 --
 -- Coleta de DF-e na SEFAZ (ADR-006): formato da credencial no cofre, fila de
 -- jobs, estado do NSU por CNPJ, resumos para ciência e NF-e baixadas que

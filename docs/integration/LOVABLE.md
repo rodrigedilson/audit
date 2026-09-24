@@ -648,3 +648,35 @@ e manter as três features que o `audit` não tem.
 **O que não está na conta:** QA com dado real de cliente, acessibilidade além do
 que o shadcn entrega, responsivo de celular (o painel é de trabalho em desktop),
 i18n, e os testes automatizados que o `sped-genius-hub` não tem.
+
+---
+
+## Passo 7 — Telas da degressão, do diagnóstico e do comprovante
+
+Três telas que entraram com as faixas de volume, o diagnóstico público e o
+comprovante de integridade. Os briefs estão em
+[`briefs-lovable/`](briefs-lovable/) — **um arquivo por tela, autocontido**, com
+o contrato JSON já conferido campo a campo contra a API rodando.
+
+| Tela | Brief | Rotas | Login |
+|---|---|---|---|
+| Diagnóstico de prontidão | [01](briefs-lovable/01-diagnostico-publico.md) | `POST /v1/reform-readiness` | **não** |
+| Calculadora de preço | [02](briefs-lovable/02-calculadora-de-precos.md) | `GET /v1/plans`, `POST /v1/price-calculator` | **não** |
+| Comprovante de integridade | [03](briefs-lovable/03-comprovante-de-integridade.md) | `GET /v1/clients/{cnpj}/periods/{period}/proof` | sim |
+
+**Atenção:** a tela 15 (Planos e assinatura) do Passo 5 já existe e **precisa ser
+revista**, não é só acrescentar duas telas. `GET /plans` passou a devolver
+`tiers` e `cap_cents`, e a cotação ganhou três parcelas novas
+(`volume_discount_cents`, `cap_adjustment_cents`, `effective_discount_bps`).
+Uma tela que some `subtotal_cents` como se fosse o total agora mostra **R$ 34.800
+no lugar de R$ 23.780** numa carteira de 1.200 CNPJs.
+
+As duas primeiras telas são **públicas** e não passam pelo `ProtectedRoute`: elas
+existem para ser usadas antes de qualquer cadastro. É o mesmo argumento que já
+pôs o preço no ar — o concorrente esconde tudo atrás de formulário.
+
+O [README dos briefs](briefs-lovable/README.md) reúne as armadilhas que valem
+para as três, sendo a mais cara os **dois `429` com significados opostos**:
+`rate_limited` (limite do diagnóstico anônimo) e o limite de plano. A tela
+bifurca por `code`, nunca por status — senão manda um visitante anônimo para a
+tela de upgrade.

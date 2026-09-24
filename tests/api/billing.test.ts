@@ -145,6 +145,111 @@ describe.skipIf(!DATABASE_URL)('API — planos e cobrança', () => {
 
       expect(response.statusCode).toBe(400);
     });
+
+    /**
+     * A escada de volume é pública pelo mesmo motivo que o preço: esconder o
+     * desconto atrás de "fale com um consultor" é a opacidade que o produto
+     * combate.
+     */
+    it('GET /plans publica a escada de faixas e o teto', async () => {
+      const body = (await app.inject({ method: 'GET', url: '/v1/plans' })).json();
+
+      expect(body.tiers).toHaveLength(5);
+      expect(body.tiers[0]).toMatchObject({ from_clients: 1, discount_bps: 0 });
+      expect(body.tiers[4]).toMatchObject({ from_clients: 1001, discount_bps: 5000 });
+      /**
+       * Teto global de R$ 25.000. O critério está na migration: não morder dentro
+       * do ICP (até 300 CNPJs) em nenhum regime — o pior caso é Lucro Real, que a
+       * 300 CNPJs paga R$ 24.030.
+       */
+      expect(body.cap_cents).toBe(2_500_000);
+    });
+
+    /**
+     * Sem isto o frontend traduz `saude_cadastro` por conta própria, e foi o que
+     * aconteceu: a página de preço saiu com nomes inventados por quem não
+     * conhece o produto.
+     */
+    it('GET /plans publica o rótulo em PT-BR de cada feature', async () => {
+      const body = (await app.inject({ method: 'GET', url: '/v1/plans' })).json();
+
+      const chaves = new Set(body.plans.flatMap((p: { features: string[] }) => p.features));
+      const rotuladas = new Set(Object.keys(body.feature_labels));
+
+      // Toda chave que algum plano anuncia precisa ter rótulo.
+      for (const chave of chaves) {
+        expect(rotuladas.has(chave as string)).toBe(true);
+      }
+
+      expect(body.feature_labels['saude_cadastro']).toMatchObject({
+        label: 'Saúde do cadastro de itens',
+      });
+      expect(body.feature_labels['apuracao_dual'].description).toBeTruthy();
+      expect(body.feature_labels['saude_cadastro'].sort_order).toBeLessThan(
+        body.feature_labels['white_label'].sort_order,
+      );
+    });
+
+    it('carteira pequena não muda de preço com a escada ligada', async () => {
+      const body = (
+        await app.inject({
+          method: 'POST',
+          url: '/v1/price-calculator',
+          payload: { clients: [{ regime: 'simples_hibrido', quantity: 10 }] },
+        })
+      ).json();
+
+      expect(body.volume_discount_cents).toBe(0);
+      expect(body.total_cents).toBe(29_000);
+    });
+
+    /**
+     * O caso que motivou a degressão: a carteira de 1.200 CNPJs que o modelo
+     * linear cobraria R$ 34.800/mês. Antes das faixas esta chamada nem passava
+     * pelo schema, que limitava a quantidade a 2.000 por ser O(quantidade).
+     */
+    it('a calculadora cobre a carteira de 1.200 CNPJs e explica a escada', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/price-calculator',
+        payload: { clients: [{ regime: 'simples_hibrido', quantity: 1200 }] },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+
+      expect(body.subtotal_cents).toBe(3_480_000);
+      expect(body.volume_discount_cents).toBe(1_102_000);
+      expect(body.total_cents).toBe(2_378_000);
+
+      // As quatro parcelas fecham por soma — é o que a tela mostra.
+      expect(
+        body.subtotal_cents -
+          body.volume_discount_cents +
+          body.cap_adjustment_cents +
+          body.minimum_adjustment_cents,
+      ).toBe(body.total_cents);
+
+      const linha = body.lines[0];
+      expect(linha.tiers).toHaveLength(5);
+      expect(linha.tiers[0]).toMatchObject({ from_clients: 1, quantity: 100, discount_bps: 0 });
+    });
+
+    it('a calculadora recusa a soma que estoura o teto de simulação', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/price-calculator',
+        payload: {
+          clients: [
+            { regime: 'mei', quantity: 10_000 },
+            { regime: 'lucro_real', quantity: 10_000 },
+            { regime: 'simples_hibrido', quantity: 10_000 },
+          ],
+        },
+      });
+
+      expect(response.statusCode).toBe(422);
+    });
   });
 
   describe('definição de CNPJ ativo', () => {
