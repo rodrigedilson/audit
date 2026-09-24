@@ -8,6 +8,7 @@ import type {
 } from '../../../src/fiscal/ingestion/efd-icms-ipi.parser.js';
 import {
   reconcileIcmsIpi,
+  summarizeEfdIcmsIpi,
   type IcmsIpiCheck,
 } from '../../../src/fiscal/reconciliation/icms-ipi-checks.js';
 
@@ -91,6 +92,10 @@ const efd = (overrides: Partial<EfdIcmsResult> = {}): EfdIcmsResult => ({
   ...overrides,
 });
 
+/** A conciliação recebe o resumo, não o arquivo — o adaptador entra no caminho. */
+const conciliar = (overrides: Partial<EfdIcmsResult> = {}) =>
+  reconcileIcmsIpi(summarizeEfdIcmsIpi(efd(overrides)));
+
 const pegar = (resultado: { checks: IcmsIpiCheck[] }, id: string): IcmsIpiCheck => {
   const achado = resultado.checks.find((c) => c.checkId === id);
   if (achado === undefined) {
@@ -101,7 +106,7 @@ const pegar = (resultado: { checks: IcmsIpiCheck[] }, id: string): IcmsIpiCheck 
 
 describe('reconcileIcmsIpi — aritmética do E110', () => {
   it('passa quando o saldo apurado segue a expressão do guia', () => {
-    const check = pegar(reconcileIcmsIpi(efd()), 'e110-saldo-apurado');
+    const check = pegar(conciliar(), 'e110-saldo-apurado');
 
     expect(check.status).toBe('passed');
     expect(check.differenceCents).toBe(0);
@@ -109,8 +114,7 @@ describe('reconcileIcmsIpi — aritmética do E110', () => {
   });
 
   it('acusa o saldo apurado que não fecha, com a diferença em centavos', () => {
-    const resultado = reconcileIcmsIpi(
-      efd({ icmsAssessment: { ...E110_COERENTE, assessedBalanceCents: 120_000 } }),
+    const resultado = conciliar(({ icmsAssessment: { ...E110_COERENTE, assessedBalanceCents: 120_000 } }),
     );
     const check = pegar(resultado, 'e110-saldo-apurado');
 
@@ -124,8 +128,7 @@ describe('reconcileIcmsIpi — aritmética do E110', () => {
   it('leva os ajustes do documento para dentro da expressão', () => {
     // VL_AJ_DEBITOS e VL_AJ_CREDITOS são campos 3 e 7, e ficaram de fora da
     // primeira versão do leitor. Sem eles a expressão erra em silêncio.
-    const resultado = reconcileIcmsIpi(
-      efd({
+    const resultado = conciliar(({
         icmsAssessment: {
           ...E110_COERENTE,
           documentDebitAdjustmentsCents: 5_000,
@@ -141,8 +144,7 @@ describe('reconcileIcmsIpi — aritmética do E110', () => {
   it('zera o saldo apurado e transporta o crédito, somando as deduções', () => {
     // Expressão = 300.000 − 400.000 = −100.000; com 20.000 de deduções o saldo a
     // transportar é 120.000, não 100.000. É a parte contraintuitiva da regra.
-    const resultado = reconcileIcmsIpi(
-      efd({
+    const resultado = conciliar(({
         icmsAssessment: {
           ...E110_COERENTE,
           totalDebitsCents: 300_000,
@@ -160,8 +162,7 @@ describe('reconcileIcmsIpi — aritmética do E110', () => {
   });
 
   it('acusa o ICMS a recolher que ignora as deduções', () => {
-    const resultado = reconcileIcmsIpi(
-      efd({
+    const resultado = conciliar(({
         icmsAssessment: {
           ...E110_COERENTE,
           deductionsCents: 30_000,
@@ -180,14 +181,13 @@ describe('reconcileIcmsIpi — aritmética do E110', () => {
 
 describe('reconcileIcmsIpi — aritmética do E520', () => {
   it('passa quando o saldo devedor do IPI fecha', () => {
-    expect(pegar(reconcileIcmsIpi(efd()), 'e520-apuracao-ipi').status).toBe('passed');
+    expect(pegar(conciliar(), 'e520-apuracao-ipi').status).toBe('passed');
   });
 
   it('acusa saldo lançado no campo errado', () => {
     // Expressão negativa em 10.000: o valor tem de ir para VL_SC_IPI, não para
     // VL_SD_IPI. Comparar o líquido faz a troca aparecer em vez de se cancelar.
-    const resultado = reconcileIcmsIpi(
-      efd({
+    const resultado = conciliar(({
         ipiAssessment: {
           ...E520_COERENTE,
           debitsCents: 20_000,
@@ -205,7 +205,7 @@ describe('reconcileIcmsIpi — aritmética do E520', () => {
 
 describe('reconcileIcmsIpi — ausência não é aprovação', () => {
   it('marca not_verified, e não passed, quando não há E110', () => {
-    const resultado = reconcileIcmsIpi(efd({ icmsAssessment: null }));
+    const resultado = conciliar(({ icmsAssessment: null }));
 
     for (const id of [
       'e110-saldo-apurado',
@@ -220,14 +220,14 @@ describe('reconcileIcmsIpi — ausência não é aprovação', () => {
   });
 
   it('marca not_verified quando não há E520', () => {
-    const check = pegar(reconcileIcmsIpi(efd({ ipiAssessment: null })), 'e520-apuracao-ipi');
+    const check = pegar(conciliar(({ ipiAssessment: null })), 'e520-apuracao-ipi');
 
     expect(check.status).toBe('not_verified');
     expect(check.notVerifiedReason).not.toBeNull();
   });
 
   it('todo not_verified traz motivo, nunca vazio', () => {
-    const resultado = reconcileIcmsIpi(efd({ icmsAssessment: null, ipiAssessment: null }));
+    const resultado = conciliar(({ icmsAssessment: null, ipiAssessment: null }));
 
     for (const check of resultado.checks.filter((c) => c.status === 'not_verified')) {
       expect(check.notVerifiedReason).toBeTruthy();
@@ -235,7 +235,7 @@ describe('reconcileIcmsIpi — ausência não é aprovação', () => {
   });
 
   it('conta as conferências não verificadas no resumo', () => {
-    const resultado = reconcileIcmsIpi(efd({ icmsAssessment: null }));
+    const resultado = conciliar(({ icmsAssessment: null }));
 
     expect(resultado.notVerifiedCount).toBeGreaterThanOrEqual(3);
   });
@@ -258,7 +258,7 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
       analytics: [analitico(20_000)],
     });
 
-    const check = pegar(reconcileIcmsIpi(efd({ documents: [doc] })), 'c170-vs-c190');
+    const check = pegar(conciliar(({ documents: [doc] })), 'c170-vs-c190');
 
     expect(check.status).toBe('failed');
     expect(check.differenceCents).toBe(2_000);
@@ -267,14 +267,13 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
 
   it('não acusa documento que vem só com consolidação, como a NF-e própria', () => {
     const doc = documento({ operation: 'outbound', analytics: [analitico(20_000)] });
-    const check = pegar(reconcileIcmsIpi(efd({ documents: [doc] })), 'c170-vs-c190');
+    const check = pegar(conciliar(({ documents: [doc] })), 'c170-vs-c190');
 
     expect(check.status).toBe('not_verified');
   });
 
   it('confere as saídas contra o total de débitos', () => {
-    const resultado = reconcileIcmsIpi(
-      efd({
+    const resultado = conciliar(({
         documents: [
           documento({ operation: 'outbound', analytics: [analitico(500_000)] }),
           documento({ operation: 'inbound', analytics: [analitico(400_000)] }),
@@ -290,8 +289,7 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
   it('não compara quando há blocos que este leitor ainda não soma', () => {
     // Conta de energia (C500) e transporte (D100) também lançam ICMS. Comparar
     // só os C190 acusaria uma diferença que é limitação nossa.
-    const resultado = reconcileIcmsIpi(
-      efd({
+    const resultado = conciliar(({
         documents: [documento({ operation: 'outbound', analytics: [analitico(10_000)] })],
         counts: { '0000': 1, C100: 1, C190: 1, D100: 3, E110: 1 },
       }),
@@ -311,8 +309,7 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
       analytics: [analitico(18_000)],
     });
 
-    const resultado = reconcileIcmsIpi(
-      efd({ documents: [doc], counts: { '0000': 1, C100: 1, C190: 1, E110: 1 } }),
+    const resultado = conciliar(({ documents: [doc], counts: { '0000': 1, C100: 1, C190: 1, E110: 1 } }),
     );
     const check = pegar(resultado, 'documento-sem-imposto-com-valor');
 
@@ -322,8 +319,7 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
   });
 
   it('tira o documento cancelado da soma de débitos', () => {
-    const resultado = reconcileIcmsIpi(
-      efd({
+    const resultado = conciliar(({
         documents: [
           documento({ operation: 'outbound', analytics: [analitico(500_000)] }),
           documento({ operation: 'outbound', situation: '02', analytics: [analitico(9_000)] }),
@@ -336,7 +332,7 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
   });
 
   it('não diz passed quando não há documento cancelado para conferir', () => {
-    const check = pegar(reconcileIcmsIpi(efd()), 'documento-sem-imposto-com-valor');
+    const check = pegar(conciliar(), 'documento-sem-imposto-com-valor');
 
     expect(check.status).toBe('not_verified');
   });
@@ -344,8 +340,7 @@ describe('reconcileIcmsIpi — documentos contra o declarado', () => {
 
 describe('reconcileIcmsIpi — resumo', () => {
   it('soma as diferenças absolutas só das conferências que falharam', () => {
-    const resultado = reconcileIcmsIpi(
-      efd({ icmsAssessment: { ...E110_COERENTE, assessedBalanceCents: 130_000 } }),
+    const resultado = conciliar(({ icmsAssessment: { ...E110_COERENTE, assessedBalanceCents: 130_000 } }),
     );
 
     expect(resultado.failedCount).toBeGreaterThanOrEqual(1);
@@ -353,6 +348,47 @@ describe('reconcileIcmsIpi — resumo', () => {
   });
 
   it('leva a competência do arquivo para o resultado', () => {
-    expect(reconcileIcmsIpi(efd()).period).toBe('2026-01');
+    expect(conciliar().period).toBe('2026-01');
+  });
+});
+
+describe('summarizeEfdIcmsIpi', () => {
+  it('identifica o documento pela chave de acesso', () => {
+    const doc = documento({ operation: 'outbound' });
+
+    expect(summarizeEfdIcmsIpi(efd({ documents: [doc] })).documents[0]?.subject).toBe(
+      doc.accessKey,
+    );
+  });
+
+  it('cai para modelo e número quando não há chave', () => {
+    const doc = documento({ operation: 'outbound', accessKey: null, documentNumber: '77' });
+
+    expect(summarizeEfdIcmsIpi(efd({ documents: [doc] })).documents[0]?.subject).toBe(
+      'modelo 55 nº 77',
+    );
+  });
+
+  it('distingue documento sem itens de documento com itens que somam zero', () => {
+    const semItens = documento({ operation: 'outbound' });
+    const comZero = documento({
+      operation: 'outbound',
+      items: [
+        {
+          itemNumber: 1,
+          code: 'P1',
+          cfop: '5102',
+          totalCents: 1_000,
+          icms: { cst: '40', baseCents: 0, rate: 0, amountCents: 0 },
+          ipi: { cst: '53', baseCents: 0, rate: 0, amountCents: 0 },
+        },
+      ],
+    });
+
+    const resumo = summarizeEfdIcmsIpi(efd({ documents: [semItens, comZero] }));
+
+    expect(resumo.documents[0]?.hasItems).toBe(false);
+    expect(resumo.documents[1]?.hasItems).toBe(true);
+    expect(resumo.documents[1]?.itemsIcmsCents).toBe(0);
   });
 });

@@ -23,7 +23,6 @@
  * seria inventar uma garantia.
  */
 import type {
-  EfdIcmsAnalytic,
   EfdIcmsAssessment,
   EfdIcmsDocument,
   EfdIcmsResult,
@@ -32,6 +31,65 @@ import type {
 import type { Severity } from '../reporting/audit-trails.js';
 
 export type CheckStatus = 'passed' | 'failed' | 'not_verified';
+
+/**
+ * Documento reduzido ao que as conferências usam.
+ *
+ * A conciliação não recebe o arquivo lido, e sim este resumo, porque ela roda
+ * duas vezes: na importação, sobre o que o leitor acabou de produzir, e depois,
+ * sobre o que ficou gravado. Guardar item a item custaria milhões de linhas por
+ * carteira para responder às mesmas somas — e derivar a conferência na leitura,
+ * em vez de congelá-la, é o que faz uma regra nova valer para arquivo antigo.
+ */
+export interface IcmsIpiDocumentSummary {
+  /** Chave de acesso, ou modelo e número quando não há chave. */
+  subject: string;
+  operation: 'inbound' | 'outbound';
+  /** `COD_SIT` cru. */
+  situation: string;
+  /** Distingue "soma zero" de "não veio C170", que não são a mesma coisa. */
+  hasItems: boolean;
+  hasAnalytics: boolean;
+  itemsIcmsCents: number;
+  analyticsIcmsCents: number;
+  /** `VL_ICMS` do próprio C100. */
+  documentIcmsCents: number;
+}
+
+export interface IcmsIpiInput {
+  period: string;
+  documents: readonly IcmsIpiDocumentSummary[];
+  icmsAssessment: EfdIcmsAssessment | null;
+  ipiAssessment: EfdIpiAssessment | null;
+  /** Registros lidos por tipo — é por eles que se sabe o que a soma não cobre. */
+  recordCounts: Record<string, number>;
+}
+
+/** Reduz o arquivo lido à entrada da conciliação. */
+export function summarizeEfdIcmsIpi(efd: EfdIcmsResult): IcmsIpiInput {
+  return {
+    period: efd.header.period,
+    documents: efd.documents.map(resumirDocumento),
+    icmsAssessment: efd.icmsAssessment,
+    ipiAssessment: efd.ipiAssessment,
+    recordCounts: efd.counts,
+  };
+}
+
+function resumirDocumento(documento: EfdIcmsDocument): IcmsIpiDocumentSummary {
+  return {
+    subject:
+      documento.accessKey ??
+      `modelo ${documento.model} nº ${documento.documentNumber ?? 's/n'}`,
+    operation: documento.operation,
+    situation: documento.situation,
+    hasItems: documento.items.length > 0,
+    hasAnalytics: documento.analytics.length > 0,
+    itemsIcmsCents: documento.items.reduce((t, i) => t + i.icms.amountCents, 0),
+    analyticsIcmsCents: documento.analytics.reduce((t, a) => t + a.icmsCents, 0),
+    documentIcmsCents: documento.icmsCents,
+  };
+}
 
 export interface IcmsIpiIssue {
   /** Chave de acesso ou número do documento — o que a divergência aponta. */
@@ -88,21 +146,21 @@ const SITUACOES_SEM_IMPOSTO = new Set(['02', '03', '04', '05']);
  */
 const BLOCOS_NAO_COBERTOS = /^(C[5-9]|D)/;
 
-export function reconcileIcmsIpi(efd: EfdIcmsResult): IcmsIpiReconciliation {
+export function reconcileIcmsIpi(entrada: IcmsIpiInput): IcmsIpiReconciliation {
   const checks: IcmsIpiCheck[] = [
-    conferirSaldoApurado(efd.icmsAssessment),
-    conferirIcmsARecolher(efd.icmsAssessment),
-    conferirSaldoCredorTransportar(efd.icmsAssessment),
-    conferirApuracaoIpi(efd.ipiAssessment),
-    conferirItensContraConsolidacao(efd.documents),
-    ...conferirConsolidacaoContraApuracao(efd),
-    conferirDocumentosSemImposto(efd.documents),
+    conferirSaldoApurado(entrada.icmsAssessment),
+    conferirIcmsARecolher(entrada.icmsAssessment),
+    conferirSaldoCredorTransportar(entrada.icmsAssessment),
+    conferirApuracaoIpi(entrada.ipiAssessment),
+    conferirItensContraConsolidacao(entrada.documents),
+    ...conferirConsolidacaoContraApuracao(entrada),
+    conferirDocumentosSemImposto(entrada.documents),
   ];
 
   const falhas = checks.filter((c) => c.status === 'failed');
 
   return {
-    period: efd.header.period,
+    period: entrada.period,
     checks,
     totalDifferenceCents: falhas.reduce((t, c) => t + Math.abs(c.differenceCents ?? 0), 0),
     failedCount: falhas.length,
@@ -231,7 +289,7 @@ function conferirApuracaoIpi(e520: EfdIpiAssessment | null): IcmsIpiCheck {
 // ------------------------------------------------------- documentos × total
 
 function conferirItensContraConsolidacao(
-  documentos: readonly EfdIcmsDocument[],
+  documentos: readonly IcmsIpiDocumentSummary[],
 ): IcmsIpiCheck {
   const base = {
     checkId: 'c170-vs-c190',
@@ -245,9 +303,7 @@ function conferirItensContraConsolidacao(
   // NF-e de emissão própria costuma vir só com C100 e C190, sem C170 (Exceção 2
   // do guia). Documento sem item não é documento com erro, e entra como fora do
   // alcance da conferência, não como divergência.
-  const comparaveis = documentos.filter(
-    (d) => d.items.length > 0 && d.analytics.length > 0,
-  );
+  const comparaveis = documentos.filter((d) => d.hasItems && d.hasAnalytics);
 
   if (comparaveis.length === 0) {
     return {
@@ -268,15 +324,15 @@ function conferirItensContraConsolidacao(
   let somaConsolidacao = 0;
 
   for (const documento of comparaveis) {
-    const itens = documento.items.reduce((t, i) => t + i.icms.amountCents, 0);
-    const consolidado = somarIcms(documento.analytics);
+    const itens = documento.itemsIcmsCents;
+    const consolidado = documento.analyticsIcmsCents;
 
     somaItens += itens;
     somaConsolidacao += consolidado;
 
     if (itens !== consolidado) {
       issues.push({
-        subject: identificar(documento),
+        subject: documento.subject,
         message:
           `Itens somam ${reais(itens)} de ICMS e a consolidação do documento ` +
           `declara ${reais(consolidado)}.`,
@@ -302,25 +358,25 @@ function conferirItensContraConsolidacao(
  * São duas conferências e não uma porque um erro de débito e um de crédito do
  * mesmo tamanho se cancelariam no total, e o arquivo passaria.
  */
-function conferirConsolidacaoContraApuracao(efd: EfdIcmsResult): IcmsIpiCheck[] {
+function conferirConsolidacaoContraApuracao(entrada: IcmsIpiInput): IcmsIpiCheck[] {
   const definicoes = [
     {
       checkId: 'c190-vs-e110-debitos',
       name: 'Débitos declarados contra as saídas',
       sentido: 'outbound' as const,
-      declarado: efd.icmsAssessment?.totalDebitsCents,
+      declarado: entrada.icmsAssessment?.totalDebitsCents,
       rotulo: 'VL_TOT_DEBITOS',
     },
     {
       checkId: 'c190-vs-e110-creditos',
       name: 'Créditos declarados contra as entradas',
       sentido: 'inbound' as const,
-      declarado: efd.icmsAssessment?.totalCreditsCents,
+      declarado: entrada.icmsAssessment?.totalCreditsCents,
       rotulo: 'VL_TOT_CREDITOS',
     },
   ];
 
-  const naoCobertos = Object.keys(efd.counts)
+  const naoCobertos = Object.keys(entrada.recordCounts)
     .filter((registro) => BLOCOS_NAO_COBERTOS.test(registro))
     .sort();
 
@@ -353,16 +409,16 @@ function conferirConsolidacaoContraApuracao(efd: EfdIcmsResult): IcmsIpiCheck[] 
       };
     }
 
-    const somado = efd.documents
+    const somado = entrada.documents
       .filter((d) => d.operation === sentido && !SITUACOES_SEM_IMPOSTO.has(d.situation))
-      .reduce((total, d) => total + somarIcms(d.analytics), 0);
+      .reduce((total, d) => total + d.analyticsIcmsCents, 0);
 
     return comparar(base, declarado, somado);
   });
 }
 
 function conferirDocumentosSemImposto(
-  documentos: readonly EfdIcmsDocument[],
+  documentos: readonly IcmsIpiDocumentSummary[],
 ): IcmsIpiCheck {
   const base = {
     checkId: 'documento-sem-imposto-com-valor',
@@ -394,11 +450,15 @@ function conferirDocumentosSemImposto(
   let total = 0;
 
   for (const documento of suspeitos) {
-    const icms = somarIcms(documento.analytics) + documento.icmsCents;
+    // A consolidação quando existe, o total do C100 quando não: são o mesmo
+    // dinheiro declarado em dois lugares, e somá-los dobraria o valor em jogo.
+    const icms = documento.hasAnalytics
+      ? documento.analyticsIcmsCents
+      : documento.documentIcmsCents;
     if (icms !== 0) {
       total += icms;
       issues.push({
-        subject: identificar(documento),
+        subject: documento.subject,
         message:
           `Documento com COD_SIT ${documento.situation} declara ${reais(icms)} de ` +
           'ICMS. Situação e valor não podem coexistir.',
@@ -466,14 +526,6 @@ function semE110(base: BaseDaConferencia): IcmsIpiCheck {
     differenceCents: null,
     issues: [],
   };
-}
-
-function somarIcms(analiticos: readonly EfdIcmsAnalytic[]): number {
-  return analiticos.reduce((total, a) => total + a.icmsCents, 0);
-}
-
-function identificar(documento: EfdIcmsDocument): string {
-  return documento.accessKey ?? `modelo ${documento.model} nº ${documento.documentNumber}`;
 }
 
 function reais(centavos: number): string {
