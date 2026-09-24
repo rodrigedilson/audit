@@ -197,7 +197,8 @@ describe.skipIf(!DATABASE_URL)('API — EFD ICMS/IPI', () => {
     });
 
     it('recusa versão de leiaute não conferida', async () => {
-      const r = await importar(abertura(cnpj, '019'));
+      // `018` é de 2024; os guias conferidos são os de 2025 (019) e 2026 (020).
+      const r = await importar(abertura(cnpj, '018'));
 
       expect(r.statusCode).toBe(422);
       expect(JSON.stringify(r.json())).toMatch(/não suportada/);

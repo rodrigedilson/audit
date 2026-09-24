@@ -162,10 +162,27 @@ describe('parseEfdIcmsIpi — abertura', () => {
     });
   });
 
+  /** Leiaute 118, de 2025 — o ano que o escritório ainda está conciliando. */
+  it('lê o leiaute 019, conferido contra o Guia Prático 3.1.9', () => {
+    const { header } = parseEfdIcmsIpi(abertura('019'));
+
+    expect(header.layoutVersion).toBe('019');
+    expect(header.cnpj).toBe('12345678000195');
+    expect(header.period).toBe('2026-01');
+  });
+
   it('recusa versão de leiaute que não conferiu contra o guia', () => {
-    expect(() => parseEfdIcmsIpi(abertura('019'))).toThrow(SpedFormatError);
-    expect(() => parseEfdIcmsIpi(abertura('019'))).toThrow(/não suportada/);
-    expect(VERSOES_EFD_ICMS_SUPORTADAS.has('019')).toBe(false);
+    expect(() => parseEfdIcmsIpi(abertura('018'))).toThrow(SpedFormatError);
+    expect(() => parseEfdIcmsIpi(abertura('018'))).toThrow(/não suportada/);
+    expect(VERSOES_EFD_ICMS_SUPORTADAS.has('018')).toBe(false);
+  });
+
+  /**
+   * O 021 bate onde a comparação alcança, mas a conversão do PDF da Nota Técnica
+   * perde uma linha no meio do `C100`. Conferência incompleta não é conferência.
+   */
+  it('ainda recusa o leiaute 021, que só foi conferido em parte', () => {
+    expect(() => parseEfdIcmsIpi(abertura('021'))).toThrow(/não suportada/);
   });
 
   it('recusa a EFD-Contribuições, cujo 0000 usa outras posições', () => {
