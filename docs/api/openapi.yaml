@@ -522,9 +522,11 @@ paths:
 
 
         Lê `0000`, `C100`, `C170`, `C190`, `E110` e `E520`, e conta os demais sem
-        interpretá-los. **Só o leiaute 020** é aceito, que é o obrigatório desde
-        01/01/2026 e o documentado pelo Guia Prático 3.2.2, contra o qual as
-        posições foram conferidas uma a uma.
+        interpretá-los. São aceitos os leiautes **019** (obrigatório desde
+        01/01/2025) e **020** (desde 01/01/2026): os seis registros foram
+        extraídos dos Guias Práticos 3.1.9 e 3.2.2 e comparados campo a campo,
+        e são idênticos nos dois. Versão fora dessa lista é recusada, e não lida
+        no palpite.
 
 
         Convive com a EFD-Contribuições da mesma competência: são escriturações
