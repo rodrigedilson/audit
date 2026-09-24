@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 14 de 25: key_id_do_certificado
+-- audit — passo 14 de 26: key_id_do_certificado
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260922200000_key_id_do_certificado.sql
 -- Não edite aqui: altere a migration de origem.

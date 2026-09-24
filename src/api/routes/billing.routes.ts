@@ -41,12 +41,30 @@ export async function registerBillingRoutes(app: FastifyInstance, deps: ApiDeps)
     );
     const featuresByRegime = new Map(rows.map((row) => [row.regime, row.features]));
 
+    /**
+     * Rótulo de cada chave de `features`, para a tela não precisar traduzir
+     * `saude_cadastro` por conta própria. Sem isto, quem constrói o frontend
+     * inventa o nome comercial — e foi exatamente o que aconteceu.
+     */
+    const { rows: labels } = await deps.pool.query<{
+      key: string;
+      label: string;
+      description: string | null;
+      sort_order: number;
+    }>('select key, label, description, sort_order from plan_features order by sort_order, key');
+
     return reply.code(200).send({
       minimum_cents: rules.minimumCents,
       minimum_formatted: formatBRL(rules.minimumCents),
       // A escada também é pública: esconder o desconto de volume atrás de
       // "fale com um consultor" seria a mesma opacidade que esconder o preço.
       cap_cents: rules.capCents ?? null,
+      feature_labels: Object.fromEntries(
+        labels.map((row) => [
+          row.key,
+          { label: row.label, description: row.description, sort_order: row.sort_order },
+        ]),
+      ),
       tiers: (rules.tiers ?? []).map((tier) => ({
         from_clients: tier.fromClients,
         discount_bps: tier.discountBps,

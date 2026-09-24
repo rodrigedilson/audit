@@ -89,6 +89,9 @@ export const PUBLIC_ROUTES = new Set([
   // Diagnóstico de prontidão para a reforma: o visitante sobe XMLs e vê o
   // tamanho do problema com os próprios dados, antes de qualquer cadastro.
   '/v1/reform-readiness',
+  // O lead é anexado depois do relatório, e a tela que o envia também não tem
+  // sessão. O id do diagnóstico é o que autoriza a escrita.
+  '/v1/reform-readiness/lead',
   /**
    * Páginas de metodologia. Nenhuma das duas lê `request.tenant`, e as duas
    * existem para ser lidas ANTES de contratar: a do simulador diz o que ele não

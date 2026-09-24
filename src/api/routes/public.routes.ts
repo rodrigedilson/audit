@@ -82,7 +82,7 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
     const relatorio = summarizeReadiness(files);
 
     const leadRegistrado = Boolean(email) && consentiu;
-    await registrarMetrica(deps, {
+    const reportId = await registrarMetrica(deps, {
       ipHash,
       relatorio,
       ...(leadRegistrado && email ? { email } : {}),
@@ -90,6 +90,13 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
     });
 
     return reply.code(200).send({
+      /**
+       * Identifica este diagnóstico para o envio do relatório por e-mail, que
+       * acontece depois — a tela mostra o resultado primeiro, e só então
+       * oferece o envio. Sem este id a tela teria de reenviar os XMLs só para
+       * registrar um endereço.
+       */
+      report_id: reportId,
       generated_at: new Date().toISOString(),
       ...serializar(relatorio),
       limits: { max_files: MAX_ARQUIVOS, max_total_bytes: MAX_BYTES_DO_LOTE },
@@ -99,6 +106,92 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
       lead_registered: leadRegistrado,
     });
   });
+
+  /**
+   * `POST /reform-readiness/{report_id}/lead` — anexa o e-mail a um diagnóstico
+   * que já foi feito.
+   *
+   * Existe porque a tela correta mostra o relatório **primeiro** e só então
+   * oferece enviá-lo por e-mail. Sem esta rota, registrar o endereço obrigava a
+   * reenviar os mesmos XMLs: parsing duplicado, e uma segunda linha de métrica
+   * para o mesmo diagnóstico, inflando o funil.
+   *
+   * O `report_id` é um UUID v4 — não é enumerável, e o único efeito de acertar
+   * um palpite é anexar um e-mail a um contador anônimo. A função no banco
+   * recusa sobrescrever lead já gravado, então reenviar o formulário não troca
+   * o endereço nem a data de consentimento.
+   *
+   * O id vai no **corpo**, e não no caminho, porque o hook de autenticação
+   * reconhece rota pública por igualdade exata de URL. Uma rota com parâmetro
+   * no caminho nunca casaria com a lista, e cairia na verificação de token —
+   * numa rota que, por definição, não tem sessão.
+   */
+  app.post<{ Body: { report_id: string; email: string; consent: boolean; source?: string } }>(
+    '/reform-readiness/lead',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['report_id', 'email', 'consent'],
+          properties: {
+            report_id: { type: 'string', format: 'uuid' },
+            email: { type: 'string', maxLength: 254 },
+            consent: { type: 'boolean' },
+            source: { type: 'string', maxLength: 120 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!deps.env.publicDiagnosticEnabled) {
+        return reply.code(503).send({
+          code: 'diagnostic_disabled',
+          message: 'O diagnóstico público está temporariamente indisponível.',
+        });
+      }
+
+      const ipHash = hashDoIp(request, deps.env.certificateMasterKey);
+      const veredito = rajada.hit(`lead:${ipHash}`);
+      if (!veredito.allowed) {
+        throw new RateLimitedError(
+          veredito.retryAfterSeconds,
+          'Muitos envios seguidos. Aguarde alguns instantes.',
+        );
+      }
+
+      const email = request.body.email.trim();
+      if (!EMAIL.test(email)) {
+        throw new ValidationError(1, 'schema_violation', 'E-mail inválido.');
+      }
+
+      // Consentimento é condição, não caixa de sugestão: sem ele não há base
+      // para guardar o endereço, e a constraint do banco recusaria de todo jeito.
+      if (request.body.consent !== true) {
+        throw new ValidationError(
+          1,
+          'schema_violation',
+          'É preciso consentir com o envio para registrar o e-mail.',
+        );
+      }
+
+      const { rows } = await deps.pool.query<{ registrar_lead_do_diagnostico: boolean }>(
+        'select registrar_lead_do_diagnostico($1::uuid, $2::text, $3::text)',
+        [request.body.report_id, email, request.body.source ?? null],
+      );
+
+      if (rows[0]?.registrar_lead_do_diagnostico !== true) {
+        // 404 tanto para id inexistente quanto para diagnóstico que já tem
+        // lead: distinguir os dois confirmaria a existência de um id a quem
+        // está chutando.
+        return reply.code(404).send({
+          code: 'not_found',
+          message: 'Diagnóstico não encontrado ou já registrado.',
+        });
+      }
+
+      return reply.code(200).send({ lead_registered: true });
+    },
+  );
 }
 
 /**
@@ -138,17 +231,18 @@ interface MetricaArgs {
 }
 
 /** Só contadores. Nenhuma coluna guarda dado do documento do visitante. */
-async function registrarMetrica(deps: ApiDeps, args: MetricaArgs): Promise<void> {
+async function registrarMetrica(deps: ApiDeps, args: MetricaArgs): Promise<string> {
   const { relatorio } = args;
 
-  await deps.pool.query(
+  const { rows } = await deps.pool.query<{ id: string }>(
     `insert into readiness_reports (
        ip_hash, documents_total, documents_parsed, documents_rejected,
        documents_with_reform, items_total, items_with_reform,
        distinct_issuers, distinct_ncms, periods_covered,
        email, email_consent_at, source
      ) values ($1::char(64), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               case when $11::text is null then null else now() end, $12)`,
+               case when $11::text is null then null else now() end, $12)
+     returning id`,
     [
       args.ipHash,
       relatorio.totals.documents,
@@ -164,6 +258,8 @@ async function registrarMetrica(deps: ApiDeps, args: MetricaArgs): Promise<void>
       args.source ?? null,
     ],
   );
+
+  return rows[0]!.id;
 }
 
 function serializar(relatorio: ReadinessReport): Record<string, unknown> {

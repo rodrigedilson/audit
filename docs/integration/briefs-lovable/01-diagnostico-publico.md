@@ -42,14 +42,16 @@ Campos do form:
 | Campo | Tipo | Obrigatório |
 |---|---|---|
 | `files` | arquivos, repetido | sim, 1 a 50 |
-| `email` | texto | não |
-| `consent` | `"true"` | só se `email` for enviado |
 | `source` | texto | não (ex.: `"landing"`) |
+
+O e-mail **não vai aqui**. Ele é registrado depois, numa rota própria — ver
+"Depois do relatório".
 
 Resposta `200`:
 
 ```json
 {
+  "report_id": "3f2a91c4-8b7e-4d1a-9c55-2e6b0f8a71d3",
   "generated_at": "2027-09-24T14:02:11.000Z",
   "totals": { "documents": 50, "parsed": 47, "rejected": 2, "duplicates": 1 },
   "documents_ready": { "total": 47, "ready": 12, "ready_pct": 25.5 },
@@ -129,8 +131,29 @@ título certo é "2 arquivos não puderam ser lidos", não "Falha no envio".
 ### Depois do relatório
 
 Campo de e-mail **abaixo** do relatório completo, com checkbox de consentimento.
-O botão só habilita com os dois preenchidos. Ao enviar com sucesso,
-`lead_registered` volta `true` — confirme discretamente.
+O botão só habilita com os dois preenchidos.
+
+Ele usa uma rota própria, e **não reenvia os arquivos**:
+
+```
+POST {VITE_AUDIT_API_URL}/reform-readiness/lead      (sem Authorization)
+{
+  "report_id": "<o report_id que veio no relatório>",
+  "email": "contador@escritorio.com.br",
+  "consent": true,
+  "source": "landing"
+}
+```
+
+Resposta `200`: `{ "lead_registered": true }`.
+
+Guarde o `report_id` do relatório em memória (estado do componente) para usar
+aqui. Reenviar os XMLs só para registrar um endereço dobraria o processamento e
+criaria um segundo diagnóstico no funil para o mesmo visitante.
+
+`404` significa id inexistente **ou** e-mail já registrado para aquele
+diagnóstico — a API não distingue os dois de propósito. Trate como "já
+enviado" e não deixe o usuário insistir.
 
 **Nunca** condicione o relatório ao e-mail.
 
@@ -141,13 +164,16 @@ O botão só habilita com os dois preenchidos. Ao enviar com sucesso,
 | Vazio | Área de upload + explicação. Sem esqueleto de tabela. |
 | Carregando | Barra ou spinner, "Lendo N arquivos…". Sem porcentagem falsa. |
 | `200` com `parsed: 0` | Todos os arquivos falharam: mostre as rejeições e convide a tentar de novo. Não mostre 0% como se fosse resultado. |
-| `422` | `{ message }` inline na área de upload — é limite de forma (nenhum arquivo, mais de 50, mais de 10 MB). |
+| `422` | `{ message }` inline na área de upload — é limite de forma (nenhum arquivo, mais de 50, mais de 10 MB). No envio do e-mail, é endereço malformado ou consentimento ausente. |
+| `404` no envio do e-mail | Já registrado, ou `report_id` perdido. "Este relatório já foi enviado." |
 | `429` com `code: "rate_limited"` | "Você fez muitos diagnósticos seguidos. Tente de novo em N segundos." Use `retry_after_seconds`. **Não é tela de upgrade.** |
 | `503` com `code: "diagnostic_disabled"` | "O diagnóstico está temporariamente indisponível." |
 
 ## Não faça
 
 - Não peça e-mail antes do resultado.
+- Não reenvie os XMLs para registrar o e-mail: use `POST /reform-readiness/lead`
+  com o `report_id`.
 - Não recalcule percentual: use `ready_pct`.
 - Não use `supabase-js` — nada aqui passa pelo Supabase deste repositório.
 - Não guarde os XMLs em `localStorage` nem em lugar nenhum: a promessa da página
