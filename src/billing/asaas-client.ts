@@ -1,6 +1,6 @@
 /**
- * Cliente do Asaas (ADR-004). Só o que a Onda 3 usa: cliente, assinatura e
- * cancelamento.
+ * Cliente do Asaas (ADR-004): cliente, assinatura, ajuste do valor da cobrança
+ * do mês e cancelamento.
  *
  * `fetchImpl` é injetável para que os testes exercitem o tratamento de resposta
  * sem rede — e para que um erro de contrato do gateway apareça em teste, não em
@@ -43,7 +43,22 @@ export class AsaasError extends Error {
   }
 }
 
-export class AsaasClient {
+/**
+ * O que a aplicação pede ao gateway. É a porta: a rota e o serviço dependem
+ * dela, e não do cliente HTTP, para que os testes troquem o Asaas por um dublê
+ * sem rede — e para que dev, com o banco compartilhado com produção, nunca
+ * precise de chave de sandbox para exercitar o fluxo.
+ */
+export interface AsaasGateway {
+  createCustomer(input: AsaasCustomerInput): Promise<string>;
+  createSubscription(input: AsaasSubscriptionInput): Promise<string>;
+  updateSubscriptionValue(subscriptionId: string, valueCents: number): Promise<void>;
+  updatePaymentValue(paymentId: string, valueCents: number): Promise<void>;
+  deletePayment(paymentId: string): Promise<void>;
+  cancelSubscription(subscriptionId: string): Promise<void>;
+}
+
+export class AsaasClient implements AsaasGateway {
   private readonly fetchImpl: FetchLike;
 
   constructor(private readonly config: AsaasConfig) {
@@ -87,6 +102,25 @@ export class AsaasClient {
     await this.request('POST', `/subscriptions/${subscriptionId}`, {
       value: valueCents / 100,
     });
+  }
+
+  /**
+   * Fecha o valor de uma cobrança já gerada pela assinatura. A assinatura
+   * nasce com uma estimativa; o valor certo só existe quando o mês de
+   * referência fecha, e é aplicado na cobrança do mês, não na assinatura.
+   */
+  async updatePaymentValue(paymentId: string, valueCents: number): Promise<void> {
+    await this.request('POST', `/payments/${paymentId}`, {
+      value: valueCents / 100,
+    });
+  }
+
+  /**
+   * Remove a cobrança de um mês que fechou sem CNPJ ativo. O Asaas não aceita
+   * cobrança de valor zero, e deixar a estimativa seria cobrança indevida.
+   */
+  async deletePayment(paymentId: string): Promise<void> {
+    await this.request('DELETE', `/payments/${paymentId}`);
   }
 
   async cancelSubscription(subscriptionId: string): Promise<void> {

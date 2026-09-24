@@ -2,6 +2,7 @@ import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from
 import { UnauthorizedError } from '../auth/jwt-verifier.js';
 import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { BillingSettingsMissingError } from '../../billing/billing.service.js';
+import { BillingConflictError, BillingInputError } from '../../billing/billing-activation.service.js';
 import {
   ESAAError,
   IntegrityViolationError,
@@ -33,6 +34,14 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (error instanceof BillingSettingsMissingError) {
       request.log.error({ err: error }, 'billing_settings ausente');
       return reply.code(503).send({ code: 'billing_not_configured', message: error.message });
+    }
+
+    if (error instanceof BillingConflictError) {
+      return reply.code(409).send({ code: 'billing_conflict', message: error.message });
+    }
+
+    if (error instanceof BillingInputError) {
+      return reply.code(400).send({ code: 'bad_request', message: error.message });
     }
 
     // Intenção barrada por uma das 7 camadas: 422, com a camada e o motivo, para

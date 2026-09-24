@@ -39,9 +39,14 @@ const TITULOS: Record<string, string> = {
   '20260921180000_simulation.sql': 'simulador-de-regime',
   '20260921190000_credit_dossier.sql': 'dossie-saldo-credor',
   '20260922100000_propagacao_de_item_nao_classificado.sql': 'correcao-propagacao',
+  '20260924100000_ativacao_da_cobranca.sql': 'ativacao-da-cobranca',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260924100000_ativacao_da_cobranca.sql':
+    'Dados de cobrança do escritório (CPF/CNPJ, e-mail, forma de pagamento),\n' +
+    '-- preenchidos quando o owner ativa a cobrança. Sem ativação não há\n' +
+    '-- assinatura no Asaas: o trial acaba sem virar cobrança por omissão.',
   '20260918120000_multi_tenancy.sql':
     'Escritórios, usuários, CNPJs, competências e o event log.\n' +
     '-- Cria append_event(), que serializa a escrita por CNPJ, e o trigger que\n' +

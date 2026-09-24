@@ -456,7 +456,25 @@ vai no site, antes de qualquer contato comercial.
 - Mostre `subtotal_cents`, `minimum_adjustment_cents` e `total_cents`
   separados. O ajuste de mínimo existe para ser explicado, não escondido atrás
   de um total.
-- `GET /v1/subscription` traz status, fim do trial e a cotação do mês corrente.
+- `GET /v1/subscription` traz status, fim do trial, `billing_activated` e a
+  cotação do mês corrente.
+- `POST /v1/subscription/activate` (`owner`), com `document` (CPF ou CNPJ, com
+  ou sem máscara), `email` e `billing_type` (`PIX`, `BOLETO`, `CREDIT_CARD` ou
+  `UNDEFINED`), cria a cobrança no Asaas.
+  - Sem ativação, nada é cobrado: o trial acaba sem virar fatura. Com
+    `billing_activated: false`, a tela oferece a ativação e não fala em débito.
+  - A cobrança é **pós-paga**: a fatura que vence em dezembro cobra novembro. A
+    resposta traz `first_reference_month` e `first_due_date`; mostre os dois,
+    porque "vence em dezembro" sozinho parece cobrança adiantada.
+  - `estimate_cents` é estimativa pela carteira de hoje. O valor de cada fatura
+    é fechado quando o mês de referência acaba.
+  - `201` na primeira ativação, `200` com `already_active: true` se já estava
+    ativa. `400` para documento com dígito verificador errado e `409` para
+    assinatura cancelada. `503` com `billing_gateway_not_configured` é o
+    esperado em dev, que não fala com o Asaas.
+- `GET /v1/subscription/invoices/{period}`: um mês sem CNPJ ativo aparece como
+  fatura `canceled` de R$ 0. Carteira vazia não paga o mínimo, e a cobrança é
+  removida no Asaas.
 - `POST /v1/subscription/cancel` (`owner`): **um clique, sem diálogo de
   retenção**. Mostre a mensagem que a API devolve — ela diz que os dados e a
   trilha continuam acessíveis.
