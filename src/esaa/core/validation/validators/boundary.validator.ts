@@ -1,6 +1,7 @@
 import { ValidationError } from '../../../shared/types/esaa-errors.js';
 import type { ESAAIntention } from '../../../shared/types/esaa-event.types.js';
 import type { ContractEnforcerService } from '../../contracts/contract-enforcer.service.js';
+import { CRITERIOS_INTERNOS } from '../../../../fiscal/shared/criterios-internos.js';
 
 /**
  * Camada 5 — fronteiras do `AGENT_CONTRACT.yaml`. Aplica-se a agentes; usuários
@@ -19,7 +20,8 @@ export class BoundaryValidator {
         this.layer,
         'boundary_violation',
         result.violations.join('; '),
-      );
+      CRITERIOS_INTERNOS['fronteira-do-agente'],
+    );
     }
   }
 }

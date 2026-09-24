@@ -12,6 +12,8 @@ import { FiscalProjectorService } from '../../fiscal/projection/fiscal-projector
 import { FiscalHashVerifierService } from '../../fiscal/projection/fiscal-hash-verifier.service.js';
 import type { FiscalProjection } from '../../fiscal/shared/fiscal-projection.types.js';
 import type { OutputRejectedPayload } from '../../fiscal/shared/fiscal-projection.types.js';
+import { toRef } from '../../fiscal/shared/evaluation-criterion.js';
+import type { EvaluationCriterion } from '../../fiscal/shared/evaluation-criterion.js';
 
 export interface VerifyReport {
   valid: boolean;
@@ -158,7 +160,7 @@ export class FiscalOrchestratorService {
    */
   private async reject(
     intention: ESAAIntention,
-    error: { layer: number; reason: string; details: string },
+    error: { layer: number; reason: string; details: string; criterion?: EvaluationCriterion },
   ): Promise<ProcessResult> {
     this.logger.warn('Intenção rejeitada', {
       scope: this.scope.toKey(),
@@ -173,6 +175,10 @@ export class FiscalOrchestratorService {
       details: error.details,
       original_action: intention.action,
       validation_layer: error.layer,
+      // `optional()` não serve aqui: este objeto é payload de evento, não
+      // projeção. A omissão é o que mantém idênticos os payloads das rejeições
+      // que não têm critério — recusa de forma da requisição.
+      ...(error.criterion === undefined ? {} : { criterion: toRef(error.criterion) }),
     };
 
     const event = await this.appender.append({

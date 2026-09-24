@@ -20,8 +20,14 @@
  * 2. **Fluxo de eventos por escopo** — contagem, último `event_seq` e um digest
  *    SHA-256 do fluxo inteiro em ordem. O digest é o que pega alteração de
  *    conteúdo que a contagem não vê.
- * 3. **Hash de projeção por escopo** — o mesmo hash que o produto mostra ao
- *    cliente e que `POST /verify` recalcula.
+ *
+ * Este script já conferiu também o hash de projeção, lendo `projection_snapshots`.
+ * A conferência saiu junto com a tabela: nada nunca escreveu nela, então a
+ * comparação era sempre de zero linhas contra zero linhas — passava por
+ * vacuidade e aparecia no relatório como verificada, que é pior do que não
+ * existir. Ver `20260925130000_remove_projection_snapshots.sql`. O hash de
+ * projeção continua conferível, e por um caminho mais forte: ele é derivado do
+ * log, e o digest do item 2 prova que o log restaurado é idêntico ao de origem.
  *
  * Nada é escrito. As duas conexões abrem em transação somente-leitura.
  *
@@ -37,13 +43,6 @@ interface Escopo {
   eventos: number;
   ultimo_seq: number;
   digest: string;
-}
-
-interface Snapshot {
-  tenant_id: string;
-  cnpj: string;
-  last_event_seq: number;
-  projection_hash: string;
 }
 
 /** Objetos sem os quais o banco restaurado não é o mesmo banco. */
@@ -81,14 +80,8 @@ const SQL_ESCOPOS = `
    group by tenant_id, cnpj
    order by tenant_id, cnpj`;
 
-const SQL_SNAPSHOTS = `
-  select tenant_id::text, cnpj, last_event_seq::int, projection_hash
-    from projection_snapshots
-   order by tenant_id, cnpj`;
-
 async function ler(url: string): Promise<{
   escopos: Escopo[];
-  snapshots: Snapshot[];
   gatilho: boolean;
   indiceEventId: boolean;
   funcoes: string[];
@@ -104,7 +97,6 @@ async function ler(url: string): Promise<{
       await client.query('begin read only');
 
       const escopos = await client.query<Escopo>(SQL_ESCOPOS);
-      const snapshots = await client.query<Snapshot>(SQL_SNAPSHOTS);
 
       const gatilho = await client.query<{ existe: boolean }>(
         `select exists (
@@ -131,7 +123,6 @@ async function ler(url: string): Promise<{
 
       return {
         escopos: escopos.rows,
-        snapshots: snapshots.rows,
         gatilho: gatilho.rows[0]?.existe === true,
         indiceEventId: indice.rows[0]?.existe === true,
         funcoes: funcoes.rows.map((r) => r.routine_name).sort(),
@@ -227,24 +218,9 @@ async function main(): Promise<void> {
     );
   }
 
-  // --------------------------------------------------------- hash de projeção
-  const snapsB = new Map(b.snapshots.map((s) => [chave(s), s]));
-  for (const esperado of a.snapshots) {
-    const obtido = snapsB.get(chave(esperado));
-
-    if (obtido === undefined) {
-      problemas.push(`Sem snapshot de projeção para ${chave(esperado)} no restaurado.`);
-    } else if (obtido.projection_hash !== esperado.projection_hash) {
-      problemas.push(
-        `Escopo ${chave(esperado)}: o hash da projeção difere. É o mesmo hash que ` +
-          'o cliente vê na tela e que `POST /verify` recalcula.',
-      );
-    }
-  }
-
   // ------------------------------------------------------------- resultado
-  console.log(`Origem:     ${a.escopos.length} escopo(s), ${a.snapshots.length} snapshot(s)`);
-  console.log(`Restaurado: ${b.escopos.length} escopo(s), ${b.snapshots.length} snapshot(s)`);
+  console.log(`Origem:     ${a.escopos.length} escopo(s)`);
+  console.log(`Restaurado: ${b.escopos.length} escopo(s)`);
   console.log(`Fluxos idênticos: ${iguais} de ${a.escopos.length}`);
 
   if (a.escopos.length === 0) {

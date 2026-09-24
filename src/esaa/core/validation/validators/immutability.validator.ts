@@ -2,6 +2,7 @@ import type { ESAAIntention } from '../../../shared/types/esaa-event.types.js';
 import { ValidationError, ClosedPeriodViolationError } from '../../../shared/types/esaa-errors.js';
 import type { FiscalProjection } from '../../../../fiscal/shared/fiscal-projection.types.js';
 import { ClosedPeriodGuardService } from '../../../../fiscal/period/period-transition.service.js';
+import { CRITERIOS_INTERNOS } from '../../../../fiscal/shared/criterios-internos.js';
 
 /**
  * Camada 6 — imutabilidade da competência confirmada (INV-001).
@@ -18,7 +19,7 @@ export class ImmutabilityValidator {
       this.guard.guard(projection, intention.action, intention.period);
     } catch (cause) {
       if (cause instanceof ClosedPeriodViolationError) {
-        throw new ValidationError(6, 'closed_period_violation', cause.message);
+        throw new ValidationError(6, 'closed_period_violation', cause.message, CRITERIOS_INTERNOS['competencia-confirmada-e-terminal']);
       }
       throw cause;
     }

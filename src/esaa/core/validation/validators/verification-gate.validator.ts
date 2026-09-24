@@ -2,6 +2,7 @@ import type { ESAAEventData } from '../../../shared/types/esaa-event.types.js';
 import { ValidationError } from '../../../shared/types/esaa-errors.js';
 import type { FiscalProjection } from '../../../../fiscal/shared/fiscal-projection.types.js';
 import type { FiscalHashVerifierService } from '../../../../fiscal/projection/fiscal-hash-verifier.service.js';
+import { CRITERIOS_INTERNOS } from '../../../../fiscal/shared/criterios-internos.js';
 
 /**
  * Camada 7 — portão de verificação.
@@ -30,7 +31,8 @@ export class VerificationGateValidator {
         'verification_mismatch',
         `Projeção não fecha com o log: gravado ${result.storedHash}, ` +
           `replay ${result.replayHash}, conteúdo ${result.contentHash}.`,
-      );
+      CRITERIOS_INTERNOS['projecao-fecha-com-o-log'],
+    );
     }
   }
 }

@@ -47,6 +47,8 @@ const TITULOS: Record<string, string> = {
   '20260924200000_teto_da_assinatura.sql': 'teto-da-assinatura',
   '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
   '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
+  '20260925130000_remove_projection_snapshots.sql': 'remove-projection-snapshots',
+  '20260925140000_auditoria_continua.sql': 'auditoria-continua',
   '20260926100000_cancelamento_de_nfe.sql': 'cancelamento-de-nfe',
   '20260926140000_coleta_agendada.sql': 'coleta-agendada',
 };
@@ -59,6 +61,14 @@ const DESCRICOES: Record<string, string> = {
     'Cancelamento de NF-e pela distribuição: a nota cancelada fica marcada e\n' +
     '-- sai das somas, e todo evento trazido pela SEFAZ é guardado, inclusive o\n' +
     '-- que não pode ser aplicado por a competência já estar confirmada.',
+  '20260925140000_auditoria_continua.sql':
+    'Teste de comprovacao e inspecao documentaria: criterios de avaliacao,\n' +
+    '-- execucoes por censo, achados com risco por probabilidade x impacto e\n' +
+    '-- estorno que exige humano identificado. Os criterios nascem NAO\n' +
+    '-- conferidos: o achado existe, aparece e nao afirma.',
+  '20260925130000_remove_projection_snapshots.sql':
+    'Remove a tabela de snapshot da projeção, órfã desde a primeira migration:\n' +
+    '-- nada nunca escreveu nela, e um cache vazio afirma um cache que não existe.',
   '20260925120000_versao_das_faixas.sql':
     'Escada de faixas versionada por data: vale a de maior effective_from até\n' +
     '-- hoje, inteira. Agendar uma escada é inserir as faixas com data futura.',
