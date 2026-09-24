@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises';
  * `CFF_CERT_PFX` e `CFF_CERT_PASSWORD`. Não vem do cofre, e a razão é uma
  * decisão de arquitetura que ainda não foi tomada: o cofre **não guarda a senha
  * do PFX**, de propósito, e sem ela não há como usar o certificado sem alguém
- * digitando. Ver `docs/adr/ADR-006-uso-nao-assistido-do-certificado.md`.
+ * digitando. Ver `docs/adr/ADR-007-uso-nao-assistido-do-certificado.md`.
  *
  * A SVRS pede uma consulta por dia por empresa — as tabelas não mudam
  * diariamente, e laço contínuo é uso indevido do serviço.

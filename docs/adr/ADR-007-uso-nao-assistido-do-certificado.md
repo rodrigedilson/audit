@@ -1,4 +1,4 @@
-# ADR-006 — Uso não assistido do certificado A1
+# ADR-007 — Uso não assistido do certificado A1
 
 **Status:** proposto, aguardando decisão
 **Data:** 2026-09-24

@@ -47,9 +47,13 @@ const TITULOS: Record<string, string> = {
   '20260924200000_teto_da_assinatura.sql': 'teto-da-assinatura',
   '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
   '20260925120000_versao_das_faixas.sql': 'versao-das-faixas',
+  '20260925130000_remove_projection_snapshots.sql': 'remove-projection-snapshots',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260925130000_remove_projection_snapshots.sql':
+    'Remove a tabela de snapshot da projeção, órfã desde a primeira migration:\n' +
+    '-- nada nunca escreveu nela, e um cache vazio afirma um cache que não existe.',
   '20260925120000_versao_das_faixas.sql':
     'Escada de faixas versionada por data: vale a de maior effective_from até\n' +
     '-- hoje, inteira. Agendar uma escada é inserir as faixas com data futura.',

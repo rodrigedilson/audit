@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 7 de 27: reporting
+-- audit — passo 7 de 28: reporting
 --
 -- Catálogo das 12 trilhas de auditoria e a tabela do Book de fechamento.
 -- As trilhas semeadas são exatamente as checagens que ESTE sistema
