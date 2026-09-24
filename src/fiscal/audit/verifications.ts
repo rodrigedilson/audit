@@ -105,15 +105,22 @@ export function failedVerifications(
 }
 
 /**
- * O teste não concluiu: alguma verificação não pôde ser feita.
+ * O exame não concluiu: alguma das verificações pedidas não pôde ser feita.
  *
- * Inconclusivo bloqueia estorno. Invalidar um lançamento com base num exame que
+ * Julga **o que foi pedido**, e não as cinco. Uma trilha que pergunta só pela
+ * autorização do documento responde sobre autorização; exigir as cinco aqui
+ * faria toda trilha estreita sair eternamente inconclusiva, e nenhuma delas
+ * conseguiria concluir coisa alguma.
+ *
+ * A noção forte — as cinco, todas conferidas — continua existindo e se chama
+ * `isReliable`. São perguntas diferentes: esta é "o exame terminou?", aquela é
+ * "há evidência de confiabilidade do lançamento?".
+ *
+ * Inconclusivo bloqueia estorno: invalidar um lançamento com base num exame que
  * não terminou seria afirmar a distorção sem tê-la comprovado.
  */
 export function isInconclusive(results: readonly VerificationResult[]): boolean {
-  return (
-    results.length < VERIFICATIONS.length || results.some((r) => r.outcome === 'not_verified')
-  );
+  return results.length === 0 || results.some((r) => r.outcome === 'not_verified');
 }
 
 /** Conclusão do teste sobre um lançamento. */

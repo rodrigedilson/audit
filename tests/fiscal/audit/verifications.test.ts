@@ -100,6 +100,25 @@ describe('conclude', () => {
   });
 
   /**
+   * `conclude` julga o que foi pedido; `isReliable` julga as cinco. São
+   * perguntas diferentes — "o exame terminou?" e "há evidência de
+   * confiabilidade do lançamento?" — e confundi-las faria toda trilha estreita
+   * sair eternamente inconclusiva, sem nunca concluir coisa alguma.
+   */
+  it('trilha que pergunta uma verificação conclui sobre ela, sem exigir as cinco', () => {
+    const uma = [r('v4_autorizacao_competente', 'pass')];
+
+    expect(conclude(uma)).toBe('confiavel');
+    expect(isInconclusive(uma)).toBe(false);
+    // E ainda assim não há evidência de confiabilidade no sentido forte.
+    expect(isReliable(uma)).toBe(false);
+  });
+
+  it('nenhuma verificação é inconclusivo, não confiável', () => {
+    expect(conclude([])).toBe('inconclusivo');
+  });
+
+  /**
    * Falha é conclusão e prevalece sobre inconclusivo: um documento cancelado
    * com crédito apropriado é distorção provada, e esperar pela verificação 5
    * adiaria um achado que se sustenta sozinho.
