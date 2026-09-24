@@ -80,7 +80,26 @@ existem. O que falta é marcar o ambiente em cada um.
 
 ### 1. Doppler: marcar os dois configs
 
+> **O CLI é opcional para a rotação.** Criar o projeto, guardar os segredos e
+> ligar a integração com o Render se fazem inteiros no painel do Doppler. O CLI
+> serve para rodar o projeto localmente (`doppler run`) e para os scripts de
+> recifragem.
+
 ```bash
+# Antes de tudo: instalar e autenticar o CLI.
+#
+# O comando da documentação oficial — `curl … | sh` — usa o gerenciador de
+# pacote e falha sem root: `dpkg: requested operation requires superuser
+# privilege`. Com `--install-path` ele desliga o gerenciador e instala no
+# diretório do usuário, que é o que se quer numa máquina de desenvolvimento.
+mkdir -p "$HOME/.local/bin"
+curl -Ls https://cli.doppler.com/install.sh | sh -s -- --install-path "$HOME/.local/bin"
+
+# Se `doppler` não for encontrado depois, falta o diretório no PATH:
+# export PATH="$HOME/.local/bin:$PATH"
+
+doppler login
+
 doppler secrets set AUDIT_ENV=prod --project audit --config prd
 doppler secrets set CORS_ORIGINS=https://sped-genius-hub.vercel.app --project audit --config prd
 
