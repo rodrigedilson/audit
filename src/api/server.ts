@@ -46,7 +46,7 @@ export interface ApiDeps {
    * nada é enviado ao gateway. É o que permite operar as primeiras ondas sem
    * credencial de pagamento.
    */
-  asaas?: AsaasClient;
+  asaas?: AsaasGateway;
 }
 
 declare module 'fastify' {
@@ -85,6 +85,11 @@ export const PUBLIC_ROUTES = new Set([
 export interface BuildServerOptions {
   env: Env;
   pool?: pg.Pool;
+  /**
+   * Gateway de cobrança. Os testes injetam um dublê; sem ele, o cliente HTTP é
+   * montado a partir de `ASAAS_API_KEY`, e sem a chave não há gateway.
+   */
+  asaas?: AsaasGateway;
 }
 
 export async function buildServer(options: BuildServerOptions): Promise<FastifyInstance> {
@@ -109,9 +114,11 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     pool,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
-    ...(env.asaas === undefined
-      ? {}
-      : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
+    ...(options.asaas !== undefined
+      ? { asaas: options.asaas }
+      : env.asaas === undefined
+        ? {}
+        : { asaas: new AsaasClient({ apiKey: env.asaas.apiKey, baseUrl: env.asaas.baseUrl }) }),
     orchestratorFor: async (scope) => {
       const orchestrator = new FiscalOrchestratorService(
         new PostgresEventStoreRepository(pool, scope),
