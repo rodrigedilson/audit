@@ -162,6 +162,28 @@ doppler run --project audit --config dev -- npm run doctor   # ambiente dev
 doppler run --project audit --config prd -- npm run doctor   # ambiente prod
 ```
 
+## Assistente fiscal, camada 3 (Anthropic)
+
+**Estado em 2026-09-24:** o código está pronto, e a chave ainda não está no
+Doppler. Sem ela, o assistente responde as perguntas da lista, por consulta
+determinística e com citação, e diz "não sei, e eis o que sei" para as outras. O
+`npm run doctor` mostra `assistente só na camada 1` na linha das variáveis.
+
+Quando houver chave:
+
+```bash
+doppler secrets set ANTHROPIC_API_KEY --project audit --config prd
+# opcional; o padrão é claude-opus-5, a camada 3 do ADR-026
+doppler secrets set ASSISTANT_MODEL=claude-opus-5 --project audit --config prd
+```
+
+Em `dev` a chave pode existir: o assistente só grava em `assistant_messages`,
+que é conversa e não apuração. Mas cada pergunta fora da lista custa uma chamada
+ao modelo. Use uma chave com limite de gasto próprio, e não a de produção.
+
+O `doctor` passa a dizer `assistente camada 3 com claude-opus-5`, e
+`GET /v1/assistant/capabilities` passa a devolver `language_model_configured: true`.
+
 ## Rotação da chave mestra
 
 O cofre aceita **duas chaves ao mesmo tempo**: cifra sempre com a atual, decifra
