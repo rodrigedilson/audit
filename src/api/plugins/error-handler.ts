@@ -1,4 +1,5 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { FeatureNotInPlanError } from '../../billing/plan-features.js';
 import { UnauthorizedError } from '../auth/jwt-verifier.js';
 import { ForbiddenError, NotFoundError } from '../auth/tenant-resolver.js';
 import { BillingSettingsMissingError } from '../../billing/billing.service.js';
@@ -24,6 +25,18 @@ export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
     if (error instanceof UnauthorizedError) {
       return reply.code(401).send({ code: 'unauthorized', message: error.message });
+    }
+
+    // Antes do ForbiddenError genérico: o corpo diz qual recurso e em que planos
+    // ele está, para a tela oferecer a troca de plano em vez de um "proibido".
+    if (error instanceof FeatureNotInPlanError) {
+      return reply.code(403).send({
+        code: 'feature_not_in_plan',
+        message: error.message,
+        feature: error.feature,
+        regime: error.regime,
+        plans_with_feature: error.plansWithFeature,
+      });
     }
 
     if (error instanceof ForbiddenError) {

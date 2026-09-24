@@ -12,6 +12,11 @@ info:
     - `cnpj` sempre com 14 dígitos, sem máscara.
     - `period` no formato `YYYY-MM` (competência).
     - Toda resposta de escrita devolve o `event_seq` gravado e o `projection_hash`.
+    - Recurso fora do plano do CNPJ responde `403` com `code: feature_not_in_plan`,
+      `feature`, `regime` e `plans_with_feature` (os regimes cujo plano o inclui).
+      O plano é por regime, e o que cada um inclui vem de `GET /plans`. O mapa
+      rota → feature está em `src/api/plugins/plan-gate.ts`. `/deadlines`, que é
+      da carteira, abre se algum CNPJ dela tiver `calendario`.
 servers:
   - url: http://localhost:3000/v1
     description: desenvolvimento
