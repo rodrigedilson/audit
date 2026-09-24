@@ -49,18 +49,20 @@ ordem**. Cada um depende das tabelas do anterior.
 | 13 | `13-correcao-propagacao.sql` | correção: a propagação de item ignorava o item nunca classificado |
 | 14 | `14-key_id_do_certificado.sql` | identifica qual chave mestra cifrou cada certificado, para a rotação ser conferível |
 | 15 | `15-remove_tabelas_orfas.sql` | remove as sete tabelas de "interoperabilidade" que nenhum código usa |
-| 16 | `16-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
+| 16 | `16-dia_util_nos_prazos.sql` | permite prazo em dia útil e prazo antecipado — sem ela, o décimo dia útil entraria como dia 10 |
+| 17 | `17-bootstrap-escritorio.sql` | **editar antes** — cria o escritório e vincula seu usuário |
 
 > **Os arquivos são renumerados quando uma onda nova entra.** Se você já aplicou
 > uma versão anterior, rode os que faltam e ignore o bootstrap — ele é
 > idempotente e avisa que o usuário já pertence a um escritório. `npm run doctor`
 > diz exatamente quais tabelas faltam e de qual arquivo elas vêm.
 
-> **Já aplicou até o `13-correcao-propagacao.sql`?** Rode o `14` e o `15`. O
+> **Já aplicou até o `13-correcao-propagacao.sql`?** Rode o `14`, o `15` e o `16`. O
 > `14` só acrescenta uma coluna nula em `certificates`. O `15` remove tabelas, e
 > **se recusa a rodar** caso alguma delas tenha deixado de estar vazia — nesse
 > caso a mensagem diz qual, e a pergunta passa a ser de onde veio o dado. O
-> bootstrap é o último passo e mudou de número (agora é `16`); reexecutá-lo não
+> O `16` só acrescenta uma coluna com padrão que preserva o comportamento atual.
+> O bootstrap é o último passo e mudou de número (agora é `17`); reexecutá-lo não
 > faz diferença, é idempotente.
 
 Antes de executar o passo 14, edite as duas linhas marcadas:

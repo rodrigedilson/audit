@@ -208,6 +208,7 @@ describe('calendário — prazos normativos', () => {
       appliesToRegimes: null,
       monthsAfter: 1,
       dayOfMonth: 20,
+      dayRule: 'exact',
       fixedDate: null,
       warnDays: 10,
       severity: 'high',
@@ -295,5 +296,97 @@ describe('calendário — prazos normativos', () => {
     );
 
     expect(r.map((d) => d.ruleId)).toEqual(['a', 'b']);
+  });
+});
+/**
+ * Dia útil.
+ *
+ * É a parte do calendário em que um erro fica invisível: a data sai plausível e
+ * está errada. Os casos abaixo têm data conferível no calendário de 2027.
+ */
+describe('calendário — dia útil', () => {
+  function regra(override: Partial<DeadlineRule> = {}): DeadlineRule {
+    return {
+      ruleId: 'teste',
+      name: 'Prazo de teste',
+      description: 'Descrição',
+      appliesToRegimes: null,
+      monthsAfter: 0,
+      dayOfMonth: 10,
+      dayRule: 'exact',
+      fixedDate: null,
+      warnDays: 10,
+      severity: 'high',
+      legalBasis: 'Norma fictícia usada só em teste',
+      ...override,
+    };
+  }
+
+  const dataDe = (r: DeadlineRule, period: string): string | undefined =>
+    deriveDeadlines(
+      [r],
+      [
+        {
+          cnpj: '11222333000181',
+          period,
+          state: 'open',
+          regime: 'lucro_real',
+          openedAt: `${period}-01T00:00:00Z`,
+        },
+      ],
+    )[0]?.dueDate;
+
+  /**
+   * Janeiro de 2027 começa numa sexta, e o dia 1º é feriado. Os dias úteis são
+   * 4, 5, 6, 7, 8, 11, 12, 13, 14 e 15 — então o décimo é 15/01.
+   */
+  it('o décimo dia útil de janeiro de 2027 é dia 15', () => {
+    expect(dataDe(regra({ dayRule: 'nth_business_day' }), '2027-01')).toBe('2027-01-15');
+  });
+
+  /** Sem a regra, o mesmo dia 10 cai num domingo — data que não existe como prazo. */
+  it('o dia 10 de janeiro de 2027, exato, é um domingo', () => {
+    expect(dataDe(regra(), '2027-01')).toBe('2027-01-10');
+    expect(new Date('2027-01-10T00:00:00Z').getUTCDay()).toBe(0);
+  });
+
+  /**
+   * O caso perigoso: 20 de junho de 2027 é um domingo. Antecipar leva a 18/06,
+   * uma sexta. Sem antecipar, o calendário diria que há prazo até domingo — dois
+   * dias depois do vencimento real.
+   */
+  it('dia 20 num domingo é antecipado para a sexta anterior', () => {
+    expect(
+      dataDe(regra({ dayOfMonth: 20, dayRule: 'anticipate_to_business_day' }), '2027-06'),
+    ).toBe('2027-06-18');
+  });
+
+  /** Quando o dia já é útil, antecipar não move nada. */
+  it('dia útil não é antecipado', () => {
+    expect(
+      dataDe(regra({ dayOfMonth: 20, dayRule: 'anticipate_to_business_day' }), '2027-07'),
+    ).toBe('2027-07-20');
+  });
+
+  /**
+   * Feriado móvel: a Páscoa de 2027 é em 28/03, então a Sexta-feira Santa é
+   * 26/03 e o Carnaval é 09/02. Um prazo em 26/03 tem de recuar para 25/03.
+   */
+  it('recua em feriado móvel derivado da Páscoa', () => {
+    expect(
+      dataDe(regra({ dayOfMonth: 26, dayRule: 'anticipate_to_business_day' }), '2027-03'),
+    ).toBe('2027-03-25');
+  });
+
+  it('recua no Carnaval, que a rede bancária não opera', () => {
+    expect(
+      dataDe(regra({ dayOfMonth: 9, dayRule: 'anticipate_to_business_day' }), '2027-02'),
+    ).toBe('2027-02-08');
+  });
+
+  /** O prazo do mês X nunca vence no mês X+1, nem pedindo dia útil demais. */
+  it('não escorrega para o mês seguinte', () => {
+    const data = dataDe(regra({ dayOfMonth: 31, dayRule: 'nth_business_day' }), '2027-02');
+    expect(data?.startsWith('2027-02')).toBe(true);
   });
 });
