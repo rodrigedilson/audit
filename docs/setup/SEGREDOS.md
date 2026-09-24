@@ -162,6 +162,50 @@ doppler run --project audit --config dev -- npm run doctor   # ambiente dev
 doppler run --project audit --config prd -- npm run doctor   # ambiente prod
 ```
 
+## Cobrança (Asaas)
+
+**Estado em 2026-09-24:** o código e o schema estão prontos. A migration
+`17-ativacao-da-cobranca.sql` já está aplicada no banco. **Faltam as chaves.**
+Sem elas, a cobrança roda em modo "só cálculo": planos, calculadora e prévia de
+fatura funcionam, `POST /v1/subscription/activate` responde 503 e nada é
+faturado. O `npm run doctor` avisa isso em prod a cada execução, com a lista
+abaixo.
+
+Quando as chaves chegarem:
+
+1. **Chaves no Doppler `prd`**, as três juntas. Com `AUDIT_ENV=prod`, a API não
+   sobe com a chave sem as outras duas.
+
+   ```bash
+   doppler secrets set ASAAS_API_KEY --project audit --config prd
+   doppler secrets set ASAAS_BASE_URL=https://api.asaas.com/v3 --project audit --config prd
+   doppler secrets set ASAAS_WEBHOOK_TOKEN="$(openssl rand -hex 32)" --project audit --config prd
+   ```
+
+   **Nada no config `dev`.** Com o banco compartilhado, uma chave de sandbox em
+   dev gravaria IDs falsos nas tabelas de cobrança de produção. O doctor avisa
+   se isso acontecer.
+
+2. **Webhook no painel do Asaas** (*Integrações → Webhooks*):
+   - URL: `https://<servico-da-api>.onrender.com/v1/webhooks/asaas`;
+   - token de autenticação: o mesmo valor de `ASAAS_WEBHOOK_TOKEN`;
+   - eventos: `PAYMENT_CREATED`, `PAYMENT_RECEIVED`, `PAYMENT_CONFIRMED` e
+     `PAYMENT_OVERDUE`.
+
+   O `PAYMENT_CREATED` é o que fecha o valor da fatura pelo mês de referência.
+   Sem ele, a cobrança fica com a estimativa da ativação, e nenhuma fatura é
+   gravada.
+
+3. **Conferir no sandbox**, uma vez, antes da primeira cobrança real: que
+   `POST /payments/{id}` com só `{ value }` altera o valor de uma cobrança gerada
+   por assinatura. É a única chamada ao Asaas que os testes não confirmam contra
+   o gateway de verdade (lá, ele é um dublê). Rode a API localmente com as
+   chaves de sandbox **passadas só no processo**, nunca gravadas no config
+   `dev`, e contra o Postgres local de testes, não contra o banco compartilhado.
+
+4. **Conferir:** `doppler run --project audit --config prd -- npm run doctor`
+   tem de dizer `cobrança (Asaas): gateway configurado`.
+
 ## Rotação da chave mestra
 
 O cofre aceita **duas chaves ao mesmo tempo**: cifra sempre com a atual, decifra

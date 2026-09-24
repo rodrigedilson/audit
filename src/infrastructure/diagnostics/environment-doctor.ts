@@ -201,6 +201,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await checarRegrasPublicadas(pool));
     checagens.push(await checarPrazosNormativos(pool));
     checagens.push(await checarCotaDoAssistente(pool));
+    checagens.push(await checarCobranca(pool, env));
     checagens.push(await checarEscritorio(pool));
   } finally {
     await pool.end().catch(() => undefined);
@@ -420,6 +421,77 @@ export async function checarCotaDoAssistente(pool: pg.Pool): Promise<Checagem> {
       'O `UPDATE` de carga não rodou: o assistente vai responder 403 para todos os\n' +
       '  clientes, sem erro em log nenhum. Reaplique\n' +
       '  scripts/sql/migracoes/09-assistente-fiscal.sql — é idempotente.',
+  };
+}
+
+/**
+ * Cobrança: schema da ativação e gateway do ambiente.
+ *
+ * É o registro do que falta para cobrar de verdade. Em prod, sem as chaves do
+ * Asaas, a cobrança roda em modo "só cálculo" e a ativação responde 503. Isso é
+ * aviso, não falha: o produto funciona, mas não fatura, e a lista do que
+ * configurar precisa aparecer a cada `doctor`, e não depender de alguém lembrar.
+ *
+ * Em dev, chave do Asaas é o erro: o banco é o de produção, e o sandbox
+ * gravaria IDs de cliente e de assinatura falsos nas tabelas de cobrança reais.
+ */
+export async function checarCobranca(pool: pg.Pool, env: Env): Promise<Checagem> {
+  const nome = 'cobrança (Asaas)';
+  const { rows } = await pool.query<{ colunas: string; ativadas: string | null }>(
+    `select (select count(*) from information_schema.columns
+              where table_schema = 'public' and table_name = 'subscriptions'
+                and column_name in ('billing_document', 'billing_email', 'billing_type', 'activated_at'))::text
+              as colunas,
+            (select count(*) from subscriptions where asaas_subscription_id is not null)::text as ativadas`,
+  );
+
+  if (Number(rows[0]!.colunas) < 4) {
+    return {
+      nome,
+      estado: 'falha',
+      detalhe: 'schema da ativação ausente em subscriptions',
+      acao:
+        'A ativação da cobrança vai falhar ao gravar os dados do pagador. Aplique\n' +
+        '  scripts/sql/migracoes/17-ativacao-da-cobranca.sql — é idempotente.',
+    };
+  }
+
+  const ativadas = Number(rows[0]!.ativadas ?? 0);
+
+  if (env.environment === 'dev') {
+    return env.asaas === undefined
+      ? {
+          nome,
+          estado: 'ok',
+          detalhe: 'dev sem gateway, como deve: o banco é o de produção, e a cobrança é testada com dublê',
+        }
+      : {
+          nome,
+          estado: 'aviso',
+          detalhe: 'dev com ASAAS_API_KEY',
+          acao:
+            'Tire a chave do config dev: com o banco compartilhado, o sandbox grava IDs\n' +
+            '  falsos nas tabelas de cobrança de produção. Ver docs/setup/SEGREDOS.md.',
+        };
+  }
+
+  if (env.asaas === undefined) {
+    return {
+      nome,
+      estado: 'aviso',
+      detalhe: 'modo só cálculo: sem ASAAS_API_KEY, a ativação responde 503 e nada é faturado',
+      acao:
+        'Para cobrar (docs/setup/SEGREDOS.md, seção Cobrança):\n' +
+        '  1. ASAAS_API_KEY, ASAAS_BASE_URL=https://api.asaas.com/v3 e ASAAS_WEBHOOK_TOKEN no Doppler prd;\n' +
+        '  2. webhook /v1/webhooks/asaas no painel do Asaas, com o mesmo token;\n' +
+        '  3. conferir no sandbox o ajuste de valor de cobrança gerada por assinatura.',
+    };
+  }
+
+  return {
+    nome,
+    estado: 'ok',
+    detalhe: `gateway configurado · ${ativadas} escritório(s) com cobrança ativada`,
   };
 }
 
