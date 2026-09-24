@@ -45,9 +45,14 @@ const TITULOS: Record<string, string> = {
   '20260924180000_faixas_de_volume.sql': 'faixas-de-volume',
   '20260924190000_diagnostico_publico.sql': 'diagnostico-publico',
   '20260924200000_teto_da_assinatura.sql': 'teto-da-assinatura',
+  '20260925100000_rotulos_de_feature.sql': 'rotulos-e-lead',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260925100000_rotulos_de_feature.sql':
+    'Rótulo em PT-BR de cada feature do plano, para a tela de preço não\n' +
+    '-- inventar nomes, e a função que anexa o lead a um diagnóstico já feito,\n' +
+    '-- para a tela não reenviar os XMLs só para registrar o e-mail.',
   '20260924150000_chave_alfanumerica.sql':
     'Chave de acesso com CNPJ alfanumérico: letras nas 12 posições do CNPJ do\n' +
     '-- emitente. Troca toda restrição que ainda exija a chave só de dígitos.',

@@ -165,6 +165,31 @@ describe.skipIf(!DATABASE_URL)('API — planos e cobrança', () => {
       expect(body.cap_cents).toBe(2_500_000);
     });
 
+    /**
+     * Sem isto o frontend traduz `saude_cadastro` por conta própria, e foi o que
+     * aconteceu: a página de preço saiu com nomes inventados por quem não
+     * conhece o produto.
+     */
+    it('GET /plans publica o rótulo em PT-BR de cada feature', async () => {
+      const body = (await app.inject({ method: 'GET', url: '/v1/plans' })).json();
+
+      const chaves = new Set(body.plans.flatMap((p: { features: string[] }) => p.features));
+      const rotuladas = new Set(Object.keys(body.feature_labels));
+
+      // Toda chave que algum plano anuncia precisa ter rótulo.
+      for (const chave of chaves) {
+        expect(rotuladas.has(chave as string)).toBe(true);
+      }
+
+      expect(body.feature_labels['saude_cadastro']).toMatchObject({
+        label: 'Saúde do cadastro de itens',
+      });
+      expect(body.feature_labels['apuracao_dual'].description).toBeTruthy();
+      expect(body.feature_labels['saude_cadastro'].sort_order).toBeLessThan(
+        body.feature_labels['white_label'].sort_order,
+      );
+    });
+
     it('carteira pequena não muda de preço com a escada ligada', async () => {
       const body = (
         await app.inject({

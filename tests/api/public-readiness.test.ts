@@ -261,6 +261,123 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
     });
   });
 
+  describe('lead depois do relatório', () => {
+    /**
+     * A tela mostra o relatório primeiro e só então oferece o envio por e-mail.
+     * Sem rota própria, registrar o endereço obrigava a reenviar os mesmos XMLs
+     * — parsing duplicado e uma segunda linha de métrica para o mesmo
+     * diagnóstico.
+     */
+    const registrar = async (body: Record<string, unknown>, ip = proximoIp()) =>
+      app.inject({
+        method: 'POST',
+        url: '/v1/reform-readiness/lead',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+        payload: body,
+      });
+
+    it('anexa o e-mail ao diagnóstico já feito, sem reprocessar nada', async () => {
+      const diagnostico = (await diagnosticar([nota('000000001', true)])).json();
+      expect(diagnostico.report_id).toMatch(/^[0-9a-f-]{36}$/);
+
+      const r = await registrar({
+        report_id: diagnostico.report_id,
+        email: 'contador@escritorio.com.br',
+        consent: true,
+        source: 'landing',
+      });
+
+      expect(r.statusCode).toBe(200);
+      expect(r.json().lead_registered).toBe(true);
+
+      // Uma linha só: o lead entrou na métrica que já existia.
+      const { rows } = await pool.query('select email, email_consent_at, source from readiness_reports');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].email).toBe('contador@escritorio.com.br');
+      expect(rows[0].email_consent_at).not.toBeNull();
+      expect(rows[0].source).toBe('landing');
+    });
+
+    it('recusa sem consentimento', async () => {
+      const diagnostico = (await diagnosticar([nota('000000001')])).json();
+
+      const r = await registrar({
+        report_id: diagnostico.report_id,
+        email: 'contador@escritorio.com.br',
+        consent: false,
+      });
+
+      expect(r.statusCode).toBe(422);
+      const { rows } = await pool.query('select email from readiness_reports');
+      expect(rows[0].email).toBeNull();
+    });
+
+    it('recusa e-mail malformado', async () => {
+      const diagnostico = (await diagnosticar([nota('000000001')])).json();
+
+      const r = await registrar({
+        report_id: diagnostico.report_id,
+        email: 'isto-nao-e-email',
+        consent: true,
+      });
+
+      expect(r.statusCode).toBe(422);
+    });
+
+    /** Reenviar o formulário não pode trocar o endereço nem a data já consentida. */
+    it('não sobrescreve lead já registrado', async () => {
+      const diagnostico = (await diagnosticar([nota('000000001')])).json();
+
+      await registrar({ report_id: diagnostico.report_id, email: 'primeiro@x.com', consent: true });
+      const segunda = await registrar({
+        report_id: diagnostico.report_id,
+        email: 'segundo@x.com',
+        consent: true,
+      });
+
+      expect(segunda.statusCode).toBe(404);
+      const { rows } = await pool.query('select email from readiness_reports');
+      expect(rows[0].email).toBe('primeiro@x.com');
+    });
+
+    /**
+     * 404 tanto para id inexistente quanto para diagnóstico que já tem lead:
+     * distinguir confirmaria a existência de um id a quem está chutando.
+     */
+    it('404 para diagnóstico inexistente', async () => {
+      const r = await registrar({
+        report_id: '00000000-0000-4000-8000-000000000000',
+        email: 'a@b.com',
+        consent: true,
+      });
+
+      expect(r.statusCode).toBe(404);
+    });
+
+    it('recusa id que não é UUID', async () => {
+      const r = await registrar({ report_id: 'nao-e-uuid', email: 'a@b.com', consent: true });
+
+      expect(r.statusCode).toBe(400);
+    });
+
+    it('dispensa autenticação, como o diagnóstico', async () => {
+      const diagnostico = (await diagnosticar([nota('000000001')])).json();
+
+      const r = await app.inject({
+        method: 'POST',
+        url: '/v1/reform-readiness/lead',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer isto-nao-e-um-token',
+          'x-forwarded-for': proximoIp(),
+        },
+        payload: { report_id: diagnostico.report_id, email: 'a@b.com', consent: true },
+      });
+
+      expect(r.statusCode).toBe(200);
+    });
+  });
+
   describe('limites', () => {
     it('recusa lote vazio', async () => {
       const form = new FormData();

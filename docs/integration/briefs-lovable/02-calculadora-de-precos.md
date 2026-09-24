@@ -169,9 +169,25 @@ preço pública, mesmo antes de a pessoa digitar qualquer número.
 
 - `minimum_cents` de `/plans`: "Assinatura mínima de R$ 150,00/mês."
 - `cap_cents`, quando não for `null`: "Teto de R$ 25.000,00/mês."
-- Features por plano: liste de `plans[].features` — são chaves
-  (`saude_cadastro`, `apuracao_dual`, `credito_em_risco`, `white_label`,
-  `sped_completo`…). Mapeie para português na tela.
+- Features por plano: `plans[].features` traz **chaves**
+  (`saude_cadastro`, `apuracao_dual`…). **Não invente os nomes em português.**
+  O mesmo `GET /plans` devolve `feature_labels`, um mapa de chave para
+  `{ label, description, sort_order }`:
+
+  ```json
+  "feature_labels": {
+    "saude_cadastro": {
+      "label": "Saúde do cadastro de itens",
+      "description": "Aponta item sem NCM, código incompatível e classificação que contamina a apuração.",
+      "sort_order": 10
+    }
+  }
+  ```
+
+  Use `label` no item da lista, `description` como subtítulo ou tooltip, e
+  ordene por `sort_order` — a ordem em `features` é a das ondas que entregaram
+  cada uma, não a que o cliente quer ler. Chave sem rótulo no mapa não deve
+  aparecer na tela; é sinal de que a tabela ficou para trás.
 
 ## Estados
 
@@ -190,4 +206,5 @@ preço pública, mesmo antes de a pessoa digitar qualquer número.
   por faixa; refazer a conta produz centavos que não fecham.
 - Não esconda a escada atrás de "fale com um consultor". Ela é pública de
   propósito.
+- Não traduza chave de feature na mão: use `feature_labels`.
 - Não use `supabase-js`.

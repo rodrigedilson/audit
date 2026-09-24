@@ -1661,6 +1661,19 @@ paths:
                     type: integer
                     nullable: true
                     description: Teto da assinatura. `null` quando não há teto contratado.
+                  feature_labels:
+                    type: object
+                    description: >
+                      Rótulo em PT-BR de cada chave que aparece em `plans[].features`,
+                      com uma descrição de uma linha e a ordem de exibição. Existe para
+                      a tela não traduzir `saude_cadastro` por conta própria — sem isto
+                      quem constrói o frontend inventa o nome comercial.
+                    additionalProperties:
+                      type: object
+                      properties:
+                        label: { type: string }
+                        description: { type: string, nullable: true }
+                        sort_order: { type: integer }
                   tiers:
                     type: array
                     items:
@@ -1809,6 +1822,62 @@ paths:
                   code: { type: string, enum: [diagnostic_disabled] }
                   message: { type: string }
 
+  /reform-readiness/lead:
+    post:
+      tags: [public]
+      operationId: registerReadinessLead
+      summary: Anexa o e-mail a um diagnóstico já feito
+      description: >
+        A tela mostra o relatório **primeiro** e só então oferece enviá-lo por
+        e-mail — muro de e-mail é a opacidade que o produto combate. Esta rota
+        registra o endereço sem reprocessar o lote.
+
+
+        O `report_id` vai no corpo, e não no caminho, porque o hook de
+        autenticação reconhece rota pública por igualdade exata de URL.
+
+
+        Responde `404` tanto para id inexistente quanto para diagnóstico que já
+        tem lead: distinguir confirmaria a existência de um id a quem está
+        chutando. Reenviar o formulário não troca o endereço nem a data de
+        consentimento já gravados.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [report_id, email, consent]
+              properties:
+                report_id: { type: string, format: uuid }
+                email: { type: string, maxLength: 254 }
+                consent:
+                  type: boolean
+                  description: Precisa ser `true`. Sem consentimento não há base para guardar o endereço.
+                source: { type: string, maxLength: 120 }
+      responses:
+        "200":
+          description: Lead registrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lead_registered: { type: boolean, enum: [true] }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Rejected" }
+        "429":
+          description: Limite de uso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [rate_limited] }
+                  message: { type: string }
+                  retry_after_seconds: { type: integer }
+
 # =====================================================================
 components:
   securitySchemes:
@@ -1933,6 +2002,13 @@ components:
     ReadinessReport:
       type: object
       properties:
+        report_id:
+          type: string
+          format: uuid
+          description: >
+            Identifica este diagnóstico para o envio do relatório por e-mail em
+            `POST /reform-readiness/lead`. Sem ele a tela precisaria reenviar os
+            XMLs só para registrar o endereço.
         generated_at: { type: string, format: date-time }
         totals:
           type: object
