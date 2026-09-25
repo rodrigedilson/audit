@@ -37,6 +37,7 @@ import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.se
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
 import type { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { loadConfig } from '../config/esaa-config.js';
+import { createBurstLimiter, exigirLimite } from './plugins/rate-limit.js';
 
 export interface ApiDeps {
   env: Env;
@@ -256,6 +257,31 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   app.get('/v1/health', async () => ({ status: 'ok' }));
 
   /**
+   * Limite das rotas autenticadas, por usuário do token.
+   *
+   * As rotas públicas já tinham limite; estas não tinham nenhum. Com token
+   * válido dava para varrer `GET /clients/{cnpj}/…` no ritmo que a rede
+   * aguentasse — e como cada chamada resolve escritório e consulta o banco, o
+   * custo do abuso caía inteiro sobre o Postgres.
+   *
+   * A chave é o usuário, e não o IP: o IP de um escritório é compartilhado entre
+   * os contadores dele, e limitar por IP puniria o escritório grande. O usuário
+   * é quem o token identifica, e é quem responde pelo que fez.
+   *
+   * Os números são folgados de propósito. 240/min é bem mais do que uma tela
+   * dispara ao abrir — o alvo é o laço automatizado, não o humano apressado.
+   * Apertar isto sem medir transformaria o controle em chamado de suporte.
+   *
+   * **Em memória e por processo**, como o limitador das rotas públicas: com mais
+   * de uma instância, cada uma conta a sua parte e o limite efetivo multiplica
+   * pelo número de instâncias. Está registrado em `docs/seguranca/CONTROLES.md`.
+   */
+  const limitesAutenticados = [
+    createBurstLimiter({ windowMs: 60_000, max: 240 }),
+    createBurstLimiter({ windowMs: 3_600_000, max: 6_000 }),
+  ];
+
+  /**
    * Autenticação por hook global, não por rota: rota nova nasce protegida, e
    * esquecer de adicionar um `preHandler` não cria um vazamento silencioso. O
    * custo é manter `PUBLIC_ROUTES` explícito.
@@ -266,6 +292,15 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     }
 
     const user = await deps.jwtVerifier.verify(request.headers.authorization);
+
+    // Antes de resolver o escritório, que é ida ao banco: sob abuso, o limite
+    // deve custar menos que a requisição que ele recusa.
+    exigirLimite(
+      limitesAutenticados,
+      [user.userId],
+      'Muitas requisições. Espere e tente de novo.',
+    );
+
     request.tenant = await deps.tenantResolver.resolve(user);
   });
 
