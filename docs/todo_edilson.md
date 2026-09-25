@@ -6,22 +6,52 @@ decidir ou fazer**, separada do que é código.
 Cada item é conferido contra o repositório e o banco antes de entrar. Os que já
 foram resolvidos saem daqui — a lista só serve se encolher.
 
-*Última conferência: 2026-09-24, sobre a `main` em `7237827` (PR #57).*
+*Última conferência: 2026-09-25, sobre a `main` em `ed34a6b` (PR #65).*
 
 ---
 
 ## 1. Antes de publicar
 
-- [ ] **Definir `TRUST_PROXY=true` no ambiente de produção.**
-      Desde o PR #57 a API **se recusa a subir** com `AUDIT_ENV=prod` sem ele, o
-      que é muito melhor do que o comportamento anterior. Mas ainda é você quem
-      põe a variável no Render — só que agora o erro aparece no boot, e não como
-      um funil que morre em silêncio.
+- [ ] **Ligar o envio do relatório do diagnóstico por e-mail (Doppler `prd`).**
+      O código está no ar desde o PR #65, e o SQL do passo 31 já está aplicado.
+      Sem estes segredos o diagnóstico funciona, o lead é gravado e a resposta
+      diz `email_sent: false` — a tela avisa que o envio automático ainda não
+      está ligado. O envio é por SMTP, então serve o servidor do seu domínio.
 
-- [ ] **Conferir o *valor* de `CORS_ORIGINS`, não só a presença.**
-      A ausência já derruba o boot em produção. O que ninguém checa é se o
-      domínio listado é o certo: com o valor errado, o navegador bloqueia tudo e
-      o erro aparece só no console do visitante.
+      ```bash
+      # smtps:// na 465 ou smtp:// na 587; o @ do usuário vira %40.
+      doppler secrets set MAIL_SMTP_URL='smtps://diagnostico%40seu-dominio.com.br:SENHA@smtp.seu-provedor.com:465' --project audit --config prd
+      doppler secrets set MAIL_FROM='Diagnóstico <diagnostico@seu-dominio.com.br>' --project audit --config prd
+      doppler secrets set PUBLIC_API_URL=https://SUA-API.onrender.com --project audit --config prd
+      doppler secrets set REPORT_ENCRYPTION_KEY="$(openssl rand -base64 48)" --project audit --config prd
+      doppler secrets set IP_HASH_SECRET="$(openssl rand -base64 48)" --project audit --config prd
+      ```
+
+      - As três primeiras vão juntas: a API não sobe com só parte delas, porque
+        o e-mail leva o link de remoção, que usa a URL pública.
+      - Muitos provedores pedem **senha de aplicativo**, e não a senha da conta.
+      - **SPF e DKIM** do domínio do `MAIL_FROM` precisam autorizar o servidor
+        SMTP, ou o relatório cai em spam.
+      - Ao ligar o `IP_HASH_SECRET`, a quota diária de cada IP recomeça do zero,
+        uma vez.
+      - Conferir com `doppler run --project audit --config prd -- npm run doctor`:
+        a linha `e-mail do diagnóstico` passa de aviso para ok. Detalhes em
+        `docs/setup/SEGREDOS.md`, seção E-mail do diagnóstico.
+
+- [ ] **Tirar `http://localhost:5173` do `CORS_ORIGINS` de produção.**
+      Hoje o valor em `prd` é `http://localhost:5173,https://sped-genius-hub.vercel.app`.
+      O domínio do front está certo; o `localhost` sobra, e libera a API de
+      produção para qualquer página servida na porta 5173 da máquina de quem a
+      abrir.
+
+      ```bash
+      doppler secrets set CORS_ORIGINS=https://sped-genius-hub.vercel.app --project audit --config prd
+      ```
+
+- [ ] **Termo de uso: guarda do A1 e coleta agendada (ADR-007).**
+      Guardar o certificado e ligar a coleta agendada autoriza o sistema a agir
+      em nome da empresa. O termo precisa dizer isso em palavras que um contador
+      entende, antes do primeiro cliente ligar a opção.
 
 - [ ] **Ordem de deploy: API antes do frontend.**
       A tela de preço esconde toda feature sem rótulo — comportamento correto.
@@ -113,6 +143,8 @@ foram resolvidos saem daqui — a lista só serve se encolher.
 
 ## Resolvido desde a primeira versão desta lista
 
+- ~~`TRUST_PROXY=true` em produção~~ — gravado no Doppler `prd`; a API recusa
+  subir em prod sem ele (PR #57).
 - ~~`TRUST_PROXY` falhando em silêncio~~ — a API agora recusa subir em prod sem
   ele (PR #57).
 - ~~Limite de requisições nas rotas públicas~~ — login 5/min e 20/h, calculadora
