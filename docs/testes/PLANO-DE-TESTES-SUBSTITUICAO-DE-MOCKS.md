@@ -73,7 +73,7 @@ conhecidos:
 - `cobrança (Asaas)`: modo só cálculo, até as chaves chegarem;
 - `e-mail do diagnóstico`: sem os segredos do SMTP (ver `docs/todo_edilson.md`);
 - `.env`: arquivo local, não diz respeito a `prd`;
-- na linha das variáveis, `assistente só na camada 1`: sem `ANTHROPIC_API_KEY`.
+- na linha das variáveis, `assistente camada 3 com claude-opus-5` em `prd`; em `dev`, sem chave, `assistente só na camada 1`.
 
 Em `dev`, a linha `e-mail do diagnóstico` fica `ok` sem SMTP, como a cobrança
 sem gateway.
@@ -139,20 +139,20 @@ Quando as chaves chegarem (`SEGREDOS.md`, seção Cobrança):
 | A3-11 | Reentrega do webhook | Reenviar o mesmo evento pelo painel | 200 `duplicate_ignored`; nada muda | ✅ |
 | A3-12 | Cancelamento | `api -X POST $API/subscription/cancel -d '{"reason":"teste"}'` | Assinatura cancelada no Asaas e `status: canceled` | 🟡 |
 
-### Onda 4: assistente, camada 3 (⛔ até a `ANTHROPIC_API_KEY`)
+### Onda 4: assistente, camada 3
 
-Hoje:
+A `ANTHROPIC_API_KEY` está no Doppler `prd` e a API no Render a recebeu (conferido em 25/09). Sem modelo, o assistente continua respondendo assim:
 
 | ID | Caso | Passos | Esperado | Auto |
 |---|---|---|---|---|
 | A4-1 | Pergunta da lista, camada 1 | Criar uma conversa e perguntar "quantas notas entraram?" | `tier: 1`, com citações | ✅ |
-| A4-2 | Pergunta fora da lista, sem modelo | Perguntar "resuma a situação deste cliente" | `answerable: false`, "não há modelo de linguagem configurado", lista do que sabe | ✅ |
+| A4-2 | Pergunta fora da lista, sem modelo | Em ambiente sem a chave (o `dev` não tem), perguntar "resuma a situação deste cliente" | `answerable: false`, "não há modelo de linguagem configurado", lista do que sabe | ✅ |
 
-Com a chave (em dev, com chave de limite baixo):
+Com a chave:
 
 | ID | Caso | Passos | Esperado | Auto |
 |---|---|---|---|---|
-| A4-3 | Capabilities com modelo | `curl $API/assistant/capabilities` | `language_model_configured: true`, `language_model: "claude-opus-5"` | ✅ |
+| A4-3 | Capabilities com modelo | `curl $API/assistant/capabilities` (rota pública) | `language_model_configured: true`, `language_model: "claude-opus-5"`. **Executado em 25/09 contra o Render: passou** | ✅ |
 | A4-4 | Resposta ancorada | Cliente com competência apurada; perguntar "resuma a situação deste cliente" | `tier: 3`, `confidence: medium`, cada `fact` com citações; valores iguais aos das consultas de camada 1 | 🟡 |
 | A4-5 | Pergunta sem lastro | "qual a capital da França?" | `answerable: false` com motivo; nenhum fato | 🟡 |
 | A4-6 | Valor inventado é barrado | Não dá para forçar o modelo a errar em produção: coberto pelo teste `tier3.test.ts` | — | ✅ |
@@ -346,6 +346,7 @@ select created_at, email is not null as tem_lead, report_expires_at,
 
 | ID | Caso | Passos | Esperado | Auto |
 |---|---|---|---|---|
+| TK-0 | Extrator com o modelo real | Demonstrativo de exemplo da suíte (`tests/helpers/capag.ts`) pelo `ClaudeCapagExtractor` com a chave de `prd`, sem gravar | `reproduces: true`, `verified: true`, `problems: []`, faixa C, CAPAG de R$ 950.000,00. **Executado em 25/09: passou, em 10 s** | ✅ |
 | TK-1 | Fórmula oficial carregada | `npm run doctor` (prd) | "CAPAG": 5 grupos com a oficial da PGFN conferida, extrator configurado. **Executado em 25/09: passou** | ✅ |
 | TK-2 | Oficial antes da doutrina | `api $API/clients/$CNPJ/capag` | `reference_formulas` com os cinco grupos, `source_kind: oficial_pgfn` e `verified: true`; PJ fora do Simples com `0.5` em V6 | ✅ |
 | TK-3 | Doutrina nunca conferida | SQL Editor: `update capag_reference_formulas set verified = true where source_kind = 'doutrina';` | Recusado por `capag_referencia_conferida_so_oficial` | ✅ |
