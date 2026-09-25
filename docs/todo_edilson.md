@@ -6,54 +6,21 @@ decidir ou fazer**, separada do que é código.
 Cada item é conferido contra o repositório e o banco antes de entrar. Os que já
 foram resolvidos saem daqui — a lista só serve se encolher.
 
-*Última conferência: 2026-09-25, sobre a `main` em `4a1a336` (PR #75), com o
-doctor rodado contra produção e o schema de produção lido tabela a tabela. A
-seção 2 foi conferida contra um banco limpo com os papéis do Supabase, não
-contra produção: as migrations dos passos 34 e 35 estão em `main` e ainda não
-foram aplicadas, e a da perícia está em PR aberto.*
+*Última conferência: 2026-09-25, sobre a `main` em `0d5715f` (PR #85), com o
+doctor rodado contra produção: tudo ok, menos os avisos de cobrança (Asaas) e
+e-mail do diagnóstico. Segredos de `prd` conferidos por presença, sem ler o
+valor.*
 
 ---
 
-## 0. Agora — dado fiscal aberto na internet
-
-- [ ] **Aplicar `supabase/migrations/20260927100000_view_exposta_ao_anon.sql`.**
-      (No SQL Editor do Supabase. O equivalente numerado sai em
-      `scripts/sql/migracoes/` com `npm run sql:bundle`; o número muda a cada
-      migration nova, então o caminho acima é o que não envelhece.)
-      A view `sped_invoices_for_crossref` responde à chave anon do Supabase com
-      192 notas fiscais reais: CNPJ do emitente, número, série e data. A chave
-      anon é **pública por construção** — vai no pacote do frontend e qualquer
-      pessoa a extrai do navegador. Conferido em produção em 25/09/2026 com um
-      `GET` que devolveu `200`.
-
-      A view é resíduo da fase anterior e nenhum código a consulta. A migration
-      revoga o acesso e liga `security_invoker`; não dropa, porque a definição
-      dela é a única cópia que existe.
-
-      **Confere assim:** `doppler run --project audit --config prd -- npm run doctor`.
-      A checagem *exposição à chave anon* tem de sair `[ok]`; hoje sai `[FALHA]`
-      nomeando a view.
-
-- [ ] **Aplicar `supabase/migrations/20260927140000_anon_nos_catalogos.sql`
-      junto — sem ela o doctor continua reprovando.**
-      A view não era a única coisa aberta. `tax_rules`, `audit_trails`,
-      `deadline_rules` e `evaluation_criteria` também respondiam à chave anon,
-      por `grant` das migrations que as criaram. Rodei a checagem nova contra um
-      banco limpo, com os papéis do Supabase, e ela acusou duas delas — só duas
-      porque testa o que **devolve linha**, e as outras estão vazias por
-      contrato. Acusaria as quatro no dia em que alguém carregasse as regras.
-
-      São catálogos sem dado de cliente, e a justificativa de então era
-      razoável. Mas **dado sem `tenant_id` não é o mesmo que dado que precisa
-      ser público**: nenhuma tela pública os consome, e quem os lê é a nossa
-      API, autenticada. `authenticated` permanece; só o `anon` sai.
+## 0. Agora — acervo legado em produção
 
 - [ ] **Decidir o destino do acervo legado.**
       Vinte e dois objetos em produção sobraram da fase anterior, e **dezoito
       têm dado** de clientes reais — notas, itens, tributos, XML. Nenhuma
       migration os cria, nenhum código os lê, e estão fora do isolamento por
-      `(tenant_id, cnpj)` e de qualquer trilha. O item acima fecha o furo de
-      permissão de um deles; o acervo continua lá.
+      `(tenant_id, cnpj)` e de qualquer trilha. A view que respondia à chave
+      anon já foi fechada (ver "Resolvido"); o acervo continua lá.
 
       Migrar, arquivar ou apagar. Apagar dado fiscal de cliente é decisão sua.
       Inventário com contagem de linhas em
@@ -81,7 +48,7 @@ foram aplicadas, e a da perícia está em PR aberto.*
       # smtps:// na 465 ou smtp:// na 587; o @ do usuário vira %40.
       doppler secrets set MAIL_SMTP_URL='smtps://diagnostico%40seu-dominio.com.br:SENHA@smtp.seu-provedor.com:465' --project audit --config prd
       doppler secrets set MAIL_FROM='Diagnóstico <diagnostico@seu-dominio.com.br>' --project audit --config prd
-      doppler secrets set PUBLIC_API_URL=https://SUA-API.onrender.com --project audit --config prd
+      doppler secrets set PUBLIC_API_URL=https://audit-0wy2.onrender.com --project audit --config prd
       doppler secrets set REPORT_ENCRYPTION_KEY="$(openssl rand -base64 48)" --project audit --config prd
       doppler secrets set IP_HASH_SECRET="$(openssl rand -base64 48)" --project audit --config prd
       ```
@@ -97,8 +64,27 @@ foram aplicadas, e a da perícia está em PR aberto.*
         a linha `e-mail do diagnóstico` passa de aviso para ok. Detalhes em
         `docs/setup/SEGREDOS.md`, seção E-mail do diagnóstico.
 
+- [ ] **Ligar a cobrança: chaves do Asaas no Doppler `prd`.**
+      Sem elas a cobrança fica em modo só cálculo: a cotação e a fatura saem,
+      nada vai ao gateway, e a ativação responde 503
+      `billing_gateway_not_configured`. É o aviso "cobrança (Asaas)" do doctor.
+      As três vão juntas: com a chave, `prd` exige a URL de produção e o token
+      do webhook, porque sem a URL a chave de produção iria para o sandbox sem
+      erro nenhum.
+
+      ```bash
+      doppler secrets set ASAAS_API_KEY='<chave de produção>' --project audit --config prd
+      doppler secrets set ASAAS_BASE_URL=https://api.asaas.com/v3 --project audit --config prd
+      doppler secrets set ASAAS_WEBHOOK_TOKEN="$(openssl rand -hex 32)" --project audit --config prd
+      ```
+
+      No painel do Asaas, cadastrar o webhook em
+      `https://audit-0wy2.onrender.com/v1/webhooks/asaas`, com o mesmo
+      `ASAAS_WEBHOOK_TOKEN` como token de autenticação (chega no cabeçalho
+      `asaas-access-token`). Depois, os casos A3-4 a A3-12 do plano de testes.
+
 - [ ] **Tirar `http://localhost:5173` do `CORS_ORIGINS` de produção.**
-      Hoje o valor em `prd` é `http://localhost:5173,https://sped-genius-hub.vercel.app`.
+      Conferido em 25/09: o valor em `prd` continua `http://localhost:5173,https://sped-genius-hub.vercel.app`.
       O domínio do front está certo; o `localhost` sobra, e libera a API de
       produção para qualquer página servida na porta 5173 da máquina de quem a
       abrir.
@@ -284,6 +270,11 @@ chutar. Mas quem tira do "não conferi" é você.
 
 ## Resolvido desde a primeira versão desta lista
 
+- ~~Dado fiscal aberto à chave anon~~ — as migrations
+  `20260927100000_view_exposta_ao_anon.sql` e
+  `20260927140000_anon_nos_catalogos.sql` estão aplicadas: o doctor contra
+  produção dá ok em "exposição à chave anon" e "visibilidade das tabelas
+  públicas" (25/09/2026).
 - ~~Conferir os coeficientes da CAPAG-P~~ — a PGFN publica as cinco fórmulas
   (pessoa física, PJ fora do Simples, PJ do Simples, MEI e PJ inativa) na
   página "Consultar a Capacidade de Pagamento", no gov.br. O buscador a lê
