@@ -2,6 +2,7 @@ import pg from 'pg';
 import { ignorarErroDeClienteOcioso } from '../persistence/pool-errors.js';
 import { loadEnv, EnvError, type Env } from '../../config/env.js';
 import { CertificateVault } from '../../fiscal/portfolio/certificate-vault.js';
+import { RETENCAO_EM_DIAS } from '../security/security-trail-retention.js';
 
 /**
  * Diagnóstico do ambiente: responde "por que a API não está funcionando" com
@@ -256,6 +257,9 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await isolar('trilhas de auditoria', () => checarTrilhas(pool)));
     checagens.push(
       await isolar('exposição à chave anon', () => checarExposicaoAoAnon(pool)),
+    );
+    checagens.push(
+      await isolar('trilha de segurança', () => checarTrilhaDeSeguranca(pool)),
     );
     checagens.push(
       await isolar('visibilidade das tabelas públicas', () =>
@@ -669,6 +673,12 @@ export async function checarTrilhas(pool: pg.Pool): Promise<Checagem> {
  * com o privilégio de quem a definiu, atravessando a RLS das tabelas de baixo.
  * Uma checagem por lista nunca teria visto, porque a view não estava na lista.
  */
+/** Tentativas contra a mesma conta em 24h que merecem um olhar. */
+const FALHAS_POR_CONTA = 20;
+
+/** Recusas da mesma origem em 24h. Mais alto: uma rede compartilha saída. */
+const RECUSAS_POR_ORIGEM = 100;
+
 const LEITURA_ANON_INTENCIONAL = new Set([
   // Catálogo da calculadora de preço, que é pública antes de qualquer cadastro.
   'plans',
@@ -679,6 +689,87 @@ const LEITURA_ANON_INTENCIONAL = new Set([
   // códigos publicados pelo CONFAZ: públicos na origem, sem dado de cliente.
   'cfops',
 ]);
+
+/**
+ * O que a trilha de segurança está mostrando.
+ *
+ * Existe porque trilha que ninguém olha é arquivo, não controle. **Não
+ * substitui alerta em tempo real** — isso precisa de um destino, e destino é
+ * decisão de quem opera. O que esta checagem faz é garantir que, na primeira vez
+ * que alguém rodar o diagnóstico, o que está acontecendo apareça.
+ *
+ * Confere também se o expurgo está rodando. Trilha mais velha que a retenção
+ * significa que o agendador parou — e um expurgo que não roda não produz erro
+ * nenhum, então esta é a única forma de perceber.
+ */
+export async function checarTrilhaDeSeguranca(pool: pg.Pool): Promise<Checagem> {
+  const { rows: resumo } = await pool.query<{ kind: string; n: string }>(
+    `select kind, count(*)::text as n from security_events
+      where at > now() - interval '24 hours'
+      group by kind order by kind`,
+  );
+
+  const { rows: velhos } = await pool.query<{ dias: string | null }>(
+    `select extract(day from now() - min(at))::text as dias from security_events`,
+  );
+
+  const { rows: alvos } = await pool.query<{ n: string }>(
+    `select count(*)::text as n from (
+       select subject_hash from security_events
+        where kind = 'login_falhou' and subject_hash is not null
+          and at > now() - interval '24 hours'
+        group by subject_hash having count(*) >= $1
+     ) x`,
+    [FALHAS_POR_CONTA],
+  );
+
+  const { rows: origens } = await pool.query<{ n: string }>(
+    `select count(*)::text as n from (
+       select ip_hash from security_events
+        where kind in ('login_falhou', 'nao_autenticado') and ip_hash is not null
+          and at > now() - interval '24 hours'
+        group by ip_hash having count(*) >= $1
+     ) x`,
+    [RECUSAS_POR_ORIGEM],
+  );
+
+  const total = resumo.reduce((t, r) => t + Number(r.n), 0);
+  const diasDoMaisVelho = Number(velhos[0]?.dias ?? 0);
+  const avisos: string[] = [];
+
+  if (Number(alvos[0]?.n ?? 0) > 0) {
+    avisos.push(
+      `${alvos[0]!.n} conta(s) com ${FALHAS_POR_CONTA}+ tentativas de login falhas em 24h`,
+    );
+  }
+  if (Number(origens[0]?.n ?? 0) > 0) {
+    avisos.push(`${origens[0]!.n} origem(ns) com ${RECUSAS_POR_ORIGEM}+ recusas em 24h`);
+  }
+  if (diasDoMaisVelho > RETENCAO_EM_DIAS + 1) {
+    avisos.push(
+      `o evento mais antigo tem ${diasDoMaisVelho} dias, acima da retenção de ` +
+        `${RETENCAO_EM_DIAS} — o expurgo não está rodando`,
+    );
+  }
+
+  // Zero evento não é "está tudo bem": pode ser trilha desligada. A frase diz o
+  // que foi observado, em vez de deixar o silêncio parecer aprovação.
+  const movimento =
+    total === 0
+      ? 'nenhum evento nas últimas 24h'
+      : resumo.map((r) => `${r.kind}=${r.n}`).join(', ');
+
+  if (avisos.length > 0) {
+    return {
+      nome: 'trilha de segurança',
+      estado: 'aviso',
+      detalhe: `${avisos.join(' · ')}. Movimento em 24h: ${movimento}`,
+      acao: 'Investigue com o plano em docs/seguranca/INCIDENTES.md.',
+    };
+  }
+
+  return { nome: 'trilha de segurança', estado: 'ok', detalhe: movimento };
+}
 
 export async function checarExposicaoAoAnon(pool: pg.Pool): Promise<Checagem> {
   const client = await pool.connect();

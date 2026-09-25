@@ -8,6 +8,7 @@ import {
   checarCotaDoAssistente,
   checarCnpjAlfanumerico,
   checarExposicaoAoAnon,
+  checarTrilhaDeSeguranca,
   checarCobranca,
   checarEmailDoDiagnostico,
   checarCertificadosParaColeta,
@@ -865,5 +866,86 @@ describe('checarExposicaoAoAnon', () => {
     );
 
     expect(r.acao).toContain('LEITURA_ANON_INTENCIONAL');
+  });
+});
+
+/**
+ * Trilha que ninguém olha é arquivo, não controle. A checagem não substitui
+ * alerta em tempo real — isso precisa de um destino, e destino é decisão de quem
+ * opera —, mas garante que o que está acontecendo apareça na primeira vez que
+ * alguém rodar o diagnóstico.
+ */
+describe('checarTrilhaDeSeguranca', () => {
+  /**
+   * Quatro consultas em ordem: resumo por tipo, idade do mais antigo, contas sob
+   * tentativa e origens recusadas. O pool falso responde na mesma ordem.
+   */
+  const poolFalso = (
+    resumo: { kind: string; n: string }[],
+    dias: number,
+    contas = 0,
+    origens = 0,
+  ): pg.Pool => {
+    const respostas = [
+      { rows: resumo },
+      { rows: [{ dias: String(dias) }] },
+      { rows: [{ n: String(contas) }] },
+      { rows: [{ n: String(origens) }] },
+    ];
+    let i = 0;
+    return { query: async () => respostas[i++] } as unknown as pg.Pool;
+  };
+
+  it('aprova e mostra o movimento das últimas 24h', async () => {
+    const r = await checarTrilhaDeSeguranca(
+      poolFalso([{ kind: 'login_ok', n: '12' }, { kind: 'limite', n: '3' }], 4),
+    );
+
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toContain('login_ok=12');
+  });
+
+  /** Zero evento não é "está tudo bem": pode ser trilha desligada. */
+  it('diz que não houve evento, em vez de mostrar lista vazia', async () => {
+    const r = await checarTrilhaDeSeguranca(poolFalso([], 0));
+
+    expect(r.detalhe).toContain('nenhum evento');
+  });
+
+  it('avisa quando uma conta acumula tentativas falhas', async () => {
+    const r = await checarTrilhaDeSeguranca(
+      poolFalso([{ kind: 'login_falhou', n: '40' }], 2, 1),
+    );
+
+    expect(r.estado).toBe('aviso');
+    expect(r.detalhe).toContain('1 conta(s)');
+    expect(r.acao).toContain('INCIDENTES.md');
+  });
+
+  it('avisa quando uma origem acumula recusas', async () => {
+    const r = await checarTrilhaDeSeguranca(
+      poolFalso([{ kind: 'nao_autenticado', n: '300' }], 2, 0, 2),
+    );
+
+    expect(r.estado).toBe('aviso');
+    expect(r.detalhe).toContain('2 origem(ns)');
+  });
+
+  /**
+   * Um expurgo que não roda não produz erro nenhum. Comparar a idade do evento
+   * mais antigo com a retenção é a única forma de perceber que a política de
+   * descarte virou texto.
+   */
+  it('avisa quando o expurgo parou de rodar', async () => {
+    const r = await checarTrilhaDeSeguranca(poolFalso([{ kind: 'limite', n: '1' }], 400));
+
+    expect(r.estado).toBe('aviso');
+    expect(r.detalhe).toContain('o expurgo não está rodando');
+  });
+
+  it('não confunde trilha jovem com expurgo parado', async () => {
+    const r = await checarTrilhaDeSeguranca(poolFalso([{ kind: 'limite', n: '1' }], 30));
+
+    expect(r.estado).toBe('ok');
   });
 });

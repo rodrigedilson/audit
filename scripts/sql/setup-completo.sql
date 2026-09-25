@@ -3902,6 +3902,12 @@ create table if not exists public.security_events (
   ip_hash     char(64),
   user_agent  text,
 
+  -- HMAC do e-mail tentado, nunca o e-mail. Uma tentativa de login falha carrega
+  -- o endereço de alguém que pode nem ser usuário — digitação errada, varredura
+  -- de lista. Guardar o hash responde "quantas tentativas contra a mesma conta"
+  -- sem colecionar endereço de terceiro.
+  subject_hash char(64),
+
   detail      text
 );
 
@@ -3914,6 +3920,8 @@ create index if not exists security_events_ip_idx
   on public.security_events (ip_hash, at desc) where ip_hash is not null;
 create index if not exists security_events_user_idx
   on public.security_events (user_id, at desc) where user_id is not null;
+create index if not exists security_events_subject_idx
+  on public.security_events (subject_hash, at desc) where subject_hash is not null;
 
 alter table public.security_events enable row level security;
 
