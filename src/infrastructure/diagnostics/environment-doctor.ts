@@ -286,8 +286,8 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     );
     checagens.push(await isolar('cobrança (Asaas)', () => checarCobranca(pool, env)));
     checagens.push(await isolar('certificados para a coleta de DF-e', () => checarCertificadosParaColeta(pool)));
-    checagens.push(await isolar('CAPAG', () => checarCapag(pool, env)));
     checagens.push(await isolar('e-mail do diagnóstico', () => checarEmailDoDiagnostico(pool, env)));
+    checagens.push(await isolar('CAPAG', () => checarCapag(pool, env)));
     checagens.push(await isolar('escritório e usuário', () => checarEscritorio(pool)));
   } finally {
     await pool.end().catch(() => undefined);
@@ -1207,44 +1207,6 @@ export async function checarEmailDoDiagnostico(pool: pg.Pool, env: Env): Promise
 }
 
 /**
- * CAPAG presumida: fórmula de referência carregada e extrator configurado.
- *
- * Aviso, não falha: sem os dois a API sobe, o `GET /capag` responde com o que
- * há, e o envio de demonstrativo responde 503 dizendo por quê.
- */
-export async function checarCapag(pool: pg.Pool, env: Env): Promise<Checagem> {
-  const nome = 'CAPAG';
-  const { rows } = await pool.query<{ referencias: string; demonstrativos: string; conferidos: string }>(
-    `select (select count(distinct capag_group) from capag_reference_formulas)::text as referencias,
-            (select count(*) from capag_statements)::text as demonstrativos,
-            (select count(*) from capag_statements where verified)::text as conferidos`,
-  );
-  const r = rows[0]!;
-  const extrator = env.anthropic !== undefined;
-  const detalhe =
-    `${r.referencias} grupo(s) com fórmula de referência (doutrina, não conferida) · ` +
-    `${r.demonstrativos} demonstrativo(s), ${r.conferidos} conferido(s) · ` +
-    `extrator ${extrator ? 'configurado' : 'sem ANTHROPIC_API_KEY'}`;
-
-  // Em dev, sem extrator é o normal (como o e-mail sem SMTP); a referência vazia
-  // vale nos dois ambientes, porque é dado global.
-  const faltaExtrator = !extrator && env.environment === 'prod';
-  if (faltaExtrator || Number(r.referencias) === 0) {
-    return {
-      nome,
-      estado: 'aviso',
-      detalhe,
-      acao:
-        (faltaExtrator ? 'Sem ANTHROPIC_API_KEY o envio de demonstrativo responde 503.\n  ' : '') +
-        (Number(r.referencias) === 0
-          ? 'Carregue a fórmula de referência (fica não conferida):\n  npx tsx scripts/buscar-formula-capag.ts --executar'
-          : ''),
-    };
-  }
-  return { nome, estado: 'ok', detalhe };
-}
-
-/**
  * Certificados guardados antes da coleta de DF-e (ADR-006), como PFX com a
  * senha descartada: não abrem, e a coleta desse CNPJ recusa com 409. Aviso, e
  * não falha: o resto do produto funciona. O escritório precisa saber que tem de
@@ -1287,6 +1249,44 @@ export async function checarCertificadosParaColeta(pool: pg.Pool): Promise<Checa
       'Esses CNPJs recebem 409 ao pedir a coleta. O owner reenvia o A1 com a senha, e o\n' +
       '  GET /clients/{cnpj}/certificate passa a dizer usable_for_sync: true.',
   };
+}
+
+/**
+ * CAPAG presumida: fórmula de referência carregada e extrator configurado.
+ *
+ * Aviso, não falha: sem os dois a API sobe, o `GET /capag` responde com o que
+ * há, e o envio de demonstrativo responde 503 dizendo por quê.
+ */
+export async function checarCapag(pool: pg.Pool, env: Env): Promise<Checagem> {
+  const nome = 'CAPAG';
+  const { rows } = await pool.query<{ referencias: string; demonstrativos: string; conferidos: string }>(
+    `select (select count(distinct capag_group) from capag_reference_formulas)::text as referencias,
+            (select count(*) from capag_statements)::text as demonstrativos,
+            (select count(*) from capag_statements where verified)::text as conferidos`,
+  );
+  const r = rows[0]!;
+  const extrator = env.anthropic !== undefined;
+  const detalhe =
+    `${r.referencias} grupo(s) com fórmula de referência (doutrina, não conferida) · ` +
+    `${r.demonstrativos} demonstrativo(s), ${r.conferidos} conferido(s) · ` +
+    `extrator ${extrator ? 'configurado' : 'sem ANTHROPIC_API_KEY'}`;
+
+  // Em dev, sem extrator é o normal (como o e-mail sem SMTP); a referência vazia
+  // vale nos dois ambientes, porque é dado global.
+  const faltaExtrator = !extrator && env.environment === 'prod';
+  if (faltaExtrator || Number(r.referencias) === 0) {
+    return {
+      nome,
+      estado: 'aviso',
+      detalhe,
+      acao:
+        (faltaExtrator ? 'Sem ANTHROPIC_API_KEY o envio de demonstrativo responde 503.\n  ' : '') +
+        (Number(r.referencias) === 0
+          ? 'Carregue a fórmula de referência (fica não conferida):\n  npx tsx scripts/buscar-formula-capag.ts --executar'
+          : ''),
+    };
+  }
+  return { nome, estado: 'ok', detalhe };
 }
 
 async function checarEscritorio(pool: pg.Pool): Promise<Checagem> {
