@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 3 de 31: cobranca
+-- audit — passo 3 de 32: cobranca
 --
 -- Planos, assinatura e faturas. Popula os 5 planos por regime e o mínimo
 -- de R$ 150. Cria billable_clients(), que define "CNPJ ativo".

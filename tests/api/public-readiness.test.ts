@@ -6,6 +6,9 @@ import { buildServer } from '../../src/api/server.js';
 import { loadEnv } from '../../src/config/env.js';
 import { nfeXml } from '../helpers/nfe-xml.js';
 import { randomCnpj } from '../helpers/db.js';
+import { createHmac } from 'node:crypto';
+import { extractPdfText } from '../helpers/pdf.js';
+import type { MailGateway, MailMessage } from '../../src/infrastructure/mail/mail-gateway.js';
 
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 const JWT_SECRET = 'segredo-de-teste-que-nao-vai-para-producao';
@@ -44,7 +47,7 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
 
   const diagnosticar = async (
     arquivos: { nome: string; conteudo: string }[],
-    opcoes: { ip?: string; campos?: Record<string, string> } = {},
+    opcoes: { ip?: string; campos?: Record<string, string>; servidor?: FastifyInstance } = {},
   ) => {
     const form = new FormData();
     for (const arquivo of arquivos) {
@@ -54,7 +57,7 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
       form.append(chave, valor);
     }
 
-    return app.inject({
+    return (opcoes.servidor ?? app).inject({
       method: 'POST',
       url: '/v1/reform-readiness',
       headers: { ...form.getHeaders(), 'x-forwarded-for': opcoes.ip ?? proximoIp() },
@@ -153,7 +156,8 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
     it('anuncia na resposta que nada foi persistido', async () => {
       const body = (await diagnosticar([nota('000000001')])).json();
 
-      expect(body.persisted).toBe(false);
+      // Sem REPORT_ENCRYPTION_KEY nada fica guardado, nem o resumo.
+      expect(body.persisted).toEqual({ documents: false, summary_until: null });
       expect(body.lead_registered).toBe(false);
       expect(body.limits.max_files).toBe(50);
     });
@@ -452,6 +456,205 @@ describe.skipIf(!DATABASE_URL)('API — diagnóstico público de prontidão', ()
       const barrada = await diagnosticar([nota('000000002')], { ip });
       expect(barrada.statusCode).toBe(429);
       expect(barrada.json().message).toMatch(/por dia/);
+    });
+  });
+
+  describe('relatório por e-mail', () => {
+    const IP_SECRET = 'segredo-do-hmac-do-ip-com-mais-de-32-caracteres';
+    let comEnvio: FastifyInstance;
+    let enviados: MailMessage[];
+    let falhar: boolean;
+
+    const dublê: MailGateway = {
+      async send(message) {
+        if (falhar) throw new Error('SMTP recusou: 550');
+        enviados.push(message);
+        return { messageId: `<${enviados.length}@teste>` };
+      },
+    };
+
+    const lead = async (reportId: string, ip = proximoIp()) =>
+      comEnvio.inject({
+        method: 'POST',
+        url: '/v1/reform-readiness/lead',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+        payload: { report_id: reportId, email: 'contador@escritorio.com.br', consent: true },
+      });
+
+    const linha = async (id: string) =>
+      (
+        await pool.query(
+          `select email, email_consent_at, email_sent_at, email_error, report_ciphertext,
+                  report_expires_at, forget_token_hash, ip_hash
+             from readiness_reports where id = $1::uuid`,
+          [id],
+        )
+      ).rows[0];
+
+    beforeAll(async () => {
+      comEnvio = await buildServer({
+        env: loadEnv(
+          baseEnv({
+            TRUST_PROXY: 'true',
+            REPORT_ENCRYPTION_KEY: 'chave-do-relatorio-de-teste-com-mais-de-32',
+            IP_HASH_SECRET: IP_SECRET,
+            MAIL_SMTP_URL: 'smtp://usuario:senha@smtp.exemplo.com.br:587',
+            MAIL_FROM: 'Diagnóstico <diagnostico@exemplo.com.br>',
+            PUBLIC_API_URL: 'https://api.exemplo.com.br/',
+          }),
+        ),
+        pool,
+        mail: dublê,
+      });
+      await comEnvio.ready();
+    });
+
+    afterAll(async () => {
+      await comEnvio?.close();
+    });
+
+    beforeEach(() => {
+      enviados = [];
+      falhar = false;
+    });
+
+    it('guarda o resumo cifrado por 24h, sem CNPJ nem razão social em claro', async () => {
+      const body = (await diagnosticar([nota('000000001', true)], { servidor: comEnvio })).json();
+
+      const ate = new Date(body.persisted.summary_until).getTime();
+      expect(body.persisted.documents).toBe(false);
+      expect(ate - Date.now()).toBeGreaterThan(23.9 * 3600_000);
+      expect(ate - Date.now()).toBeLessThanOrEqual(24 * 3600_000);
+
+      const r = await linha(body.report_id);
+      expect(r.report_ciphertext).not.toBeNull();
+      expect(r.report_ciphertext).not.toContain(EMITENTE);
+      expect(r.report_ciphertext).not.toContain('11.222.333');
+    });
+
+    it('o lead recebe o PDF, com o link de remoção, e o resumo é apagado', async () => {
+      const { report_id } = (await diagnosticar([nota('000000001', true)], { servidor: comEnvio })).json();
+
+      const r = await lead(report_id);
+
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toEqual({ lead_registered: true, email_sent: true });
+      expect(enviados).toHaveLength(1);
+      expect(enviados[0]!.to).toBe('contador@escritorio.com.br');
+      expect(enviados[0]!.text).toMatch(/https:\/\/api\.exemplo\.com\.br\/v1\/reform-readiness\/forget\?token=[\w-]{40,}/);
+      const pdf = enviados[0]!.attachments![0]!;
+      expect(pdf.contentType).toBe('application/pdf');
+      expect(extractPdfText(pdf.content)).toMatch(/prontidão/);
+
+      const depois = await linha(report_id);
+      expect(depois.report_ciphertext).toBeNull();
+      expect(depois.email_sent_at).not.toBeNull();
+      expect(depois.forget_token_hash).toHaveLength(64);
+    });
+
+    it('com e-mail e consentimento no próprio diagnóstico, envia na hora', async () => {
+      const body = (
+        await diagnosticar([nota('000000001')], {
+          servidor: comEnvio,
+          campos: { email: 'contador@escritorio.com.br', consent: 'true' },
+        })
+      ).json();
+
+      expect(body).toMatchObject({ lead_registered: true, email_sent: true });
+      expect(enviados).toHaveLength(1);
+    });
+
+    it('o link de remoção apaga o e-mail e o consentimento, e só vale uma vez', async () => {
+      const { report_id } = (await diagnosticar([nota('000000001')], { servidor: comEnvio })).json();
+      await lead(report_id);
+      const link = /forget\?token=([\w-]+)/.exec(enviados[0]!.text)![1]!;
+
+      const r = await comEnvio.inject({ method: 'GET', url: `/v1/reform-readiness/forget?token=${link}`, remoteAddress: proximoIp() });
+
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['content-type']).toMatch(/text\/html/);
+      expect(r.body).toMatch(/apagado/);
+      const depois = await linha(report_id);
+      expect(depois.email).toBeNull();
+      expect(depois.email_consent_at).toBeNull();
+      expect(depois.forget_token_hash).toBeNull();
+
+      const deNovo = await comEnvio.inject({ method: 'GET', url: `/v1/reform-readiness/forget?token=${link}`, remoteAddress: proximoIp() });
+      expect(deNovo.statusCode).toBe(404);
+    });
+
+    it('relatório vencido é 410, e o e-mail não é gravado', async () => {
+      const { report_id } = (await diagnosticar([nota('000000001')], { servidor: comEnvio })).json();
+      await pool.query(
+        "update readiness_reports set report_expires_at = now() - interval '1 minute' where id = $1::uuid",
+        [report_id],
+      );
+
+      const r = await lead(report_id);
+
+      expect(r.statusCode).toBe(410);
+      expect(r.json().code).toBe('report_expired');
+      const depois = await linha(report_id);
+      expect(depois.email).toBeNull();
+      // A purga já passou por ele.
+      expect(depois.report_ciphertext).toBeNull();
+    });
+
+    it('falha do SMTP grava o motivo, e o lead continua registrado', async () => {
+      const { report_id } = (await diagnosticar([nota('000000001')], { servidor: comEnvio })).json();
+      falhar = true;
+
+      const r = await lead(report_id);
+
+      expect(r.json()).toEqual({ lead_registered: true, email_sent: false, email_not_sent_reason: 'send_failed' });
+      const depois = await linha(report_id);
+      expect(depois.email).toBe('contador@escritorio.com.br');
+      expect(depois.email_error).toMatch(/550/);
+    });
+
+    it('sem SMTP configurado, grava o lead e diz que o e-mail não saiu', async () => {
+      const { report_id } = (await diagnosticar([nota('000000001')])).json();
+
+      const r = await app.inject({
+        method: 'POST',
+        url: '/v1/reform-readiness/lead',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': proximoIp() },
+        payload: { report_id, email: 'contador@escritorio.com.br', consent: true },
+      });
+
+      expect(r.json()).toEqual({
+        lead_registered: true,
+        email_sent: false,
+        email_not_sent_reason: 'mail_not_configured',
+      });
+    });
+
+    it('o hash do IP é HMAC com IP_HASH_SECRET, desacoplado da chave do cofre', async () => {
+      const ip = '203.0.113.7';
+      const { report_id } = (await diagnosticar([nota('000000001')], { servidor: comEnvio, ip })).json();
+
+      const esperado = createHmac('sha256', IP_SECRET).update(`public-diagnostic-ip:${ip}`).digest('hex');
+      expect((await linha(report_id)).ip_hash).toBe(esperado);
+    });
+
+    /** Antes, requisições simultâneas passavam todas pela contagem antes de alguma gravar. */
+    it('a quota não é furada por requisições simultâneas', async () => {
+      const ip = '203.0.113.8';
+      const { report_id } = (await diagnosticar([nota('000000001')], { servidor: comEnvio, ip })).json();
+      const { ip_hash } = await linha(report_id);
+      for (let i = 0; i < 18; i += 1) {
+        await pool.query('insert into readiness_reports (ip_hash) values ($1::char(64))', [ip_hash]);
+      }
+
+      // 19 usadas: das duas simultâneas, exatamente uma cabe.
+      const respostas = await Promise.all([
+        diagnosticar([nota('000000002')], { servidor: comEnvio, ip }),
+        diagnosticar([nota('000000003')], { servidor: comEnvio, ip }),
+      ]);
+
+      expect(respostas.map((r) => r.statusCode).sort()).toEqual([200, 429]);
+      const { rows } = await pool.query('select count(*)::int n from readiness_reports where ip_hash = $1', [ip_hash]);
+      expect(rows[0].n).toBe(20);
     });
   });
 

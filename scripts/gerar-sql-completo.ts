@@ -51,9 +51,13 @@ const TITULOS: Record<string, string> = {
   '20260925140000_auditoria_continua.sql': 'auditoria-continua',
   '20260926100000_cancelamento_de_nfe.sql': 'cancelamento-de-nfe',
   '20260926140000_coleta_agendada.sql': 'coleta-agendada',
+  '20260926160000_relatorio_do_diagnostico.sql': 'relatorio-do-diagnostico',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260926160000_relatorio_do_diagnostico.sql':
+    'Relatório do diagnóstico público por e-mail: o resumo fica cifrado por até\n' +
+    '-- 24h, só para o envio, e o link de remoção do e-mail (LGPD).',
   '20260926140000_coleta_agendada.sql':
     'Coleta de DF-e agendada por opt-in do owner (ADR-007): quem ligou e quando\n' +
     '-- ficam no cadastro, e o job do agendador é marcado como tal.',

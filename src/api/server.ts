@@ -9,6 +9,9 @@ import { TenantResolver, type TenantContext } from './auth/tenant-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerPlanGate } from './plugins/plan-gate.js';
 import { PlanFeatures } from '../billing/plan-features.js';
+import { SmtpMailGateway, type MailGateway } from '../infrastructure/mail/mail-gateway.js';
+import { ReadinessDelivery } from '../fiscal/ingestion/readiness-delivery.js';
+import { ReadinessReportCipher } from '../fiscal/ingestion/readiness-cipher.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerPortfolioRoutes } from './routes/portfolio.routes.js';
 import { registerEventRoutes } from './routes/events.routes.js';
@@ -65,6 +68,8 @@ export interface ApiDeps {
   dfe?: DfeSyncService;
   /** O que o plano de cada regime inclui (`plans.features`). */
   planFeatures: PlanFeatures;
+  /** Guarda cifrada e envio por e-mail do relatório do diagnóstico público. */
+  readinessDelivery: ReadinessDelivery;
 }
 
 declare module 'fastify' {
@@ -97,6 +102,9 @@ export const PUBLIC_ROUTES = new Set([
   // O lead é anexado depois do relatório, e a tela que o envia também não tem
   // sessão. O id do diagnóstico é o que autoriza a escrita.
   '/v1/reform-readiness/lead',
+  // O link "apagar meu e-mail" do relatório enviado: quem o abre não tem sessão,
+  // e o token no link é o que autoriza.
+  '/v1/reform-readiness/forget',
   /**
    * Páginas de metodologia. Nenhuma das duas lê `request.tenant`, e as duas
    * existem para ser lidas ANTES de contratar: a do simulador diz o que ele não
@@ -123,6 +131,8 @@ export interface BuildServerOptions {
   asaas?: AsaasGateway;
   /** Modelo de linguagem. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
   languageModel?: LanguageModelPort;
+  /** Envio de e-mail. Os testes injetam um dublê; sem ele, SMTP de `MAIL_SMTP_URL`. */
+  mail?: MailGateway;
   /** Gateway da SEFAZ. Os testes injetam um dublê; sem ele, só em `prod`. */
   sefaz?: SefazDfeGateway;
   /**
@@ -155,6 +165,16 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
     planFeatures: new PlanFeatures(pool),
+    readinessDelivery: new ReadinessDelivery({
+      pool,
+      ...(env.reportEncryptionKey === undefined ? {} : { cipher: new ReadinessReportCipher(env.reportEncryptionKey) }),
+      ...(options.mail !== undefined
+        ? { mail: options.mail }
+        : env.mail === undefined
+          ? {}
+          : { mail: new SmtpMailGateway(env.mail.smtpUrl, env.mail.from) }),
+      ...(env.mail === undefined ? {} : { publicApiUrl: env.mail.publicApiUrl }),
+    }),
     ...(options.asaas !== undefined
       ? { asaas: options.asaas }
       : env.asaas === undefined

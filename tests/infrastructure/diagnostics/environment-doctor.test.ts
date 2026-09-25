@@ -8,6 +8,7 @@ import {
   checarCotaDoAssistente,
   checarCnpjAlfanumerico,
   checarCobranca,
+  checarEmailDoDiagnostico,
   checarCertificadosParaColeta,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
@@ -709,5 +710,47 @@ describe('checarCertificadosParaColeta', () => {
   it('sem a migration da coleta: aviso apontando o arquivo', async () => {
     const r = await checarCertificadosParaColeta(pool(false, 0, 0));
     expect(r.acao).toContain('19-coleta-dfe.sql');
+  });
+});
+
+describe('checarEmailDoDiagnostico', () => {
+  const pool = (colunas: number, falhas = 0, enviados = 0): pg.Pool =>
+    ({
+      query: async (sql: string) =>
+        sql.includes('information_schema')
+          ? { rows: [{ n: String(colunas) }] }
+          : { rows: [{ falhas: String(falhas), enviados: String(enviados) }] },
+    }) as unknown as pg.Pool;
+  const env = (extra: Record<string, unknown> = {}) => ({ environment: 'prod', ...extra }) as unknown as Parameters<typeof checarEmailDoDiagnostico>[1];
+  const COMPLETO = {
+    mail: { smtpUrl: 'smtps://x', from: 'a@b.com', publicApiUrl: 'https://api' },
+    reportEncryptionKey: 'k'.repeat(40),
+    ipHashSecret: 's'.repeat(40),
+  };
+
+  it('sem a migration, falha apontando o passo', async () => {
+    const r = await checarEmailDoDiagnostico(pool(2), env(COMPLETO));
+    expect(r.estado).toBe('falha');
+    expect(r.acao).toMatch(/relatorio-do-diagnostico\.sql/);
+  });
+
+  it('sem SMTP ou sem a chave do relatório, avisa que o e-mail não sai', async () => {
+    const r = await checarEmailDoDiagnostico(pool(5), env({ reportEncryptionKey: 'k'.repeat(40) }));
+    expect(r.estado).toBe('aviso');
+    expect(r.detalhe).toMatch(/MAIL_SMTP_URL/);
+  });
+
+  it('em dev, sem envio é o normal: ok', async () => {
+    expect((await checarEmailDoDiagnostico(pool(5), env({ environment: 'dev' }))).estado).toBe('ok');
+  });
+
+  it('envio falhando nos últimos 7 dias: aviso', async () => {
+    expect((await checarEmailDoDiagnostico(pool(5, 3), env(COMPLETO))).detalhe).toMatch(/3 envio/);
+  });
+
+  it('configurado e sem falhas: ok', async () => {
+    const r = await checarEmailDoDiagnostico(pool(5, 0, 7), env(COMPLETO));
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toMatch(/7 relatório/);
   });
 });
