@@ -81,6 +81,25 @@ export interface Env {
    * CPU-bound; precisa poder ser desligada por variável, sem rollback.
    */
   publicDiagnosticEnabled: boolean;
+  /**
+   * Envio do relatório do diagnóstico público por e-mail, por SMTP: serve o
+   * servidor do domínio próprio ou qualquer serviço de envio que fale SMTP.
+   * `MAIL_SMTP_URL` (`smtps://usuario:senha@host:465` ou `smtp://…:587`),
+   * `MAIL_FROM` e `PUBLIC_API_URL` vêm juntos, ou nenhum: sem eles o lead é
+   * gravado e a resposta diz que o e-mail não saiu.
+   */
+  mail?: { smtpUrl: string; from: string; publicApiUrl: string };
+  /**
+   * Chave do relatório do diagnóstico guardado por 24h até o envio. Própria, e
+   * não a do cofre: vazar uma não abre o outro. Sem ela nada é guardado, e não
+   * há o que enviar.
+   */
+  reportEncryptionKey?: string;
+  /**
+   * Segredo do HMAC do IP do visitante. Sem ele o sal deriva da chave mestra do
+   * cofre, como antes — funciona, mas acopla a quota à chave dos certificados.
+   */
+  ipHashSecret?: string;
 }
 
 export class EnvError extends Error {
@@ -167,6 +186,28 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     invalid.push('em dev, ASAAS_BASE_URL não pode apontar para o Asaas de produção');
   }
 
+  const smtpUrl = source['MAIL_SMTP_URL']?.trim();
+  const mailFrom = source['MAIL_FROM']?.trim();
+  const publicApiUrl = source['PUBLIC_API_URL']?.trim().replace(/\/+$/, '');
+  const partesDoEmail = [smtpUrl, mailFrom, publicApiUrl].filter(Boolean).length;
+  if (partesDoEmail > 0 && partesDoEmail < 3) {
+    invalid.push('MAIL_SMTP_URL, MAIL_FROM e PUBLIC_API_URL vão juntos: o e-mail leva o link de remoção');
+  }
+  if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) {
+    invalid.push('MAIL_SMTP_URL deve começar com smtp:// ou smtps://');
+  }
+  if (publicApiUrl && !/^https?:\/\//.test(publicApiUrl)) {
+    invalid.push('PUBLIC_API_URL deve ser uma URL http(s)');
+  }
+  const reportEncryptionKey = source['REPORT_ENCRYPTION_KEY']?.trim();
+  if (reportEncryptionKey && reportEncryptionKey.length < 32) {
+    invalid.push('REPORT_ENCRYPTION_KEY deve ter ao menos 32 caracteres (openssl rand -base64 48)');
+  }
+  const ipHashSecret = source['IP_HASH_SECRET']?.trim();
+  if (ipHashSecret && ipHashSecret.length < 32) {
+    invalid.push('IP_HASH_SECRET deve ter ao menos 32 caracteres (openssl rand -base64 48)');
+  }
+
   if (missing.length > 0 || invalid.length > 0 || environment === undefined) {
     throw new EnvError(missing, invalid);
   }
@@ -210,6 +251,16 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       // O ADR-026 reserva a camada 3 a Sonnet/Opus.
       model: source['ASSISTANT_MODEL']?.trim() || MODELO_PADRAO,
     };
+  }
+
+  if (smtpUrl && mailFrom && publicApiUrl) {
+    env.mail = { smtpUrl, from: mailFrom, publicApiUrl };
+  }
+  if (reportEncryptionKey) {
+    env.reportEncryptionKey = reportEncryptionKey;
+  }
+  if (ipHashSecret) {
+    env.ipHashSecret = ipHashSecret;
   }
 
   if (jwtSecret) {

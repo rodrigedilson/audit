@@ -207,6 +207,44 @@ ao modelo. Use uma chave com limite de gasto próprio, e não a de produção.
 O `doctor` passa a dizer `assistente camada 3 com claude-opus-5`, e
 `GET /v1/assistant/capabilities` passa a devolver `language_model_configured: true`.
 
+## E-mail do diagnóstico público
+
+O diagnóstico oferece "receba o relatório por e-mail". O envio é por **SMTP**, e
+não por um fornecedor fixo: serve o servidor de e-mail do domínio próprio
+(Google Workspace, Microsoft 365, Zoho, Locaweb, o servidor da hospedagem) ou
+qualquer serviço de envio que aceite SMTP. Sem as variáveis, o diagnóstico
+funciona, o lead é gravado e a resposta diz `email_sent: false`, com o motivo
+`mail_not_configured`.
+
+```bash
+# URL do SMTP: smtps:// na porta 465 (TLS direto) ou smtp:// na 587 (STARTTLS).
+# Usuário e senha com caractere especial vão codificados em URL (@ vira %40).
+doppler secrets set MAIL_SMTP_URL='smtps://diagnostico%40seu-dominio.com.br:SENHA@smtp.seu-provedor.com:465' --project audit --config prd
+doppler secrets set MAIL_FROM='Diagnóstico <diagnostico@seu-dominio.com.br>' --project audit --config prd
+# Base pública da API, para o link "apagar meu e-mail" que vai no corpo.
+doppler secrets set PUBLIC_API_URL=https://SUA-API.onrender.com --project audit --config prd
+
+# Chave própria do relatório guardado por 24h, e o segredo do hash do IP.
+doppler secrets set REPORT_ENCRYPTION_KEY="$(openssl rand -base64 48)" --project audit --config prd
+doppler secrets set IP_HASH_SECRET="$(openssl rand -base64 48)" --project audit --config prd
+```
+
+- **As três de e-mail vão juntas.** `loadEnv` recusa só parte delas: sem a URL
+  pública, o e-mail sairia sem o link de remoção.
+- **SPF e DKIM** do domínio do `MAIL_FROM` precisam autorizar o servidor SMTP.
+  Sem isso o relatório cai em spam, ou é recusado. Muitos provedores de
+  domínio pedem ainda uma senha de aplicativo em vez da senha da conta.
+- **`REPORT_ENCRYPTION_KEY`** não é a chave do cofre: o relatório traz CNPJ e
+  razão social de fornecedores do visitante, e vazar uma chave não pode abrir o
+  outro acervo. Sem ela nada é guardado e não há o que enviar.
+- **`IP_HASH_SECRET`** desacopla a quota do diagnóstico da chave do cofre. Ao
+  ligá-la, a quota diária de cada IP recomeça do zero, uma vez.
+- Em `dev` o envio pode ficar ligado: quem testa recebe o próprio relatório.
+
+O `doctor` mostra `e-mail do diagnóstico` como aviso enquanto faltar algo, e
+avisa também de envio falhando nos últimos 7 dias (`readiness_reports.email_error`).
+Os leads saem em CSV com `npx tsx scripts/exportar-leads.ts`, só leitura.
+
 ## Rotação da chave mestra
 
 O cofre aceita **duas chaves ao mesmo tempo**: cifra sempre com a atual, decifra
