@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 28 de 37: auditoria-continua
+-- audit — passo 28 de 38: auditoria-continua
 --
 -- Teste de comprovacao e inspecao documentaria: criterios de avaliacao,
 -- execucoes por censo, achados com risco por probabilidade x impacto e

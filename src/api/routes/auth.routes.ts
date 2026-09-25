@@ -70,6 +70,7 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: ApiDeps): P
         // nem ser usuário.
         deps.securityTrail.registrar({
           kind: 'login_falhou',
+          requestId: String(request.id),
           subject: email,
           ip: request.ip,
           userAgent: request.headers['user-agent'],
@@ -90,6 +91,7 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: ApiDeps): P
       // de um mesmo lugar ou a primeira de um contador legítimo.
       deps.securityTrail.registrar({
         kind: 'login_ok',
+        requestId: String(request.id),
         userId: user.userId,
         tenantId: context.tenantId,
         subject: email,

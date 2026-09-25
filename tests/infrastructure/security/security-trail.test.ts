@@ -128,6 +128,17 @@ describe('trilha de segurança', () => {
     expect(aoFalhar.mock.calls[0]![0]).toMatch(/trilha de segurança/);
   });
 
+  /** É o campo que liga a trilha ao log e ao `x-request-id` da resposta. */
+  it('grava o id da requisição', async () => {
+    const { pool, chamadas } = poolEspiao();
+    const trilha = criarTrilhaDeSeguranca(pool, SEGREDO, () => undefined);
+
+    trilha.registrar({ kind: 'limite', requestId: 'req-123' });
+    await esperar();
+
+    expect(chamadas[0]![10]).toBe('req-123');
+  });
+
   it('corta texto livre, que pode vir enorme', async () => {
     const { pool, chamadas } = poolEspiao();
     const trilha = criarTrilhaDeSeguranca(pool, SEGREDO, () => undefined);

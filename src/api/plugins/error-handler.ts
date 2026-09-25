@@ -34,6 +34,7 @@ export function registerErrorHandler(app: FastifyInstance, trilha?: SecurityTrai
   ): void => {
     trilha?.registrar({
       kind,
+      requestId: String(request.id),
       userId: request.tenant?.user.userId,
       tenantId: request.tenant?.tenantId,
       method: request.method,
