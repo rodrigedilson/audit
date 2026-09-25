@@ -7,6 +7,8 @@ import { buildServer } from '../../src/api/server.js';
 import { loadEnv } from '../../src/config/env.js';
 import { createClient, createMembership, createTenant, randomCnpj } from '../helpers/db.js';
 import { nfeXml } from '../helpers/nfe-xml.js';
+import { createHash } from 'node:crypto';
+import { countPdfPages, extractPdfText } from '../helpers/pdf.js';
 
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 const JWT_SECRET = 'segredo-de-teste-que-nao-vai-para-producao';
@@ -153,6 +155,29 @@ describe.skipIf(!DATABASE_URL)('API — comprovante de integridade da competênc
       expect(body.confirmed_at).not.toBeNull();
     });
 
+    it('em PDF: o mesmo comprovante, com o hash inteiro no rodapé e o SHA-256 no cabeçalho', async () => {
+      const hash = await confirmar();
+      const antes = await pool.query('select count(*)::int n from events where tenant_id = $1::uuid and cnpj = $2', [tenantId, cnpj]);
+
+      const r = await call('GET', `/v1/clients/${cnpj}/periods/${PERIODO}/proof?format=pdf`);
+
+      expect(r.statusCode).toBe(200);
+      expect(r.headers['content-type']).toBe('application/pdf');
+      expect(r.headers['content-disposition']).toMatch(/comprovante-.*\.pdf/);
+      const pdf = r.rawPayload;
+      expect(r.headers['x-pdf-sha256']).toBe(createHash('sha256').update(pdf).digest('hex'));
+
+      const texto = extractPdfText(pdf);
+      expect(texto).toContain(`hash ${hash}`);
+      expect(texto).toMatch(/se reproduz a partir do log/);
+      // Um hash por página no rodapé: toda folha isolada continua verificável.
+      expect(texto.split(`hash ${hash}`).length - 1).toBe(countPdfPages(pdf));
+
+      // Só leitura: gerar o PDF não grava evento.
+      const depois = await pool.query('select count(*)::int n from events where tenant_id = $1::uuid and cnpj = $2', [tenantId, cnpj]);
+      expect(depois.rows[0].n).toBe(antes.rows[0].n);
+    });
+
     /**
      * Adulteração feita por fora da aplicação.
      *
@@ -223,6 +248,17 @@ describe.skipIf(!DATABASE_URL)('API — comprovante de integridade da competênc
     const body = (await call('GET', `/v1/clients/${cnpj}/periods/${PERIODO}/proof`)).json();
 
     expect(body.confirmed_hash_reproduced).toBeNull();
+  });
+
+  it('em PDF, competência não confirmada diz que não há hash aprovado, sem soar como falha', async () => {
+    const r = await call('GET', `/v1/clients/${cnpj}/periods/${PERIODO}/proof?format=pdf`);
+
+    expect(r.statusCode).toBe(200);
+    expect(extractPdfText(r.rawPayload)).toMatch(/ainda não foi confirmada/);
+  });
+
+  it('recusa formato desconhecido', async () => {
+    expect((await call('GET', `/v1/clients/${cnpj}/periods/${PERIODO}/proof?format=docx`)).statusCode).toBe(400);
   });
 
   it('404 para competência que não existe', async () => {

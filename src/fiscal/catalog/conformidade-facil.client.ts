@@ -70,18 +70,151 @@ export async function credencialDoAmbiente(): Promise<CredencialDeCertificado | 
   return { pfx: await readFile(caminho), passphrase };
 }
 
+/** cClassTrib da tabela, no formato da SVRS. */
+export interface ClassificacaoTributaria {
+  CodClassTrib: string;
+  NomeClassTrib: string;
+  Cst: string;
+  DthIniVig: string | null;
+  DthFimVig: string | null;
+  TexUrlLegislacao?: string | null;
+}
+
+/** CST-IBS/CBS com as cClassTrib dele, no formato da SVRS. */
+export interface RegistroDeCst {
+  Cst: string;
+  NomeCst: string;
+  DthIniVig: string | null;
+  DthFimVig: string | null;
+  ClassificacoesTributarias?: ClassificacaoTributaria[];
+}
+
+/** Resposta crua do servidor: o transporte não interpreta nada. */
+export interface RespostaHttp {
+  status: number;
+  body: string;
+}
+
+export type TransporteCff = (
+  credencial: CredencialDeCertificado,
+  caminho: string,
+) => Promise<RespostaHttp>;
+
 /**
- * Consulta a tabela de classificação tributária.
+ * Consulta a tabela de classificação tributária e devolve os registros já
+ * validados. `cst` filtra por um CST; sem ele, vem a tabela inteira.
  *
- * `cst` filtra por um CST específico; sem ele, vem a tabela inteira.
+ * O transporte é injetável para os testes exercitarem a resposta (401, JSON
+ * inválido, formato inesperado) sem certificado nem rede.
  */
 export async function consultarClassTrib(
   credencial: CredencialDeCertificado,
   cst?: string,
-): Promise<unknown> {
+  transporte: TransporteCff = transporteHttps,
+): Promise<RegistroDeCst[]> {
   const caminho = cst === undefined ? CAMINHO : `${CAMINHO}?cst=${encodeURIComponent(cst)}`;
+  return validarTabelaClassTrib(interpretarResposta(await transporte(credencial, caminho)));
+}
 
-  return new Promise((resolve, reject) => {
+/** Status e corpo viram o JSON da tabela, ou um erro que diz o que aconteceu. */
+export function interpretarResposta({ status, body }: RespostaHttp): unknown {
+  if (status === 401 || status === 403) {
+    throw new ConformidadeFacilError(
+      `A SVRS recusou o certificado (${status}). O acesso é gratuito, mas ` +
+        'exige ICP-Brasil válido e não vencido.',
+      status,
+    );
+  }
+  if (status < 200 || status >= 300) {
+    throw new ConformidadeFacilError(`A SVRS respondeu ${status}: ${body.slice(0, 200)}`, status);
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new ConformidadeFacilError('A resposta não é JSON. O endpoint mudou, ou um proxy interveio.');
+  }
+}
+
+const DATA = /^\d{4}-\d{2}-\d{2}/;
+
+/**
+ * Confere a tabela campo a campo antes de ela chegar ao banco.
+ *
+ * Registro sem campo obrigatório não é "quase certo": carregado, ele vira par
+ * CST × cClassTrib inválido, ou código sem descrição, e a camada 3 passa a
+ * aceitar ou recusar o que não devia. A falha aponta o primeiro registro ruim,
+ * pelo índice, para dar para comparar com a página do portal.
+ *
+ * Serve às três fontes do carregador — API, arquivo exportado e raspagem —,
+ * porque o formato é o mesmo e o risco também.
+ */
+export function validarTabelaClassTrib(dados: unknown): RegistroDeCst[] {
+  if (!Array.isArray(dados) || dados.length === 0) {
+    throw new ConformidadeFacilError(
+      'A tabela não tem o formato esperado: um array não vazio de CSTs com ' +
+        '`ClassificacoesTributarias` aninhadas.',
+    );
+  }
+
+  dados.forEach((r: unknown, i) => {
+    const onde = `CST[${i}]`;
+    const reg = objeto(r, onde);
+    codigo(reg['Cst'], /^\d{3}$/, `${onde}.Cst`);
+    textoObrigatorio(reg['NomeCst'], `${onde}.NomeCst`);
+    dataOuNulo(reg['DthIniVig'], `${onde}.DthIniVig`);
+    dataOuNulo(reg['DthFimVig'], `${onde}.DthFimVig`);
+
+    const classificacoes = reg['ClassificacoesTributarias'];
+    if (classificacoes === undefined || classificacoes === null) return;
+    if (!Array.isArray(classificacoes)) {
+      throw new ConformidadeFacilError(`${onde}.ClassificacoesTributarias não é uma lista.`);
+    }
+    classificacoes.forEach((c: unknown, j) => {
+      const aqui = `${onde}.ClassificacoesTributarias[${j}]`;
+      const cls = objeto(c, aqui);
+      codigo(cls['CodClassTrib'], /^\d{6}$/, `${aqui}.CodClassTrib`);
+      textoObrigatorio(cls['NomeClassTrib'], `${aqui}.NomeClassTrib`);
+      codigo(cls['Cst'], /^\d{3}$/, `${aqui}.Cst`);
+      dataOuNulo(cls['DthIniVig'], `${aqui}.DthIniVig`);
+      dataOuNulo(cls['DthFimVig'], `${aqui}.DthFimVig`);
+      const url = cls['TexUrlLegislacao'];
+      if (url !== undefined && url !== null && typeof url !== 'string') {
+        throw new ConformidadeFacilError(`${aqui}.TexUrlLegislacao não é texto.`);
+      }
+    });
+  });
+
+  return dados as RegistroDeCst[];
+}
+
+function objeto(valor: unknown, onde: string): Record<string, unknown> {
+  if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) {
+    throw new ConformidadeFacilError(`${onde} não é um objeto.`);
+  }
+  return valor as Record<string, unknown>;
+}
+
+function codigo(valor: unknown, formato: RegExp, onde: string): void {
+  if (typeof valor !== 'string' || !formato.test(valor)) {
+    throw new ConformidadeFacilError(`${onde} ausente ou fora do formato: ${JSON.stringify(valor)}.`);
+  }
+}
+
+function textoObrigatorio(valor: unknown, onde: string): void {
+  if (typeof valor !== 'string' || valor.trim() === '') {
+    throw new ConformidadeFacilError(`${onde} ausente.`);
+  }
+}
+
+function dataOuNulo(valor: unknown, onde: string): void {
+  if (valor !== null && (typeof valor !== 'string' || !DATA.test(valor))) {
+    throw new ConformidadeFacilError(`${onde} não é data nem nulo: ${JSON.stringify(valor)}.`);
+  }
+}
+
+/** mTLS com `node:https`: `fetch` do Node não expõe certificado de cliente. */
+const transporteHttps: TransporteCff = (credencial, caminho) =>
+  new Promise((resolve, reject) => {
     const requisicao = request(
       {
         host: HOST,
@@ -95,41 +228,9 @@ export async function consultarClassTrib(
       (resposta) => {
         const pedacos: Buffer[] = [];
         resposta.on('data', (pedaco: Buffer) => pedacos.push(pedaco));
-        resposta.on('end', () => {
-          const corpo = Buffer.concat(pedacos).toString('utf8');
-          const status = resposta.statusCode ?? 0;
-
-          if (status === 401 || status === 403) {
-            reject(
-              new ConformidadeFacilError(
-                `A SVRS recusou o certificado (${status}). O acesso é gratuito, mas ` +
-                  'exige ICP-Brasil válido e não vencido.',
-                status,
-              ),
-            );
-            return;
-          }
-
-          if (status < 200 || status >= 300) {
-            reject(
-              new ConformidadeFacilError(
-                `A SVRS respondeu ${status}: ${corpo.slice(0, 200)}`,
-                status,
-              ),
-            );
-            return;
-          }
-
-          try {
-            resolve(JSON.parse(corpo));
-          } catch {
-            reject(
-              new ConformidadeFacilError(
-                'A resposta não é JSON. O endpoint mudou, ou um proxy interveio.',
-              ),
-            );
-          }
-        });
+        resposta.on('end', () =>
+          resolve({ status: resposta.statusCode ?? 0, body: Buffer.concat(pedacos).toString('utf8') }),
+        );
       },
     );
 
@@ -155,4 +256,3 @@ export async function consultarClassTrib(
 
     requisicao.end();
   });
-}

@@ -56,27 +56,13 @@ import { ignorarErroDeClienteOcioso } from '../src/infrastructure/persistence/po
 import {
   consultarClassTrib,
   credencialDoAmbiente,
+  validarTabelaClassTrib,
+  type RegistroDeCst,
 } from '../src/fiscal/catalog/conformidade-facil.client.js';
 
 const PORTAL = 'https://dfe-portal.svrs.rs.gov.br/Cff/ClassificacaoTributaria';
 const FONTE = 'IT RT 2025.002 · Portal da Conformidade Fácil (SVRS)';
 
-interface Classificacao {
-  CodClassTrib: string;
-  NomeClassTrib: string;
-  Cst: string;
-  DthIniVig: string | null;
-  DthFimVig: string | null;
-  TexUrlLegislacao?: string | null;
-}
-
-interface RegistroDeCst {
-  Cst: string;
-  NomeCst: string;
-  DthIniVig: string | null;
-  DthFimVig: string | null;
-  ClassificacoesTributarias?: Classificacao[];
-}
 
 /**
  * A tabela vem embutida na página como `var dadosOriginais = [...]`.
@@ -144,21 +130,14 @@ async function main(): Promise<void> {
 
   if (credencial !== null && (arquivo === null || arquivo === undefined)) {
     console.log('Fonte: API do Conformidade Fácil (mTLS com ICP-Brasil)');
-    const resposta = await consultarClassTrib(credencial);
-    registros = (Array.isArray(resposta) ? resposta : []) as RegistroDeCst[];
-
-    if (registros.length === 0) {
-      throw new Error(
-        'A API respondeu, e a resposta não tem o formato esperado — um array de CSTs\n' +
-          'com `ClassificacoesTributarias` aninhadas. Rode com --portal para comparar\n' +
-          'com a raspagem antes de concluir que a tabela mudou.',
-      );
-    }
+    // Já validada campo a campo. Se o formato mudou, o erro aponta o registro;
+    // rode com --portal para comparar antes de concluir que a tabela mudou.
+    registros = await consultarClassTrib(credencial);
   } else if (arquivo !== null && arquivo !== undefined) {
     const conteudo = await readFile(arquivo, 'utf8');
-    registros = conteudo.trimStart().startsWith('[')
-      ? (JSON.parse(conteudo) as RegistroDeCst[])
-      : extrair(conteudo);
+    registros = validarTabelaClassTrib(
+      conteudo.trimStart().startsWith('[') ? JSON.parse(conteudo) : extrair(conteudo),
+    );
     console.log(`Fonte: ${arquivo}`);
   } else {
     console.log(`Fonte: ${PORTAL}`);
@@ -166,7 +145,7 @@ async function main(): Promise<void> {
     if (!resposta.ok) {
       throw new Error(`O portal respondeu ${resposta.status}.`);
     }
-    registros = extrair(await resposta.text());
+    registros = validarTabelaClassTrib(extrair(await resposta.text()));
   }
 
   const classificacoes = registros.flatMap((r) => r.ClassificacoesTributarias ?? []);

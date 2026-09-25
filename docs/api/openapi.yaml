@@ -442,6 +442,7 @@ paths:
                         tp_evento: { type: string }
                         protocol: { type: string, nullable: true }
                         cancelled_at: { type: string, format: date-time, nullable: true }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /clients/{cnpj}/dfe/auto:
     parameters:
@@ -477,6 +478,10 @@ paths:
                   cnpj: { type: string }
                   auto_sync:
                     $ref: "#/components/schemas/DfeAutoSync"
+        "403": { description: "Só o owner liga a coleta agendada, ou o plano do CNPJ não inclui coleta_dfe (`feature_not_in_plan`)." }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Sem certificado A1 (`dfe_no_certificate`) ou com certificado que não abre sem senha (`dfe_certificate_not_usable`)." }
+        "503": { description: "Sem gateway da SEFAZ neste ambiente (`dfe_gateway_not_configured`)." }
 
   /clients/{cnpj}/sped:
     parameters:
@@ -1632,11 +1637,20 @@ paths:
     get:
       tags: [events]
       operationId: getPeriodProof
+      parameters:
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, pdf], default: json }
       summary: Comprovante de integridade da competência
       description: >
         O documento que o escritório mostra ao cliente dele: qual número foi
         apurado, sobre quantos documentos, e a prova de que a trilha fecha.
-        Precursor em JSON do Book de fechamento em PDF.
+
+
+        `?format=pdf` devolve o mesmo comprovante em PDF, para anexar a e-mail:
+        o hash defendido (o da confirmação, ou o atual) vai **inteiro** no rodapé
+        de cada página, e o SHA-256 do arquivo sai no cabeçalho `x-pdf-sha256`.
+        Só leitura: gerar o PDF não grava evento.
 
 
         `confirmed_hash_reproduced` é a prova forte. O hash foi gravado no log no
@@ -1684,7 +1698,14 @@ paths:
                     properties:
                       inbound: { type: integer }
                       outbound: { type: integer }
-                      total: { type: integer }
+                      total: { type: integer, description: Sem as canceladas. }
+                      cancelled: { type: integer, description: "Canceladas na SEFAZ, fora das somas." }
+            application/pdf:
+              schema: { type: string, format: binary }
+          headers:
+            x-pdf-sha256:
+              description: SHA-256 do PDF, só em `?format=pdf`.
+              schema: { type: string }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ------------------------------------------------------------- billing
