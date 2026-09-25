@@ -29,6 +29,8 @@ export const CAPAG_GROUPS = [
   'pj_nao_simples',
   'pj_simples',
   'mei',
+  /** Grupo 5 da PGFN: PJ nula, baixada, suspensa ou inapta. Fórmula própria, com V11. */
+  'pj_inativa',
 ] as const;
 export type CapagGroup = (typeof CAPAG_GROUPS)[number];
 

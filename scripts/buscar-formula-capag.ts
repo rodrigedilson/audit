@@ -15,6 +15,7 @@
  * npx tsx scripts/buscar-formula-capag.ts
  * npx tsx scripts/buscar-formula-capag.ts --executar
  * npx tsx scripts/buscar-formula-capag.ts --urls https://a.exemplo/x,https://b.exemplo/y
+ * npx tsx scripts/buscar-formula-capag.ts --grupos pj_inativa --executar
  * ```
  */
 import Anthropic from '@anthropic-ai/sdk';
@@ -39,6 +40,9 @@ async function main(): Promise<void> {
   for (const u of urls) console.log(`  ${u}`);
 
   const relatorio = await extrairReferencias(urls, extractor, fetchBytesPadrao);
+  // Para completar um grupo sem gravar de novo os que já estão carregados.
+  const grupos = argumento('--grupos')?.split(',').map((g) => g.trim()).filter(Boolean);
+  if (grupos) relatorio.candidates = relatorio.candidates.filter((c) => grupos.includes(c.group));
 
   for (const d of relatorio.discarded) console.log(`\nDescartada: ${d.url}\n  ${d.reason}`);
   if (relatorio.candidates.length === 0) {

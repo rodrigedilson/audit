@@ -173,7 +173,7 @@ describe('computeCapag — o que ele se recusa a afirmar', () => {
 });
 
 describe('CAPAG_GROUPS', () => {
-  it('os quatro grupos da portaria estão declarados', () => {
-    expect(CAPAG_GROUPS).toEqual(['pessoa_fisica', 'pj_nao_simples', 'pj_simples', 'mei']);
+  it('os cinco grupos da página da PGFN estão declarados', () => {
+    expect(CAPAG_GROUPS).toEqual(['pessoa_fisica', 'pj_nao_simples', 'pj_simples', 'mei', 'pj_inativa']);
   });
 });

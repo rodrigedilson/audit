@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 34 de 41: indices-financeiros
+-- audit — passo 34 de 42: indices-financeiros
 --
 -- Series de indice financeiro versionadas por competencia, para a correcao
 -- monetaria dizer qual indice, qual periodo e qual fonte. Nascem vazias e

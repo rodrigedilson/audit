@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 40 de 41: capag-fonte-oficial
+-- audit — passo 40 de 42: capag-fonte-oficial
 --
 -- CAPAG presumida: a fórmula da página oficial da PGFN pode ficar conferida;
 -- a de doutrina continua como referência, nunca conferida.

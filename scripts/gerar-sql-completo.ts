@@ -28,6 +28,7 @@ const TITULOS: Record<string, string> = {
   '20260927200000_capag.sql': 'capag',
   '20260927210000_capag_no_plano.sql': 'capag-no-plano',
   '20260927220000_capag_fonte_oficial.sql': 'capag-fonte-oficial',
+  '20260927230000_capag_pj_inativa.sql': 'capag-pj-inativa',
   '20260927120000_indices_financeiros.sql': 'indices-financeiros',
   '20260918120000_multi_tenancy.sql': 'multi-tenancy',
   '20260918130000_certificate_vault.sql': 'cofre-certificados',
@@ -61,6 +62,9 @@ const TITULOS: Record<string, string> = {
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260927230000_capag_pj_inativa.sql':
+    'CAPAG presumida: grupo da pessoa jurídica inativa (nula, baixada, suspensa\n' +
+    '-- ou inapta), a quinta fórmula publicada pela PGFN.',
   '20260927220000_capag_fonte_oficial.sql':
     'CAPAG presumida: a fórmula da página oficial da PGFN pode ficar conferida;\n' +
     '-- a de doutrina continua como referência, nunca conferida.',
