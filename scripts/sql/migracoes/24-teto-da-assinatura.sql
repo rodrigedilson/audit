@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 24 de 35: teto-da-assinatura
+-- audit — passo 24 de 37: teto-da-assinatura
 --
 -- Teto global da assinatura em R$ 25.000/mês. O critério é não morder dentro
 -- do ICP (até 300 CNPJs) em nenhum regime — o pior caso é Lucro Real, que a

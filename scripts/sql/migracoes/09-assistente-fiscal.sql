@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 9 de 35: assistente-fiscal
+-- audit — passo 9 de 37: assistente-fiscal
 --
 -- Conversas do assistente fiscal e a cota mensal por CNPJ, tirada do plano
 -- do regime. O assistente é somente leitura: não escreve no log fiscal, e

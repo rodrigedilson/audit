@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 13 de 35: correcao-propagacao
+-- audit — passo 13 de 37: correcao-propagacao
 --
 -- Correção: a propagação ignorava o item nunca classificado, e o número que
 -- sustenta o diferencial #1 lia zero exatamente no estado em que mais

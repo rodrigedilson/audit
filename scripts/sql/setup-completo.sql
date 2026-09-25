@@ -31,7 +31,7 @@
 -- =============================================================================
 
 -- =============================================================================
--- PARTE 1 — migrations (34 arquivos, na ordem de aplicação)
+-- PARTE 1 — migrations (36 arquivos, na ordem de aplicação)
 -- =============================================================================
 
 
@@ -3799,6 +3799,131 @@ begin
 exception
   when undefined_object then null;
 end $$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260927140000_anon_nos_catalogos.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Fecha à chave anon os quatro catálogos globais.
+--
+-- `tax_rules`, `audit_trails`, `deadline_rules` e `evaluation_criteria` ganharam
+-- `grant select ... to anon, authenticated` nas migrations que as criaram. A
+-- justificativa de então era razoável: são catálogos, não têm `tenant_id` e não
+-- guardam dado de cliente — regra fiscal, definição de trilha, prazo normativo,
+-- citação de norma.
+--
+-- **O que mudou:** a checagem de exposição ao `anon` passou a olhar de fora, e
+-- reprova num banco corretamente migrado. Ela está certa, e a exposição é que
+-- não se justifica.
+--
+-- Dado sem `tenant_id` não é o mesmo que dado que precisa ser público. Nenhuma
+-- tela pública consome esses quatro: as rotas públicas são login, health,
+-- planos, calculadora de preço e o diagnóstico da reforma. Quem lê os catálogos
+-- é a nossa API, autenticada, com a service role. O `grant` ao `anon` abria
+-- leitura direta via PostgREST para qualquer pessoa na internet, sem
+-- acrescentar função nenhuma.
+--
+-- Dois deles hoje estão vazios por contrato — `tax_rules` e `deadline_rules` —
+-- e por isso a checagem ainda não os acusa: ela testa o que **devolve linha**.
+-- Fechar os quatro de uma vez evita a surpresa de a checagem passar a reprovar
+-- no dia em que alguém carregar as regras.
+--
+-- `authenticated` permanece: é leitura de quem já entrou, e a diferença entre
+-- os dois papéis é exatamente o ponto.
+--
+-- A regra que fica, e que a migration dos índices financeiros já seguiu: objeto
+-- novo só ganha `anon` quando uma tela pública o exige, e a exigência vai
+-- escrita na própria migration.
+-- =============================================================================
+
+do $$
+declare
+  alvo text;
+begin
+  foreach alvo in array array[
+    'tax_rules',
+    'audit_trails',
+    'deadline_rules',
+    'evaluation_criteria'
+  ]
+  loop
+    if to_regclass('public.' || alvo) is null then
+      raise notice 'public.% não existe; nada a revogar.', alvo;
+      continue;
+    end if;
+
+    execute format('revoke all on public.%I from anon', alvo);
+    raise notice 'public.% fechada para anon; authenticated preservado.', alvo;
+  end loop;
+exception
+  -- Ambiente local não tem os papéis do Supabase, e isso não é erro de schema.
+  when undefined_object then
+    raise notice 'Papel anon não existe neste banco; nada a revogar.';
+end $$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260927140000_trilha_de_seguranca.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- Trilha de segurança: o log operacional que o event log não cobre.
+--
+-- O event log é append-only e responde "quem mudou este número fiscal". Não
+-- responde "quem tentou entrar e falhou", "quem foi barrado por papel" nem "de
+-- onde veio a rajada" — e é isso que uma investigação de incidente pergunta
+-- primeiro. Hoje essas linhas existem só na saída padrão, que o provedor guarda
+-- por pouco tempo: uma apuração de seis meses atrás não teria material.
+--
+-- Fica **fora** do event log de propósito. O log é trilha de defesa perante o
+-- Fisco; misturar tentativa de login nele poluiria a prova com operação.
+
+create table if not exists public.security_events (
+  id          bigserial primary key,
+  at          timestamptz not null default now(),
+
+  -- `login_ok`, `login_falhou`, `nao_autenticado`, `sem_permissao`, `limite`.
+  kind        text not null,
+
+  -- Nulos quando o evento é anterior à identificação — que é o caso mais
+  -- interessante para investigar.
+  user_id     uuid,
+  tenant_id   uuid,
+  cnpj        char(14),
+
+  method      text,
+  route       text,
+
+  -- HMAC do IP, nunca o IP. Serve para ligar tentativas entre si sem guardar
+  -- dado pessoal; o domínio do HMAC é próprio, então este hash não é
+  -- comparável com o do diagnóstico público — ligar os dois seria uma decisão,
+  -- não um efeito colateral.
+  ip_hash     char(64),
+  user_agent  text,
+
+  detail      text
+);
+
+create index if not exists security_events_at_idx
+  on public.security_events (at desc);
+
+-- As duas perguntas de uma investigação: "o que este IP fez" e "o que
+-- aconteceu com este usuário".
+create index if not exists security_events_ip_idx
+  on public.security_events (ip_hash, at desc) where ip_hash is not null;
+create index if not exists security_events_user_idx
+  on public.security_events (user_id, at desc) where user_id is not null;
+
+alter table public.security_events enable row level security;
+
+-- Sem policy de propósito: ninguém lê pela API. A leitura é investigação, e se
+-- faz com o papel de serviço. Uma policy por escritório convidaria a expor a
+-- trilha na tela, e trilha de segurança visível ao investigado perde a função.
+
+comment on table public.security_events is
+  'Trilha operacional de autenticação, autorização e limite. Fora do event log: '
+  'aquele é prova fiscal, este é investigação de incidente.';
 
 
 -- =============================================================================
