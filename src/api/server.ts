@@ -48,6 +48,7 @@ import {
 } from '../infrastructure/security/security-trail.js';
 import { Logger } from '../esaa/shared/infrastructure/logger.js';
 import { startSecurityTrailPruner } from '../infrastructure/security/security-trail-retention.js';
+import { randomUUID } from 'node:crypto';
 
 export interface ApiDeps {
   env: Env;
@@ -245,6 +246,19 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
      * proxy na frente é pior — permitiria forjar o IP por cabeçalho —, então a
      * escolha é explícita por ambiente.
      */
+    /**
+     * Um id por requisição, que aparece em três lugares: em toda linha de log,
+     * no cabeçalho `x-request-id` da resposta e na trilha de segurança.
+     *
+     * É o que liga a trilha ao log. Sem ele, a trilha dizia "403 em
+     * /v1/clients" e não havia como achar a linha correspondente — nem o
+     * cliente tinha um número para citar ao relatar um problema.
+     *
+     * Quando o proxy manda o seu, o dele vence: recusá-lo quebraria a
+     * correlação justamente com quem está na frente. Mas ele é **higienizado**
+     * antes de entrar, porque cabeçalho é campo livre e vai para dentro do log.
+     */
+    genReqId: (req) => idDaRequisicao(req.headers['x-request-id']),
     trustProxy: env.trustProxy,
     logger: {
       level: env.logLevel,
@@ -259,6 +273,14 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
    * cofre — mesma escada do diagnóstico público. O domínio do HMAC é outro, de
    * modo que os dois hashes não se cruzam por acidente.
    */
+  /**
+   * Devolve o id ao cliente. É o que permite alguém dizer "deu erro, o id é
+   * este" — sem isso, o suporte começa pedindo o horário aproximado.
+   */
+  app.addHook('onSend', async (request, reply) => {
+    void reply.header('x-request-id', String(request.id));
+  });
+
   registerErrorHandler(app, deps.securityTrail);
 
   if (deps.dfe !== undefined) {
@@ -403,4 +425,19 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   });
 
   return app;
+}
+
+/**
+ * Id da requisição, do proxy ou nosso.
+ *
+ * O cabeçalho vem de fora e acaba dentro do log, então passa por filtro: só
+ * alfanumérico, hífen e sublinhado, no máximo 64 caracteres. Sem isso, uma
+ * quebra de linha no cabeçalho escreveria uma linha falsa no log — e log
+ * adulterável não serve de evidência.
+ */
+function idDaRequisicao(bruto: string | string[] | undefined): string {
+  const valor = Array.isArray(bruto) ? bruto[0] : bruto;
+  const limpo = (valor ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '');
+
+  return limpo.length > 0 ? limpo.slice(0, 64) : randomUUID();
 }

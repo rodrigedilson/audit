@@ -168,6 +168,26 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
       anote a data. `GET /v1/users` lista o acesso ao **produto**, não à
       infraestrutura.
 
+- [ ] **Decidir se o log de aplicação sai do provedor — e quando.**
+      Hoje ele dura o que o plano do Render der, e isso está **declarado** em
+      [`seguranca/CONTROLES.md`](seguranca/CONTROLES.md) em vez de subentendido.
+      A evidência durável está no banco: `events` para o fiscal, com hash, e
+      `security_events` para o operacional, por 180 dias, agora correlacionável
+      com o log pelo `request_id`.
+
+      Recomendo **não contratar destino agora**. O que se perderia numa
+      investigação já está no banco, e mandar o log bruto cria problema novo: as
+      rotas são `/v1/clients/{cnpj}/…`, então toda linha de log de requisição
+      carrega **CNPJ na URL** — enviá-las a um serviço de log é entregar
+      identificador fiscal de cliente a um sub-processador novo.
+
+      **O que muda a conta:** passar de uma instância. Aí o log local deixa de
+      contar a história inteira e o destino externo deixa de ser opcional. Se for
+      a hora, o caminho é o log stream do Render (syslog/HTTPS), com duas
+      condições inegociáveis: mascarar o CNPJ no caminho antes de sair, e a linha
+      nova em [`seguranca/SUBPROCESSADORES.md`](seguranca/SUBPROCESSADORES.md)
+      **antes** da chave.
+
 - [ ] **Decidir retenção e descarte.** O event log é append-only por projeto, e
       é o que sustenta a afirmação de que o número deriva daqueles documentos.
       Um pedido de exclusão que alcance o `actor` de um evento não se resolve com

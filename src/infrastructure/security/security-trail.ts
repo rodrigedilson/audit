@@ -36,6 +36,8 @@ export type SecurityEventKind =
 
 export interface SecurityEvent {
   kind: SecurityEventKind;
+  /** Mesmo id do cabeçalho `x-request-id` e das linhas de log da requisição. */
+  requestId?: string | undefined;
   userId?: string | undefined;
   tenantId?: string | undefined;
   cnpj?: string | undefined;
@@ -82,8 +84,8 @@ export function criarTrilhaDeSeguranca(
         .query(
           `insert into security_events
              (kind, user_id, tenant_id, cnpj, method, route, ip_hash, subject_hash,
-            user_agent, detail)
-           values ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10)`,
+            user_agent, detail, request_id)
+           values ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             evento.kind,
             evento.userId ?? null,
@@ -97,6 +99,7 @@ export function criarTrilhaDeSeguranca(
               : hmac(`security-trail-subject:${evento.subject.trim().toLowerCase()}`, segredoDoHash),
             cortar(evento.userAgent),
             cortar(evento.detail),
+            cortar(evento.requestId),
           ],
         )
         .catch((causa: unknown) => {

@@ -45,6 +45,8 @@ ISO 27001 ou SOC 2 Type I é a forma de responder isso sem pedir confiança.
 | **Lista de sub-processadores** | [`SUBPROCESSADORES.md`](SUBPROCESSADORES.md) |
 | **Classificação de dados** | [`CLASSIFICACAO-DE-DADOS.md`](CLASSIFICACAO-DE-DADOS.md), cobrindo todos os 74 objetos de **produção** — não só os que as migrations criam |
 | **Plano de resposta a incidente** | [`INCIDENTES.md`](INCIDENTES.md): cinco classes específicas deste sistema, cada uma com como detectar, o que fazer na primeira hora e o que preservar antes de corrigir. Traz o prazo da Resolução CD/ANPD nº 15/2024 — três dias úteis para a comunicação preliminar, contados do conhecimento do fato |
+| **Correlação entre trilha e log** | Um id por requisição, em três lugares: toda linha de log, o cabeçalho `x-request-id` da resposta e a coluna `request_id` da trilha. O id do proxy vence quando existe, e é higienizado antes de entrar — cabeçalho é campo livre, e uma quebra de linha nele escreveria uma linha falsa no log. Log adulterável não serve de evidência |
+| **Limite de retenção do log declarado** | O log de aplicação dura o que o plano do provedor der, e isso está escrito aqui em vez de subentendido. A evidência durável são as duas trilhas no banco: `events` para o fiscal, append-only e com hash, e `security_events` para o operacional, 180 dias. Uma auditoria aceita retenção curta **justificada e escrita**; o que ela não aceita é silêncio |
 | **Retenção e observação da trilha** | Expurgo diário aos 180 dias, em lotes para não travar a tabela que é escrita no caminho de toda recusa. O doctor mostra o movimento de 24h e avisa quando uma conta acumula tentativas, quando uma origem acumula recusas, e quando o próprio expurgo parou — um expurgo que não roda não produz erro, então comparar a idade do evento mais antigo com a retenção é a única forma de perceber. [`security-trail-retention.ts`](../../src/infrastructure/security/security-trail-retention.ts) |
 | **Trilha operacional de segurança** | `security_events` grava login, recusa por token, recusa por papel e limite — o que o event log não cobre, porque aquele é prova fiscal e este é investigação. Registro num ponto só, o tratador de erro, para rota nova não nascer sem trilha. Guarda HMAC de IP e de e-mail, nunca os valores. [`security-trail.ts`](../../src/infrastructure/security/security-trail.ts) |
 | **Exposição à chave pública medida, e não presumida** | O doctor assume o papel `anon` e conta linhas, que é o que o PostgREST faz ao atender a chave. Conferir privilégio não serve: o Supabase concede `select` ao `anon` no schema inteiro e deixa a RLS barrar, então `has_table_privilege` acusaria 69 objetos onde há 6. [`environment-doctor.ts`](../../src/infrastructure/diagnostics/environment-doctor.ts) |
@@ -70,7 +72,7 @@ outro controle; estão abertos.
 
 
 
-| **Log de aplicação centralizado** | O log de requisição e de erro continua no provedor, com retenção curta. A trilha de segurança já saiu de lá e tem prazo e observação próprios; o que falta é o resto, e depende de escolher um destino — escolher destino é decisão, não código | 6h + decisão |
+| **Log de aplicação fora do provedor** | Enquanto roda **uma instância**, o limite está declarado e a evidência durável está no banco (ver acima). Com mais de uma, o log local deixa de contar a história inteira e o destino externo deixa de ser opcional. Antes disso, é decisão: mandar log bruto significa mandar CNPJ para um sub-processador novo | 6h + decisão |
 
 ## O que a certificação vai perguntar e a resposta é boa
 
@@ -84,6 +86,27 @@ resto:
   certo" de "não conferi" em quatro módulos, e a tela não colapsa os dois. Numa
   auditoria isso aparece como maturidade de controle, não como funcionalidade.
 - **O PFX nunca sai.** Não existe rota de download; a ausência é o controle.
+
+## Por que o log de aplicação não vai para fora
+
+A resposta fácil seria contratar um destino. Vale registrar por que não é o que
+está feito, para que a escolha possa ser revista com o argumento à mão em vez de
+refeita do zero.
+
+**O que se perderia numa investigação já está no banco.** Quem mudou qual número
+fiscal está no `events`, com hash verificável. Quem entrou, falhou ou foi barrado
+está no `security_events`, por 180 dias, correlacionável com o log pelo
+`request_id`. O que sobra no log de aplicação é latência, stack trace e corpo de
+erro — útil para depurar, raramente para apurar incidente.
+
+**E mandar o log bruto cria um problema novo.** As rotas são
+`/v1/clients/{cnpj}/…`, então toda linha de log de requisição carrega **CNPJ na
+URL**. Enviá-las a um serviço de log é enviar identificador fiscal de cliente a
+um sub-processador novo, que entra na lista e no contrato com o escritório.
+
+**O que muda a conta.** Mais de uma instância: aí o log local deixa de contar a
+história inteira, e o destino externo deixa de ser opcional. Quando for a hora,
+as condições estão em [`../todo_edilson.md`](../todo_edilson.md).
 
 ## Ensaio de restauração
 

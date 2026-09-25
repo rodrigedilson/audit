@@ -141,6 +141,66 @@ describe.skipIf(!DATABASE_URL)('API — trilha de segurança', () => {
     expect(rows[0]!.n).toBe('0');
   });
 
+  /**
+   * O id é o que liga a trilha ao log. Sem ele, a linha da trilha dizia "403 em
+   * /v1/clients" e não havia como achar a linha de log correspondente.
+   */
+  it('devolve x-request-id e grava o mesmo id na trilha', async () => {
+    const agente = marca('reqid');
+    const r = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: 'Bearer token-que-nao-vale', 'user-agent': agente },
+    });
+    await assentar();
+
+    const id = r.headers['x-request-id'];
+    expect(id).toBeTruthy();
+
+    const [evento] = await eventos('nao_autenticado', agente);
+    expect(evento?.['request_id']).toBe(id);
+  });
+
+  /** Quando o proxy manda o dele, o dele vence: é com ele que se correlaciona. */
+  it('respeita o x-request-id do proxy', async () => {
+    const agente = marca('proxy');
+    const r = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: {
+        authorization: 'Bearer token-que-nao-vale',
+        'user-agent': agente,
+        'x-request-id': 'do-proxy-42',
+      },
+    });
+    await assentar();
+
+    expect(r.headers['x-request-id']).toBe('do-proxy-42');
+    expect((await eventos('nao_autenticado', agente))[0]?.['request_id']).toBe('do-proxy-42');
+  });
+
+  /**
+   * Cabeçalho é campo livre e acaba dentro do log. Uma quebra de linha nele
+   * escreveria uma linha falsa — e log adulterável não serve de evidência.
+   */
+  it('higieniza o id vindo de fora', async () => {
+    const agente = marca('injecao');
+    const r = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: {
+        authorization: 'Bearer token-que-nao-vale',
+        'user-agent': agente,
+        'x-request-id': 'bom\n2026-01-01 FALSO login_ok',
+      },
+    });
+
+    const id = String(r.headers['x-request-id']);
+    expect(id).not.toContain('\n');
+    expect(id).not.toContain(' ');
+    expect(id).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
   /** A trilha não pode atrasar nem derrubar a resposta que ela observa. */
   it('a resposta sai normalmente com a trilha ligada', async () => {
     const r = await app.inject({
