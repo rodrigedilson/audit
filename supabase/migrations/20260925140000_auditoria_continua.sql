@@ -93,6 +93,59 @@ begin
   end if;
 end $$;
 
+/**
+ * Recusa seguir se alguma tabela deste passo já existe com outra forma.
+ *
+ * `create table if not exists` pula em SILÊNCIO quando o nome já está ocupado,
+ * e o passo segue como se tivesse criado. O primeiro `create index` sobre a
+ * tabela alheia então falha com `column "tenant_id" does not exist` — mensagem
+ * que culpa a coluna quando o problema é a tabela, e que custou três rodadas de
+ * investigação contra a produção.
+ *
+ * Reproduzido: com uma `public.audit_executions` de outra origem no banco, o
+ * passo devolvia exatamente esse erro. A checagem abaixo devolve, em vez disso,
+ * o nome da tabela e a coluna que falta.
+ *
+ * Tabela nossa de uma aplicação anterior passa por aqui sem ruído, e o passo
+ * continua idempotente.
+ */
+do $$
+declare
+  esperado record;
+  faltando text;
+begin
+  for esperado in
+    select * from (values
+      ('evaluation_criteria', array['criterion_id', 'kind', 'citation', 'verified']),
+      ('audit_executions',    array['tenant_id', 'cnpj', 'period', 'procedure_id', 'status']),
+      ('audit_findings',      array['tenant_id', 'cnpj', 'finding_id', 'severity', 'status']),
+      ('audit_reversals',     array['tenant_id', 'cnpj', 'finding_id', 'applied_by'])
+    ) as t(tabela, colunas)
+  loop
+    if to_regclass('public.' || esperado.tabela) is null then
+      continue;
+    end if;
+
+    select string_agg(c, ', ')
+      into faltando
+      from unnest(esperado.colunas) as c
+     where not exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = esperado.tabela
+          and column_name = c
+     );
+
+    if faltando is not null then
+      raise exception
+        'A tabela public.% já existe e não é a deste passo: faltam as colunas %. '
+        'Ela veio de outra origem. Confira o conteúdo, e se estiver vazia e não '
+        'for sua, remova-a antes de aplicar: drop table public.%;',
+        esperado.tabela, faltando, esperado.tabela;
+    end if;
+  end loop;
+end $$;
+
 -- --------------------------------------------------------- critérios
 create table if not exists public.evaluation_criteria (
   criterion_id  text primary key,
