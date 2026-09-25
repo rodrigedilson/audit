@@ -65,6 +65,7 @@ evento não se resolve com um `delete`. Está registrado como lacuna aberta em
 | `audit_executions`, `audit_findings`, `audit_reversals` | Fiscal sigiloso | Auditoria contínua: execuções, achados e reversões |
 | `evaluation_criteria` | Referência pública | Critérios de avaliação da auditoria |
 | `dfe_events` | Fiscal sigiloso | Eventos de DF-e vindos da SEFAZ |
+| `security_events` | Pessoal + Operacional | Trilha de autenticação, autorização e limite. Guarda **HMAC** do IP e do e-mail tentado, nunca os valores. Fora do event log: aquele é prova fiscal, este é investigação |
 | `jobs` | Operacional | Fila de trabalho assíncrono |
 
 ## Legado: o que existe em produção e nenhuma migration cria

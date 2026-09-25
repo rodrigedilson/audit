@@ -8,6 +8,7 @@ import { TierScheduleError } from '../../billing/volume-tiers.js';
 import { BillingConflictError, BillingInputError } from '../../billing/billing-activation.service.js';
 import { DfeSyncRefusedError } from '../../fiscal/dfe/dfe-sync.service.js';
 import { RateLimitedError } from './rate-limit.js';
+import type { SecurityTrail } from '../../infrastructure/security/security-trail.js';
 import { PublicInputError } from '../public-errors.js';
 import {
   ESAAError,
@@ -21,15 +22,39 @@ import {
  *
  * Mensagens em PT-BR, identificadores em inglês, como o contrato define.
  */
-export function registerErrorHandler(app: FastifyInstance): void {
+export function registerErrorHandler(app: FastifyInstance, trilha?: SecurityTrail): void {
+  /**
+   * Um só lugar para registrar recusa, porque é por aqui que toda recusa passa.
+   * Espalhar a gravação pelas rotas garantiria que a próxima rota esquecesse.
+   */
+  const registrar = (
+    kind: 'nao_autenticado' | 'sem_permissao' | 'limite',
+    request: FastifyRequest,
+    detail: string,
+  ): void => {
+    trilha?.registrar({
+      kind,
+      userId: request.tenant?.user.userId,
+      tenantId: request.tenant?.tenantId,
+      method: request.method,
+      route: request.url.split('?')[0],
+      ip: request.ip,
+      userAgent: request.headers['user-agent'],
+      detail,
+    });
+  };
+
   app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
     if (error instanceof UnauthorizedError) {
+      registrar('nao_autenticado', request, error.message);
       return reply.code(401).send({ code: 'unauthorized', message: error.message });
     }
 
     // Antes do ForbiddenError genérico: o corpo diz qual recurso e em que planos
     // ele está, para a tela oferecer a troca de plano em vez de um "proibido".
     if (error instanceof FeatureNotInPlanError) {
+      // Recusa por plano, e não por permissão: é decisão comercial, não sinal de
+      // segurança. Registrar aqui encheria a trilha de ruído previsível.
       return reply.code(403).send({
         code: 'feature_not_in_plan',
         message: error.message,
@@ -40,6 +65,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
     }
 
     if (error instanceof ForbiddenError) {
+      registrar('sem_permissao', request, error.message);
       return reply.code(403).send({ code: 'forbidden', message: error.message });
     }
 
@@ -82,6 +108,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
      * upgrade seria absurdo. A tela bifurca por `code`, nunca por status.
      */
     if (error instanceof RateLimitedError) {
+      registrar('limite', request, error.message);
       return reply
         .code(429)
         .header('retry-after', String(error.retryAfterSeconds))

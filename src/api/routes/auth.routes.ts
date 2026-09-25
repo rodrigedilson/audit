@@ -65,6 +65,18 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: ApiDeps): P
       const body = (await response.json()) as SupabaseTokenResponse;
 
       if (!response.ok || !body.access_token) {
+        // A trilha guarda o HMAC do e-mail, não o e-mail: responde "quantas
+        // tentativas contra a mesma conta" sem colecionar endereço de quem pode
+        // nem ser usuário.
+        deps.securityTrail.registrar({
+          kind: 'login_falhou',
+          subject: email,
+          ip: request.ip,
+          userAgent: request.headers['user-agent'],
+          method: request.method,
+          route: '/v1/auth/login',
+        });
+
         // Mensagem genérica de propósito: distinguir "e-mail não existe" de
         // "senha errada" entrega uma lista de usuários a quem sonda a API.
         throw new UnauthorizedError('E-mail ou senha inválidos.');
@@ -72,6 +84,20 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: ApiDeps): P
 
       const user = await deps.jwtVerifier.verify(`Bearer ${body.access_token}`);
       const context = await deps.tenantResolver.resolve(user);
+
+      // O sucesso também entra: sem ele, a trilha mostra só o que falhou, e uma
+      // investigação não consegue dizer se a tentativa que passou foi a décima
+      // de um mesmo lugar ou a primeira de um contador legítimo.
+      deps.securityTrail.registrar({
+        kind: 'login_ok',
+        userId: user.userId,
+        tenantId: context.tenantId,
+        subject: email,
+        ip: request.ip,
+        userAgent: request.headers['user-agent'],
+        method: request.method,
+        route: '/v1/auth/login',
+      });
 
       return reply.code(200).send({
         access_token: body.access_token,

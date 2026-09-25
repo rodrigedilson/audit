@@ -42,6 +42,12 @@ import { PostgresEventStoreRepository } from '../infrastructure/persistence/post
 import type { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { loadConfig } from '../config/esaa-config.js';
 import { createBurstLimiter, exigirLimite } from './plugins/rate-limit.js';
+import {
+  criarTrilhaDeSeguranca,
+  type SecurityTrail,
+} from '../infrastructure/security/security-trail.js';
+import { Logger } from '../esaa/shared/infrastructure/logger.js';
+import { startSecurityTrailPruner } from '../infrastructure/security/security-trail-retention.js';
 
 export interface ApiDeps {
   env: Env;
@@ -54,6 +60,11 @@ export interface ApiDeps {
    * faria duas apurações trabalharem sobre o mesmo objeto mutável.
    */
   orchestratorFor: (scope: EventScope) => Promise<FiscalOrchestratorService>;
+  /**
+   * Trilha operacional de autenticação, autorização e limite. Fica fora do event
+   * log: aquele é prova fiscal, este é investigação de incidente.
+   */
+  securityTrail: SecurityTrail;
   /**
    * Ausente quando `ASAAS_API_KEY` não está configurada. A cobrança então roda
    * em modo "só cálculo": planos, calculadora e prévia de fatura funcionam, e
@@ -161,9 +172,21 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   const contractLoader = new ContractLoaderService();
   await contractLoader.loadAgentContract(config.contracts.agentContract);
 
+  /**
+   * A trilha usa `IP_HASH_SECRET` quando existe e, sem ela, deriva da chave do
+   * cofre — mesma escada do diagnóstico público. O domínio do HMAC é outro, de
+   * modo que os dois hashes não se cruzam por acidente.
+   */
+  const securityTrail = criarTrilhaDeSeguranca(
+    pool,
+    env.ipHashSecret ?? env.certificateMasterKey,
+    (mensagem, dados) => new Logger('TrilhaDeSeguranca').error(mensagem, dados),
+  );
+
   const deps: ApiDeps = {
     env,
     pool,
+    securityTrail,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
     planFeatures: new PlanFeatures(pool),
@@ -231,7 +254,12 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     },
   });
 
-  registerErrorHandler(app);
+  /**
+   * A trilha usa `IP_HASH_SECRET` quando existe e, sem ela, deriva da chave do
+   * cofre — mesma escada do diagnóstico público. O domínio do HMAC é outro, de
+   * modo que os dois hashes não se cruzam por acidente.
+   */
+  registerErrorHandler(app, deps.securityTrail);
 
   if (deps.dfe !== undefined) {
     app.decorate('dfeSync', deps.dfe);
@@ -249,6 +277,21 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await worker.stop();
     });
   }
+
+  /**
+   * Expurgo da trilha de segurança, uma vez por dia.
+   *
+   * Roda em qualquer ambiente, e não só em produção como o agendador de DF-e: a
+   * trilha é escrita em todos, e deixar o desenvolvimento acumular meses de
+   * rastro sem descarte contradiz a política que este mesmo expurgo aplica.
+   */
+  const expurgo = startSecurityTrailPruner(pool, {
+    onError: (erro) => app.log.error({ err: erro }, 'expurgo da trilha de segurança'),
+    onPurge: (apagadas) => app.log.info({ apagadas }, 'trilha de segurança expurgada'),
+  });
+  app.addHook('onClose', async () => {
+    await expurgo.stop();
+  });
 
   await app.register(cors, {
     origin: env.corsOrigins,
