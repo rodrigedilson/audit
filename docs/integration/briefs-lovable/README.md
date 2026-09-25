@@ -33,8 +33,15 @@ Estas telas **não falam com o Supabase deste repositório**. Elas consomem a AP
 `audit`, que é um serviço Fastify separado, com banco próprio:
 
 ```
-VITE_AUDIT_API_URL=http://localhost:3000/v1   # dev
+VITE_AUDIT_API_URL=http://localhost:3000                  # dev
+VITE_AUDIT_API_URL=https://audit-0wy2.onrender.com        # prod
 ```
+
+**Sem `/v1` no fim.** O cliente `auditApi` (`src/integrations/audit/client.ts`)
+acrescenta o prefixo, e as rotas dos briefs (`/plans`, `/reform-readiness`…)
+são relativas a ele. Toda tela, pública ou não, chama a API pelo `auditApi`, e
+nunca por `fetch` montando a URL à mão: as duas telas públicas faziam isso,
+esqueciam o `/v1`, e em produção recebiam 401 em vez da tabela de preço.
 
 O cliente `supabase` de `src/integrations/supabase/client.ts` continua servindo
 o que já existe aqui (SPED, entidades, cross-reference, grafo, CFOP). Ele **não**
