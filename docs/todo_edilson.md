@@ -63,14 +63,6 @@ foram aplicadas, e a da perícia está em PR aberto.*
 
 ## 1. Antes de publicar
 
-- [ ] **CAPAG: `ANTHROPIC_API_KEY` no Doppler `prd`.** O extrator do demonstrativo
-      do REGULARIZE usa o modelo; sem a chave, `POST /clients/{cnpj}/capag/statements`
-      responde 503. Depois, com a chave de dev, rodar o buscador da fórmula de
-      referência: `npx tsx scripts/buscar-formula-capag.ts` (simulação) e
-      `--executar`. A fórmula da página oficial da PGFN ("Consultar a
-      Capacidade de Pagamento", no gov.br) fica conferida; a de doutrina fica
-      como referência, não conferida.
-
 - [ ] **Pendente: CAPAG com um demonstrativo real do REGULARIZE.** Adiado de
       propósito. Quando houver um cliente com o demonstrativo em mãos, baixá-lo
       do REGULARIZE (PDF original, não digitalizado) e enviar pela tela. O
@@ -152,18 +144,6 @@ chutar. Mas quem tira do "não conferi" é você.
       A constraint recusa marcar como conferido sem `source_ref` — sem ela,
       "conferido" viraria um clique. Os quatro: `lc-214-credito-documento-habil`,
       `lc-214-competencia-do-credito`, `lc-214-uso-e-consumo`, `it-rt-2025-002`.
-
-- [ ] **Carregar as séries de índice.**
-      `financial_indices` nasce com o catálogo dos cinco — IPCA, INPC, IGP-M,
-      TR e SELIC — e `financial_index_points` nasce **vazia**. Sem ponto não há
-      fator, e **nenhuma correção monetária funciona**: o cálculo devolve nulo
-      com o motivo, nunca fator 1, que se leria como "não houve inflação".
-
-      A variação entra como **fração**: 0,42% é `0.00420000`. Guardar `0.42`
-      faria a correção de um ano render 4.200%, e é erro que só aparece no laudo.
-
-      `GET /v1/financial-indices` mostra `loaded_count` e a cobertura de cada
-      uma, que é o que a tela usa para não oferecer um cálculo que vai falhar.
 
 - [ ] **Verificar o CRC e o CNPC de quem vai assinar peça pericial.**
       `memberships.crc_status` nasce `nao_verificado` e **bloqueia a
@@ -304,13 +284,23 @@ chutar. Mas quem tira do "não conferi" é você.
 
 ## Resolvido desde a primeira versão desta lista
 
-- ~~Conferir os coeficientes da CAPAG-P~~ — a PGFN publica as três fórmulas
-  (pessoa física, PJ fora do Simples, PJ do Simples) na página "Consultar a
-  Capacidade de Pagamento", no gov.br. O buscador a lê sempre, confere cada
-  coeficiente literal na página e grava como `oficial_pgfn`, conferida (passo
-  40). A fórmula de doutrina que circula diverge dela (0,05·V6 onde a PGFN
-  publica 0,50·V6 na PJ fora do Simples) e fica como referência, não
-  conferida. A faixa A–D continua transcrita do demonstrativo, não inferida.
+- ~~Conferir os coeficientes da CAPAG-P~~ — a PGFN publica as cinco fórmulas
+  (pessoa física, PJ fora do Simples, PJ do Simples, MEI e PJ inativa) na
+  página "Consultar a Capacidade de Pagamento", no gov.br. O buscador a lê
+  sempre, confere cada coeficiente literal na página e grava como
+  `oficial_pgfn`, conferida (passos 40 e 41). A fórmula de doutrina que circula
+  diverge dela (0,05·V6 onde a PGFN publica 0,50·V6 na PJ fora do Simples) e
+  fica como referência, não conferida. A faixa A–D continua transcrita do
+  demonstrativo, não inferida.
+- ~~CAPAG: `ANTHROPIC_API_KEY` no Doppler `prd` e fórmula carregada~~ — em
+  25/09/2026: chave em `prd`, as cinco fórmulas oficiais gravadas e o doctor
+  com "5 grupo(s) com a oficial da PGFN conferida · extrator configurado".
+- ~~Carregar as séries de índice~~ — em 25/09/2026, pelo
+  `scripts/carregar-indices-oficiais.ts`: IPCA, INPC, IGP-M, TR e SELIC, 386
+  competências cada (1994-07 a 2026-08), todas conferidas. IPCA e INPC batem
+  mês a mês entre IBGE e BCB. A atualização é diária, pelo worker de produção.
+- ~~CLI `audit close`~~ — confirma a competência pela linha de comando, com a
+  mesma trava de hash da tela (#80).
 - ~~CAPAG: em qual plano entra~~ — Simples híbrido, Lucro Presumido e Lucro
   Real, os planos que já incluem o assistente fiscal: cada demonstrativo é uma
   chamada ao modelo. Reversível em `plans.features` (passo 39).
