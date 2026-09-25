@@ -1309,15 +1309,16 @@ export async function checarCertificadosParaColeta(pool: pg.Pool): Promise<Checa
  */
 export async function checarCapag(pool: pg.Pool, env: Env): Promise<Checagem> {
   const nome = 'CAPAG';
-  const { rows } = await pool.query<{ referencias: string; demonstrativos: string; conferidos: string }>(
+  const { rows } = await pool.query<{ referencias: string; oficiais: string; demonstrativos: string; conferidos: string }>(
     `select (select count(distinct capag_group) from capag_reference_formulas)::text as referencias,
+            (select count(distinct capag_group) from capag_reference_formulas where verified)::text as oficiais,
             (select count(*) from capag_statements)::text as demonstrativos,
             (select count(*) from capag_statements where verified)::text as conferidos`,
   );
   const r = rows[0]!;
   const extrator = env.anthropic !== undefined;
   const detalhe =
-    `${r.referencias} grupo(s) com fórmula de referência (doutrina, não conferida) · ` +
+    `${r.referencias} grupo(s) com fórmula de referência, ${r.oficiais} com a oficial da PGFN conferida · ` +
     `${r.demonstrativos} demonstrativo(s), ${r.conferidos} conferido(s) · ` +
     `extrator ${extrator ? 'configurado' : 'sem ANTHROPIC_API_KEY'}`;
 
@@ -1332,7 +1333,7 @@ export async function checarCapag(pool: pg.Pool, env: Env): Promise<Checagem> {
       acao:
         (faltaExtrator ? 'Sem ANTHROPIC_API_KEY o envio de demonstrativo responde 503.\n  ' : '') +
         (Number(r.referencias) === 0
-          ? 'Carregue a fórmula de referência (fica não conferida):\n  npx tsx scripts/buscar-formula-capag.ts --executar'
+          ? 'Carregue a fórmula de referência (a oficial da PGFN fica conferida):\n  npx tsx scripts/buscar-formula-capag.ts --executar'
           : ''),
     };
   }

@@ -12,11 +12,12 @@ import type { CalculationStep } from './monetary.js';
  *
  * ## Os coeficientes não estão no código, e isso é deliberado
  *
- * Os pesos de cada variável vivem em tabela, que **nasce vazia**. Eles foram
- * lidos de doutrina, não do texto da portaria — que, além disso, é alterada por
+ * Os pesos de cada variável vivem em tabela, que **nasce vazia**. Quem a
+ * preenche é o buscador, lendo a página em que a PGFN publica a fórmula e
+ * conferindo cada coeficiente, literal, no texto — e a PGFN muda a fórmula por
  * norma posterior. Fixar `0.3`, `0.1`, `0.8` aqui faria o sistema classificar a
  * capacidade de pagamento de um cliente, e a faixa de desconto que ele vai
- * pedir, com número que ninguém conferiu.
+ * pedir, com número que ninguém conferiu contra a fonte.
  *
  * Sem a fórmula carregada, `computeCapag` devolve `null` e o motivo — **nunca
  * zero**. Zero se leria como "sem capacidade de pagamento", que é uma

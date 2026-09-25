@@ -57,6 +57,7 @@ export function extracaoDoDemonstrativo(): CapagExtraction {
         },
       ],
     },
+    formulas: [],
     values: [
       { variable: 'V1', amount: { printed: 'R$ 1.000.000,00', quote: 'V1 - Receita bruta declarada: R$ 1.000.000,00' } },
       { variable: 'V7', amount: { printed: 'R$ 200.000,00', quote: 'V7 - Massa salarial: R$ 200.000,00' } },

@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 12 de 40: dossie-saldo-credor
+-- audit — passo 12 de 41: dossie-saldo-credor
 --
 -- EFD-Contribuições importada e a janela de cobertura documental. O dossiê de
 -- saldo credor NÃO é gravado: é derivado da escrituração mais a base de

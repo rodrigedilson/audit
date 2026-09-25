@@ -48,6 +48,12 @@ export interface CapagExtraction {
   /** Norma que o documento cita como base. */
   legalBasis: string | null;
   formula: { incomeMultiplier: Cited | null; terms: ExtractedTerm[] } | null;
+  /**
+   * Uma fórmula por grupo, quando o texto descreve mais de uma — a página
+   * oficial da PGFN traz pessoa física, PJ fora do Simples e PJ do Simples
+   * juntas. No demonstrativo, que é de um contribuinte só, fica vazia.
+   */
+  formulas: { group: CapagGroup; incomeMultiplier: Cited | null; terms: ExtractedTerm[] }[];
   /** Valor de cada variável neste CNPJ. Só existe no demonstrativo. */
   values: { variable: string; amount: Cited }[];
   capag: Cited | null;
@@ -64,10 +70,24 @@ const CITED = {
 } as const;
 const CITED_OU_NULO = { anyOf: [CITED, { type: 'null' }] } as const;
 
+const TERMO = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['variable', 'description', 'coefficient', 'block', 'substitutes', 'source'],
+  properties: {
+    variable: { type: 'string' },
+    description: { type: 'string' },
+    coefficient: CITED,
+    block: { type: 'string', enum: ['multiplied', 'added'] },
+    substitutes: { type: ['string', 'null'] },
+    source: { type: 'string' },
+  },
+} as const;
+
 export const CAPAG_EXTRACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['documentKind', 'group', 'referenceDate', 'legalBasis', 'formula', 'values', 'capag', 'totalDebt', 'band'],
+  required: ['documentKind', 'group', 'referenceDate', 'legalBasis', 'formula', 'formulas', 'values', 'capag', 'totalDebt', 'band'],
   properties: {
     documentKind: { type: 'string', enum: [...DOCUMENT_KINDS] },
     group: { anyOf: [{ type: 'string', enum: [...CAPAG_GROUPS] }, { type: 'null' }] },
@@ -81,26 +101,24 @@ export const CAPAG_EXTRACTION_SCHEMA = {
           required: ['incomeMultiplier', 'terms'],
           properties: {
             incomeMultiplier: CITED_OU_NULO,
-            terms: {
-              type: 'array',
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['variable', 'description', 'coefficient', 'block', 'substitutes', 'source'],
-                properties: {
-                  variable: { type: 'string' },
-                  description: { type: 'string' },
-                  coefficient: CITED,
-                  block: { type: 'string', enum: ['multiplied', 'added'] },
-                  substitutes: { type: ['string', 'null'] },
-                  source: { type: 'string' },
-                },
-              },
-            },
+            terms: { type: 'array', items: TERMO },
           },
         },
         { type: 'null' },
       ],
+    },
+    formulas: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['group', 'incomeMultiplier', 'terms'],
+        properties: {
+          group: { type: 'string', enum: [...CAPAG_GROUPS] },
+          incomeMultiplier: CITED_OU_NULO,
+          terms: { type: 'array', items: TERMO },
+        },
+      },
     },
     values: {
       type: 'array',
@@ -145,12 +163,18 @@ export function lerDinheiro(impresso: string): number | null {
   return (negativo ? -1 : 1) * (inteiro * 100 + centavos);
 }
 
-/** `0,10`, `10%`, `10,5 %`, `5`, `5x` → número (percentual vira fração). */
+/**
+ * `0,10`, `0.10`, `10%`, `10,5 %`, `5`, `5x` → número (percentual vira fração).
+ *
+ * Coeficiente aceita ponto decimal: é como a própria PGFN imprime a fórmula na
+ * página oficial (`5(0.3V1 + 0.1V2 + V3)`). Dinheiro, não — em reais o ponto é
+ * separador de milhar, e `lerDinheiro` continua só no formato brasileiro.
+ */
 export function lerNumero(impresso: string): number | null {
   const t = impresso.replace(/[\s ]/g, '').replace(/[x×]$/i, '');
   const pct = t.endsWith('%');
   const corpo = pct ? t.slice(0, -1) : t;
-  if (!/^-?\d+(,\d+)?$/.test(corpo)) return null;
+  if (!/^-?\d+([,.]\d+)?$/.test(corpo)) return null;
   const n = Number(corpo.replace(',', '.'));
   return pct ? Number((n / 100).toFixed(10)) : n;
 }
@@ -187,8 +211,8 @@ const TOLERANCIA_CENTAVOS = 100;
  * falhou. A série fica conferida só quando reproduz: é a conferência
  * automática "quando as fontes batem", com a fonte sendo o próprio
  * demonstrativo — a fórmula dele, aplicada aos valores dele, chega ao número
- * dele. Documento de doutrina nunca é conferido: não há texto oficial público
- * da fórmula para bater.
+ * dele. A fórmula de referência tem conferência própria, no buscador: conferida
+ * só a da página oficial da PGFN, e a de doutrina nunca.
  */
 export function conferirExtracao(extracao: CapagExtraction, textoDoDocumento: string): CapagCheck {
   const texto = normalizar(textoDoDocumento);

@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 39 de 40: capag-no-plano
+-- audit — passo 39 de 41: capag-no-plano
 --
 -- CAPAG presumida nos planos Simples híbrido, Lucro Presumido e Lucro Real,
 -- os que já incluem o assistente fiscal.

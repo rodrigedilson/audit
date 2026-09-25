@@ -67,7 +67,9 @@ foram aplicadas, e a da perícia está em PR aberto.*
       do REGULARIZE usa o modelo; sem a chave, `POST /clients/{cnpj}/capag/statements`
       responde 503. Depois, com a chave de dev, rodar o buscador da fórmula de
       referência: `npx tsx scripts/buscar-formula-capag.ts` (simulação) e
-      `--executar` — ela fica sempre não conferida.
+      `--executar`. A fórmula da página oficial da PGFN ("Consultar a
+      Capacidade de Pagamento", no gov.br) fica conferida; a de doutrina fica
+      como referência, não conferida.
 
 - [ ] **Pendente: CAPAG com um demonstrativo real do REGULARIZE.** Adiado de
       propósito. Quando houver um cliente com o demonstrativo em mãos, baixá-lo
@@ -171,21 +173,6 @@ chutar. Mas quem tira do "não conferi" é você.
 
       A verificação é ato humano, com data registrada. Laudo exige também o
       CNPC; parecer não.
-
-- [ ] **Decidir se vale conferir os coeficientes da CAPAG-P.**
-      É a peça de maior valor comercial do módulo — permite contestar a
-      classificação que define o desconto do cliente na transação tributária —
-      e é a única que **não tem tabela ainda**, de propósito.
-
-      Os pesos foram lidos de doutrina, não da Portaria PGFN 6.757/2022, que
-      além disso é alterada por norma posterior. Fixá-los faria o sistema
-      classificar a capacidade de pagamento de um cliente com número que
-      ninguém conferiu — e zero se leria como "sem capacidade de pagamento",
-      que é a afirmação mais favorável ao cliente e a primeira que a PGFN refaz.
-
-      Enquanto não houver alguém para abrir a portaria e conferir as quatro
-      fórmulas, o cálculo devolve nulo com o motivo. A **faixa A–D** também não
-      é inferida: exige tabela própria, igualmente não conferida.
 
 ---
 
@@ -317,6 +304,13 @@ chutar. Mas quem tira do "não conferi" é você.
 
 ## Resolvido desde a primeira versão desta lista
 
+- ~~Conferir os coeficientes da CAPAG-P~~ — a PGFN publica as três fórmulas
+  (pessoa física, PJ fora do Simples, PJ do Simples) na página "Consultar a
+  Capacidade de Pagamento", no gov.br. O buscador a lê sempre, confere cada
+  coeficiente literal na página e grava como `oficial_pgfn`, conferida (passo
+  40). A fórmula de doutrina que circula diverge dela (0,05·V6 onde a PGFN
+  publica 0,50·V6 na PJ fora do Simples) e fica como referência, não
+  conferida. A faixa A–D continua transcrita do demonstrativo, não inferida.
 - ~~CAPAG: em qual plano entra~~ — Simples híbrido, Lucro Presumido e Lucro
   Real, os planos que já incluem o assistente fiscal: cada demonstrativo é uma
   chamada ao modelo. Reversível em `plans.features` (passo 39).
