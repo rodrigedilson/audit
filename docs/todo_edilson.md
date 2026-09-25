@@ -6,7 +6,41 @@ decidir ou fazer**, separada do que é código.
 Cada item é conferido contra o repositório e o banco antes de entrar. Os que já
 foram resolvidos saem daqui — a lista só serve se encolher.
 
-*Última conferência: 2026-09-25, sobre a `main` em `ed34a6b` (PR #65).*
+*Última conferência: 2026-09-25, sobre a `main` em `ed34a6b` (PR #65), com o
+doctor rodado contra produção e o schema de produção lido tabela a tabela.*
+
+---
+
+## 0. Agora — dado fiscal aberto na internet
+
+- [ ] **Aplicar `supabase/migrations/20260927100000_view_exposta_ao_anon.sql`.**
+      (No SQL Editor do Supabase. O equivalente numerado sai em
+      `scripts/sql/migracoes/` com `npm run sql:bundle`; o número muda a cada
+      migration nova, então o caminho acima é o que não envelhece.)
+      A view `sped_invoices_for_crossref` responde à chave anon do Supabase com
+      192 notas fiscais reais: CNPJ do emitente, número, série e data. A chave
+      anon é **pública por construção** — vai no pacote do frontend e qualquer
+      pessoa a extrai do navegador. Conferido em produção em 25/09/2026 com um
+      `GET` que devolveu `200`.
+
+      A view é resíduo da fase anterior e nenhum código a consulta. A migration
+      revoga o acesso e liga `security_invoker`; não dropa, porque a definição
+      dela é a única cópia que existe.
+
+      **Confere assim:** `doppler run --project audit --config prd -- npm run doctor`.
+      A checagem *exposição à chave anon* tem de sair `[ok]`; hoje sai `[FALHA]`
+      nomeando a view.
+
+- [ ] **Decidir o destino do acervo legado.**
+      Vinte e dois objetos em produção sobraram da fase anterior, e **dezoito
+      têm dado** de clientes reais — notas, itens, tributos, XML. Nenhuma
+      migration os cria, nenhum código os lê, e estão fora do isolamento por
+      `(tenant_id, cnpj)` e de qualquer trilha. O item acima fecha o furo de
+      permissão de um deles; o acervo continua lá.
+
+      Migrar, arquivar ou apagar. Apagar dado fiscal de cliente é decisão sua.
+      Inventário com contagem de linhas em
+      [`seguranca/CLASSIFICACAO-DE-DADOS.md`](seguranca/CLASSIFICACAO-DE-DADOS.md).
 
 ---
 
@@ -94,7 +128,11 @@ foram resolvidos saem daqui — a lista só serve se encolher.
       Defensável em rota sem autenticação, mas inconsistente com as outras 14
       telas — e é o cliente que centraliza tradução de erro e token.
 
-- [ ] **`projection_snapshots` continua órfã.** Existe desde a primeira migration
+- [x] ~~**`projection_snapshots` órfã.**~~ Removida pela migration
+      `27-remove-projection-snapshots.sql`; não existe mais em produção. O texto
+      abaixo fica só para registro do que era.
+
+      Existia desde a primeira migration
       e é citada só no `environment-doctor`; nada em `src/` lê ou escreve nela.
       Ou passa a ser usada, ou sai — hoje sugere um cache que não existe.
 
@@ -115,6 +153,36 @@ foram resolvidos saem daqui — a lista só serve se encolher.
       suboperadores, o que é meio caminho. Falta a decisão de certificar:
       custodiamos certificado A1, escritório grande pergunta antes de entregar o
       dele, e a Taxcel já vende SOC 2 Type 2 a partir do plano Pro.
+
+- [ ] **Ensaio de restauração de backup.** A única lacuna cuja falha é
+      irreversível. O Supabase faz backup; ninguém nunca restaurou, e backup não
+      testado é hipótese. A ferramenta de conferência já existe e foi exercitada
+      contra uma cópia de 86.312 eventos — a cópia fiel passa e as três
+      adulterações testadas foram todas acusadas. Procedimento em
+      [`seguranca/CONTROLES.md`](seguranca/CONTROLES.md), seção *Ensaio de
+      restauração*: restaurar num projeto **novo**, rodar
+      `scripts/conferir-restauracao.ts`, guardar a saída com a data, apagar o
+      projeto. Tem de dizer `Restauração fiel`.
+
+- [ ] **MFA em Doppler, Supabase, Render e GitHub.** Quem entra em qualquer um
+      alcança o acervo inteiro por caminhos diferentes: o Doppler tem a chave
+      mestra do cofre, o Supabase tem o banco e a emissão de token, o Render tem
+      o deploy, o GitHub tem o que vai a produção. **TOTP ou chave física; SMS
+      não conta** — é vulnerável a troca de chip. Registre data e método.
+      Nenhum código alcança isso, e por isso não há checagem no doctor: uma que
+      dissesse "ok" sem verificar seria pior que a lacuna.
+
+- [ ] **Revisão de acesso**, na mesma sentada do MFA — uma sem a outra vale
+      pouco. Liste quem tem acesso aos quatro consoles, remova quem não precisa,
+      anote a data. `GET /v1/users` lista o acesso ao **produto**, não à
+      infraestrutura.
+
+- [ ] **Decidir retenção e descarte.** O event log é append-only por projeto, e
+      é o que sustenta a afirmação de que o número deriva daqueles documentos.
+      Um pedido de exclusão que alcance o `actor` de um evento não se resolve com
+      um `delete`. Pseudonimizar o autor, segregar o dado pessoal fora do log, ou
+      aceitar a retenção e justificá-la são escolhas com consequência diferente
+      para a trilha de defesa — e a escolha é sua, não minha.
 
 ---
 

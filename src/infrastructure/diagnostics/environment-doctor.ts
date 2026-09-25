@@ -249,6 +249,9 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     checagens.push(await isolar('carga inicial', () => checarCargaInicial(pool)));
     checagens.push(await isolar('trilhas de auditoria', () => checarTrilhas(pool)));
     checagens.push(
+      await isolar('exposição à chave anon', () => checarExposicaoAoAnon(pool)),
+    );
+    checagens.push(
       await isolar('visibilidade das tabelas públicas', () =>
         checarVisibilidadePublica(pool),
       ),
@@ -642,6 +645,118 @@ export async function checarTrilhas(pool: pg.Pool): Promise<Checagem> {
  * efeito, e o sintoma (200 com lista vazia, não 403) só aponta RLS para quem
  * já conhece a diferença.
  */
+/**
+ * O que a chave anon consegue ler.
+ *
+ * A chave anon é **pública por construção**: vai no pacote do frontend, e
+ * qualquer pessoa a extrai. O que protege cada tabela é a RLS.
+ *
+ * A sonda assume o papel `anon` e conta linhas, que é exatamente o que o
+ * PostgREST faz ao atender a chave. Conferir privilégio em vez disso não serve:
+ * o Supabase concede `select` ao `anon` no schema inteiro e deixa a RLS barrar
+ * as linhas, então `has_table_privilege` acusa 69 objetos onde há 6. Contar pelo
+ * papel dá o mesmo resultado que a requisição HTTP — conferido contra ela.
+ *
+ * A diferença não é acadêmica. A checagem de visibilidade logo abaixo conferia
+ * quatro tabelas do catálogo público e passava; enquanto isso, uma **view**
+ * servia 192 notas fiscais reais ao `anon`. View não tem RLS, e por padrão roda
+ * com o privilégio de quem a definiu, atravessando a RLS das tabelas de baixo.
+ * Uma checagem por lista nunca teria visto, porque a view não estava na lista.
+ */
+const LEITURA_ANON_INTENCIONAL = new Set([
+  // Catálogo da calculadora de preço, que é pública antes de qualquer cadastro.
+  'plans',
+  'plan_features',
+  'pricing_tiers',
+  'billing_settings',
+  // Tabela de CFOP, lida direto pela tela de consulta de CFOP do frontend. São
+  // códigos publicados pelo CONFAZ: públicos na origem, sem dado de cliente.
+  'cfops',
+]);
+
+export async function checarExposicaoAoAnon(pool: pg.Pool): Promise<Checagem> {
+  const client = await pool.connect();
+
+  try {
+    await client.query('begin read only');
+
+    const { rows: objetos } = await client.query<{ nome: string; tipo: string }>(
+      `select c.relname as nome,
+              case c.relkind when 'r' then 'tabela' else 'view' end as tipo
+         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relkind in ('r', 'v', 'm')
+        order by c.relname`,
+    );
+
+    const expostos: string[] = [];
+    let conseguiuTrocarDePapel = false;
+
+    for (const objeto of objetos) {
+      await client.query('savepoint sonda');
+      try {
+        await client.query('set local role anon');
+        conseguiuTrocarDePapel = true;
+        const { rows } = await client.query<{ n: number }>(
+          `select count(*)::int as n from public."${objeto.nome.replace(/"/g, '""')}"`,
+        );
+        if ((rows[0]?.n ?? 0) > 0) {
+          expostos.push(objeto.tipo === 'view' ? `${objeto.nome} (view)` : objeto.nome);
+        }
+      } catch {
+        // Sem privilégio de leitura: é o resultado esperado, e não um erro.
+      }
+      await client.query('rollback to savepoint sonda');
+      await client.query('reset role');
+    }
+
+    await client.query('commit');
+
+    // Sem poder assumir o papel `anon`, a sonda não mediu nada — e "não medi" não
+    // pode sair como "está seguro". É o tipo de silêncio que fecha a lacuna no
+    // papel: 69 tabelas parecem protegidas porque a pergunta nunca foi feita.
+    if (!conseguiuTrocarDePapel) {
+      return {
+        nome: 'exposição à chave anon',
+        estado: 'aviso',
+        detalhe:
+          'não verificado: o usuário do banco não pode assumir o papel `anon`, ' +
+          'então não dá para medir o que a chave pública alcança',
+        acao:
+          'Rode o diagnóstico com um usuário membro de `anon` (o `postgres` do ' +
+          'Supabase é), ou confira no painel em Database → Policies.',
+      };
+    }
+
+    const inesperados = expostos.filter(
+      (nome) => !LEITURA_ANON_INTENCIONAL.has(nome.replace(' (view)', '')),
+    );
+
+    if (inesperados.length === 0) {
+      return {
+        nome: 'exposição à chave anon',
+        estado: 'ok',
+        detalhe: `${expostos.length} objeto(s) legíveis, todos declarados como públicos`,
+      };
+    }
+
+    return {
+      nome: 'exposição à chave anon',
+      estado: 'falha',
+      detalhe:
+        `${inesperados.length} objeto(s) devolvem linha para a chave anon sem estarem ` +
+        `declarados: ${inesperados.join(', ')}. A chave anon é pública: isto é ` +
+        'leitura por qualquer pessoa na internet.',
+      acao:
+        'Para cada um: `revoke all on public.<nome> from anon, authenticated;`. Se for\n' +
+        '  view, some `alter view public.<nome> set (security_invoker = on);` — sem isso\n' +
+        '  ela atravessa a RLS das tabelas de origem. Se a leitura for intencional,\n' +
+        '  declare em LEITURA_ANON_INTENCIONAL com o motivo, em vez de afrouxar a checagem.',
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function checarVisibilidadePublica(pool: pg.Pool): Promise<Checagem> {
   const { rows } = await pool.query<{ tabela: string; rls: boolean; policies: string }>(
     `select c.relname as tabela,

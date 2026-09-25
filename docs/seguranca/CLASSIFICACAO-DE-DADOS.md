@@ -4,9 +4,12 @@ O que este sistema guarda, sob que regime, e o que isso obriga. Serve a duas
 perguntas que chegam juntas: a do cliente ("que dado meu vocês têm?") e a da
 auditoria ("como vocês sabem?").
 
-Escrito a partir do schema, e não de um modelo: a tabela do fim cobre **todas**
-as tabelas do banco, conferidas contra `information_schema`. Tabela nova sem
-classe é lacuna, não omissão.
+Escrito a partir do schema **de produção**, e não de um modelo nem do banco de
+teste. A distinção custou caro: a primeira versão deste documento dizia cobrir
+"todas as tabelas do banco" e foi conferida contra o banco de teste, que só tem o
+que as migrations criam. Produção tinha 22 objetos a mais, herdados da fase
+anterior do produto — e um deles servia nota fiscal à chave pública. Tabela nova
+sem classe é lacuna, não omissão, e a conferência é contra produção.
 
 ## As classes
 
@@ -38,7 +41,6 @@ evento não se resolve com um `delete`. Está registrado como lacuna aberta em
 |---|---|---|
 | `certificates` | Segredo | `encrypted_pfx` cifrado em AES-256-GCM; `key_id` diz qual chave mestra cifrou |
 | `events` | Fiscal sigiloso + Pessoal | O `payload` é fiscal; o `actor` é pessoal. Append-only por gatilho |
-| `projection_snapshots` | Fiscal sigiloso | Derivado do log; o `projection_hash` é o que o cliente vê e `POST /verify` recalcula |
 | `clients` | Fiscal sigiloso | CNPJ, regime, UF. Identifica o contribuinte |
 | `periods` | Fiscal sigiloso | |
 | `documents`, `document_items` | Fiscal sigiloso | NF-e recebidas e emitidas, item a item |
@@ -60,7 +62,41 @@ evento não se resolve com um `delete`. Está registrado como lacuna aberta em
 | `plans`, `plan_features`, `pricing_tiers` | Comercial (público) | Catálogo; a calculadora de preço é pública |
 | `fiscal_codes`, `cclasstrib_cst`, `ncm_flags` | Referência pública | NCM, NBS, CFOP, CST, cClassTrib |
 | `tax_rules`, `deadline_rules` | Referência pública | Alíquotas e prazos normativos, com vigência |
+| `audit_executions`, `audit_findings`, `audit_reversals` | Fiscal sigiloso | Auditoria contínua: execuções, achados e reversões |
+| `evaluation_criteria` | Referência pública | Critérios de avaliação da auditoria |
+| `dfe_events` | Fiscal sigiloso | Eventos de DF-e vindos da SEFAZ |
 | `jobs` | Operacional | Fila de trabalho assíncrono |
+
+## Legado: o que existe em produção e nenhuma migration cria
+
+Vinte e dois objetos sobraram da fase anterior do produto. Nenhuma migration os
+cria, nenhum código dos dois repositórios os lê, e **dezoito deles têm dado**.
+
+| Objeto | Classe | Linhas em 25/09/2026 |
+|---|---|---|
+| `extracted_invoices`, `extracted_items`, `extracted_taxes`, `extracted_participants`, `extracted_companies` | Fiscal sigiloso | 946, 420, 192, 99, 1 |
+| `xml_documents`, `xml_document_items`, `xml_import_jobs` | Fiscal sigiloso | 193, 613, 3 |
+| `sped_parsed_records`, `sped_parsing_jobs` | Fiscal sigiloso | 1499, 1 |
+| `cross_reference_results`, `cross_reference_divergences`, `cross_reference_runs` | Fiscal sigiloso | 193, 414, 1 |
+| `sped_invoices_for_crossref` (**view**) | Fiscal sigiloso | 192 — **respondia à chave pública**, ver abaixo |
+| `uploaded_files`, `entity_extraction_jobs`, `document_cache` | Operacional | 2, 2, 0 |
+| `profiles` | Pessoal | 3 |
+| `cfops` | Referência pública | 238 |
+| `ai_analyses`, `audits`, `reports` | Fiscal sigiloso | 0, 0, 0 |
+
+**A view vazava.** `sped_invoices_for_crossref` devolvia `200` e 192 notas reais
+— com CNPJ do emitente, número, série e data — para a chave anon, que é pública
+por construção e vai no pacote do frontend. View não tem RLS e, por padrão, roda
+com o privilégio de quem a definiu, atravessando a RLS das tabelas de origem. A
+correção está em `32-view_exposta_ao_anon.sql`, e o `npm run doctor` passou a
+medir isso assumindo o papel `anon` e contando linhas — que é o que o PostgREST
+faz ao atender a chave.
+
+**O resto continua aberto como decisão.** Este dado é de clientes reais e está
+fora do modelo de isolamento por `(tenant_id, cnpj)` do produto atual. As opções
+são migrar, arquivar ou apagar, e nenhuma é técnica: apagar dado fiscal de
+cliente é decisão de negócio. Está registrado em
+[`CONTROLES.md`](CONTROLES.md).
 
 ## O que não está no banco
 
