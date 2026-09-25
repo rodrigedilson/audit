@@ -1629,11 +1629,20 @@ paths:
     get:
       tags: [events]
       operationId: getPeriodProof
+      parameters:
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, pdf], default: json }
       summary: Comprovante de integridade da competência
       description: >
         O documento que o escritório mostra ao cliente dele: qual número foi
         apurado, sobre quantos documentos, e a prova de que a trilha fecha.
-        Precursor em JSON do Book de fechamento em PDF.
+
+
+        `?format=pdf` devolve o mesmo comprovante em PDF, para anexar a e-mail:
+        o hash defendido (o da confirmação, ou o atual) vai **inteiro** no rodapé
+        de cada página, e o SHA-256 do arquivo sai no cabeçalho `x-pdf-sha256`.
+        Só leitura: gerar o PDF não grava evento.
 
 
         `confirmed_hash_reproduced` é a prova forte. O hash foi gravado no log no
@@ -1681,7 +1690,14 @@ paths:
                     properties:
                       inbound: { type: integer }
                       outbound: { type: integer }
-                      total: { type: integer }
+                      total: { type: integer, description: Sem as canceladas. }
+                      cancelled: { type: integer, description: Canceladas na SEFAZ, fora das somas. }
+            application/pdf:
+              schema: { type: string, format: binary }
+          headers:
+            x-pdf-sha256:
+              description: SHA-256 do PDF, só em `?format=pdf`.
+              schema: { type: string }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ------------------------------------------------------------- billing

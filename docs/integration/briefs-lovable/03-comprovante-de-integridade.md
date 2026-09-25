@@ -18,8 +18,9 @@ O produto vende uma promessa difícil de demonstrar: *o número que você entreg
 ao Fisco é defensável, e dá para provar*. Essa prova já existia na API, mas
 escondida atrás de um `POST` que ninguém chamaria por conta própria.
 
-Este é o entregável: a página que o escritório **mostra ao cliente dele**. É o
-precursor em JSON do Book de fechamento em PDF.
+Este é o entregável: a página que o escritório **mostra ao cliente dele**. O
+mesmo comprovante sai em PDF por `GET …/proof?format=pdf`, com o hash inteiro no
+rodapé de cada página.
 
 ## Contrato
 
@@ -130,8 +131,11 @@ completos, nunca truncados: um hash pela metade não serve de prova, que é a
 que a verificação é feita a cada carregamento, não cacheada — é o que dá valor
 ao documento.
 
-Inclua um botão de imprimir com `@media print` limpo: esta página vai virar PDF
-anexado a e-mail para o cliente final.
+Inclua um botão **"Baixar PDF"** que chama `GET …/proof?format=pdf` com o token
+e salva o arquivo (`comprovante-<cnpj>-<período>.pdf`). É esse PDF que vai
+anexado ao e-mail para o cliente final: não gere PDF no navegador, porque o da
+API traz o hash em toda página e o SHA-256 do arquivo em `x-pdf-sha256`, que a
+tela pode mostrar ao lado do botão depois do download.
 
 ## Estados
 
