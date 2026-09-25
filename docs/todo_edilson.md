@@ -6,8 +6,11 @@ decidir ou fazer**, separada do que é código.
 Cada item é conferido contra o repositório e o banco antes de entrar. Os que já
 foram resolvidos saem daqui — a lista só serve se encolher.
 
-*Última conferência: 2026-09-25, sobre a `main` em `ed34a6b` (PR #65), com o
-doctor rodado contra produção e o schema de produção lido tabela a tabela.*
+*Última conferência: 2026-09-25, sobre a `main` em `4a1a336` (PR #75), com o
+doctor rodado contra produção e o schema de produção lido tabela a tabela. A
+seção 2 foi conferida contra um banco limpo com os papéis do Supabase, não
+contra produção: as migrations dos passos 34 e 35 estão em `main` e ainda não
+foram aplicadas, e a da perícia está em PR aberto.*
 
 ---
 
@@ -30,6 +33,20 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
       **Confere assim:** `doppler run --project audit --config prd -- npm run doctor`.
       A checagem *exposição à chave anon* tem de sair `[ok]`; hoje sai `[FALHA]`
       nomeando a view.
+
+- [ ] **Aplicar `supabase/migrations/20260927140000_anon_nos_catalogos.sql`
+      junto — sem ela o doctor continua reprovando.**
+      A view não era a única coisa aberta. `tax_rules`, `audit_trails`,
+      `deadline_rules` e `evaluation_criteria` também respondiam à chave anon,
+      por `grant` das migrations que as criaram. Rodei a checagem nova contra um
+      banco limpo, com os papéis do Supabase, e ela acusou duas delas — só duas
+      porque testa o que **devolve linha**, e as outras estão vazias por
+      contrato. Acusaria as quatro no dia em que alguém carregasse as regras.
+
+      São catálogos sem dado de cliente, e a justificativa de então era
+      razoável. Mas **dado sem `tenant_id` não é o mesmo que dado que precisa
+      ser público**: nenhuma tela pública os consome, e quem os lê é a nossa
+      API, autenticada. `authenticated` permanece; só o `anon` sai.
 
 - [ ] **Decidir o destino do acervo legado.**
       Vinte e dois objetos em produção sobraram da fase anterior, e **dezoito
@@ -94,7 +111,71 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
 
 ---
 
-## 2. Decisões comerciais em aberto
+## 2. O método pericial nasce desligado
+
+Auditoria contínua, prazos e perícia estão no ar desde os PRs #61 em diante, e
+**nenhum dos três produz número até alguém preencher o que falta**. Isso é
+contrato, não pendência de engenharia: o produto prefere dizer "não conferi" a
+chutar. Mas quem tira do "não conferi" é você.
+
+- [ ] **Conferir os quatro critérios de avaliação em texto oficial.**
+      `evaluation_criteria` nasce com as quatro normas que as trilhas citam, e
+      todas com `verified = false`, porque as citações saíram de leitura de
+      doutrina e do briefing — ninguém abriu o texto. Enquanto ficarem assim,
+      **toda execução de auditoria sai `inconclusive`** e os achados aparecem
+      sem afirmar nada.
+
+      Conferido o texto, ligar um a um:
+
+      ```sql
+      update evaluation_criteria
+         set verified = true, source_ref = '<URL do texto oficial>', verified_at = now()
+       where criterion_id = 'lc-214-credito-documento-habil';
+      ```
+
+      A constraint recusa marcar como conferido sem `source_ref` — sem ela,
+      "conferido" viraria um clique. Os quatro: `lc-214-credito-documento-habil`,
+      `lc-214-competencia-do-credito`, `lc-214-uso-e-consumo`, `it-rt-2025-002`.
+
+- [ ] **Carregar as séries de índice.**
+      `financial_indices` nasce com o catálogo dos cinco — IPCA, INPC, IGP-M,
+      TR e SELIC — e `financial_index_points` nasce **vazia**. Sem ponto não há
+      fator, e **nenhuma correção monetária funciona**: o cálculo devolve nulo
+      com o motivo, nunca fator 1, que se leria como "não houve inflação".
+
+      A variação entra como **fração**: 0,42% é `0.00420000`. Guardar `0.42`
+      faria a correção de um ano render 4.200%, e é erro que só aparece no laudo.
+
+      `GET /v1/financial-indices` mostra `loaded_count` e a cobertura de cada
+      uma, que é o que a tela usa para não oferecer um cálculo que vai falhar.
+
+- [ ] **Verificar o CRC e o CNPC de quem vai assinar peça pericial.**
+      `memberships.crc_status` nasce `nao_verificado` e **bloqueia a
+      assinatura**. Não há integração com o conselho, e presumir regularidade
+      faria o sistema afirmar uma habilitação que ninguém conferiu — a primeira
+      coisa que a parte contrária ataca.
+
+      A verificação é ato humano, com data registrada. Laudo exige também o
+      CNPC; parecer não.
+
+- [ ] **Decidir se vale conferir os coeficientes da CAPAG-P.**
+      É a peça de maior valor comercial do módulo — permite contestar a
+      classificação que define o desconto do cliente na transação tributária —
+      e é a única que **não tem tabela ainda**, de propósito.
+
+      Os pesos foram lidos de doutrina, não da Portaria PGFN 6.757/2022, que
+      além disso é alterada por norma posterior. Fixá-los faria o sistema
+      classificar a capacidade de pagamento de um cliente com número que
+      ninguém conferiu — e zero se leria como "sem capacidade de pagamento",
+      que é a afirmação mais favorável ao cliente e a primeira que a PGFN refaz.
+
+      Enquanto não houver alguém para abrir a portaria e conferir as quatro
+      fórmulas, o cálculo devolve nulo com o motivo. A **faixa A–D** também não
+      é inferida: exige tabela própria, igualmente não conferida.
+
+---
+
+## 3. Decisões comerciais em aberto
 
 - [ ] **Calibrar a escada de preço.**
       Hoje: `1:0% · 101:15% · 301:30% · 601:40% · 1001:50%`, mínimo R$ 150,00,
@@ -117,7 +198,7 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
 
 ---
 
-## 3. Dívida técnica confirmada
+## 4. Dívida técnica confirmada
 
 - [x] ~~**`projection_snapshots` órfã.**~~ Removida pela migration
       `27-remove-projection-snapshots.sql`; não existe mais em produção. O texto
@@ -133,7 +214,7 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
 
 ---
 
-## 4. Riscos do briefing que continuam abertos
+## 5. Riscos do briefing que continuam abertos
 
 - [ ] **Fonte normativa do monofásico e da ST precisa de revisão fiscal humana.**
       O briefing registra que parte das normas não foi conferida em texto
@@ -177,7 +258,7 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
 
 ---
 
-## 5. O que sobrou da análise competitiva (é copy, não código)
+## 6. O que sobrou da análise competitiva (é copy, não código)
 
 - [ ] **"Não substituímos nada" na primeira dobra do site.** A Solutio
       transformou co-existência em argumento de venda. Nosso caso é mais forte —
