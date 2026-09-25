@@ -181,6 +181,14 @@ export class FiscalProjectorService {
         break;
 
       /**
+       * O demonstrativo de CAPAG vive em `capag_statements`. Trazê-lo para cá
+       * poria centavos no objeto hasheado; o evento registra quem importou,
+       * quando e o SHA-256 do arquivo.
+       */
+      case 'capag.statement_imported':
+        break;
+
+      /**
        * O estorno reabre a apuração da competência, como qualquer ajuste: a
        * contra-apuração que estava na tela foi calculada contra números que já
        * não existem.

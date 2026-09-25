@@ -63,6 +63,20 @@ foram aplicadas, e a da perícia está em PR aberto.*
 
 ## 1. Antes de publicar
 
+- [ ] **CAPAG: `ANTHROPIC_API_KEY` no Doppler `prd`.** O extrator do demonstrativo
+      do REGULARIZE usa o modelo; sem a chave, `POST /clients/{cnpj}/capag/statements`
+      responde 503. Depois, com a chave de dev, rodar o buscador da fórmula de
+      referência: `npx tsx scripts/buscar-formula-capag.ts` (simulação) e
+      `--executar` — ela fica sempre não conferida.
+
+- [ ] **CAPAG: um demonstrativo real para o aceite.** Baixar do REGULARIZE o
+      demonstrativo de CAPAG de um cliente (PDF original, não digitalizado) e
+      enviar pela tela. O esperado é `reproduces: true` e `verified: true`. Se não
+      reproduzir, o `problems` diz qual número ou trecho não bateu.
+
+- [ ] **CAPAG: em qual plano entra.** As rotas nasceram sem feature de plano,
+      como as séries de índice. É decisão comercial.
+
 - [ ] **Ligar o envio do relatório do diagnóstico por e-mail (Doppler `prd`).**
       O código está no ar desde o PR #65, e o SQL do passo 31 já está aplicado.
       Sem estes segredos o diagnóstico funciona, o lead é gravado e a resposta

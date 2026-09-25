@@ -9,6 +9,10 @@ import { TenantResolver, type TenantContext } from './auth/tenant-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerPlanGate } from './plugins/plan-gate.js';
 import { PlanFeatures } from '../billing/plan-features.js';
+import { registerCapagRoutes } from './routes/capag.routes.js';
+import { CapagService } from '../fiscal/forensics/capag/capag.service.js';
+import { ClaudeCapagExtractor } from '../fiscal/forensics/capag/claude-capag-extractor.js';
+import type { CapagExtractorPort } from '../fiscal/forensics/capag/capag-extractor.port.js';
 import { SmtpMailGateway, type MailGateway } from '../infrastructure/mail/mail-gateway.js';
 import { ReadinessDelivery } from '../fiscal/ingestion/readiness-delivery.js';
 import { ReadinessReportCipher } from '../fiscal/ingestion/readiness-cipher.js';
@@ -85,6 +89,8 @@ export interface ApiDeps {
   planFeatures: PlanFeatures;
   /** Guarda cifrada e envio por e-mail do relatório do diagnóstico público. */
   readinessDelivery: ReadinessDelivery;
+  /** Demonstrativos de CAPAG e fórmula de referência. Extrator só com ANTHROPIC_API_KEY. */
+  capag: CapagService;
 }
 
 declare module 'fastify' {
@@ -145,6 +151,8 @@ export interface BuildServerOptions {
    */
   asaas?: AsaasGateway;
   /** Modelo de linguagem. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
+  /** Extrator da CAPAG. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
+  capagExtractor?: CapagExtractorPort;
   languageModel?: LanguageModelPort;
   /** Envio de e-mail. Os testes injetam um dublê; sem ele, SMTP de `MAIL_SMTP_URL`. */
   mail?: MailGateway;
@@ -192,6 +200,13 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
     planFeatures: new PlanFeatures(pool),
+    capag: new CapagService(
+      pool,
+      options.capagExtractor ??
+        (env.anthropic === undefined
+          ? undefined
+          : new ClaudeCapagExtractor({ apiKey: env.anthropic.apiKey, model: env.anthropic.model })),
+    ),
     readinessDelivery: new ReadinessDelivery({
       pool,
       ...(env.reportEncryptionKey === undefined ? {} : { cipher: new ReadinessReportCipher(env.reportEncryptionKey) }),
@@ -431,6 +446,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerCreditRoutes(instance, deps);
     await registerAuditRoutes(instance, deps);
     await registerIndicesRoutes(instance, deps);
+      await registerCapagRoutes(instance, deps);
       await registerSimulationRoutes(instance, deps);
       await registerDossierRoutes(instance, deps);
       await registerEfdIcmsIpiRoutes(instance, deps);
