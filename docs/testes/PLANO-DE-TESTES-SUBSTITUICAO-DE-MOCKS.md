@@ -259,7 +259,7 @@ escritório de teste.**
 | SD-4 | White label pela tabela | Book com `white_label: true` num cliente `simples_hibrido` | 403 `feature_not_in_plan` (`white_label`) | ✅ |
 | SD-5 | Calendário da carteira | Escritório só com MEI: `api $API/deadlines` | 403 (`calendario`); com um CNPJ de plano maior na carteira, 200 | ✅ |
 | SD-6 | CNPJ de outro escritório | Chamar uma rota fechada com CNPJ que não é da carteira | 404, e não 403 | ✅ |
-| SD-7 | A tela diante do 403 | No front, abrir a apuração do cliente MEI | **Lacuna conhecida:** o front ainda não trata `feature_not_in_plan` e mostra o erro genérico. Registrar o que aparece | — |
+| SD-7 | A tela diante do 403 | No front, abrir a apuração, a contra-apuração e o crédito em risco do cliente MEI | Aviso "… não está no plano deste CNPJ", com o nome do recurso como na tabela de preço, os planos que o incluem e o atalho para Plano e assinatura; sem cara de erro, e em menos de um segundo (sem retry). Front: `feat/fora-do-plano` | — |
 
 ### Segunda varredura, E (#62): coleta agendada
 
