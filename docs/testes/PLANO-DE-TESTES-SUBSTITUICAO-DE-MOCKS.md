@@ -2,7 +2,7 @@
 
 > **Para quem é:** quem vai aceitar em ambiente real o que foi entregue entre
 > 23 e 25/09/2026. A suíte automatizada já cobre a lógica de cada entrega (1817
-> testes na `main` em `4cc11be`). Este plano cobre **o que só se
+> testes na `main` em `0d5715f`). Este plano cobre **o que só se
 > prova no ambiente de verdade**: SEFAZ, Asaas, Anthropic, SMTP, Render, Vercel
 > e o banco de produção.
 
@@ -50,7 +50,7 @@ ICMS/IPI e o limite de requisições distribuído (só com mais de uma instânci
 
 ```bash
 # API em produção (Render) ou local (dev)
-export API=https://<servico-da-api>.onrender.com/v1      # ou http://localhost:3000/v1
+export API=https://audit-0wy2.onrender.com/v1      # ou http://localhost:3000/v1
 
 # Token de um usuário owner do escritório de teste
 export TOKEN=$(curl -s -X POST $API/auth/login -H 'Content-Type: application/json' \
@@ -103,7 +103,7 @@ Legenda da coluna **Auto**:
 |---|---|---|---|---|
 | A1-1 | Parâmetros de cobrança vêm do banco | `curl $API/plans` | `minimum_cents` igual a `billing_settings.minimum_cents` (15000) | ✅ |
 | A1-2 | Sem `billing_settings`, 503 | **Só no Postgres local**: apagar a linha e chamar `/plans` | 503 `billing_not_configured`, apontando o doctor. **Não faça em produção.** | ✅ |
-| A1-3 | Flags do assistente refletem a configuração | `curl $API/assistant/capabilities` | Sem chave: `deterministic_only: true`, `language_model_configured: false`, sem `language_model` | ✅ |
+| A1-3 | Flags do assistente refletem a configuração | `curl $API/assistant/capabilities` | Em `prd`, com chave: ver A4-3. Local em `dev`, sem chave: `deterministic_only: true`, `language_model_configured: false`, sem `language_model` | ✅ |
 
 ### Onda 2: dados de referência
 
@@ -125,7 +125,7 @@ Hoje, em produção, só dá para validar o modo "só cálculo":
 | A3-2 | Doctor registra a pendência | `npm run doctor` (prd) | Aviso "modo só cálculo", com a lista de passos | ✅ |
 | A3-3 | `/subscription` diz que não há cobrança | `api $API/subscription` | `billing_activated: false` | ✅ |
 
-Quando as chaves chegarem (`SEGREDOS.md`, seção Cobrança):
+Quando as chaves chegarem (`docs/todo_edilson.md`, seção 1, e `docs/setup/SEGREDOS.md`, seção "O que `AUDIT_ENV` confere no start"):
 
 | ID | Caso | Passos | Esperado | Auto |
 |---|---|---|---|---|
@@ -157,7 +157,7 @@ Com a chave:
 | A4-5 | Pergunta sem lastro | "qual a capital da França?" | `answerable: false` com motivo; nenhum fato | 🟡 |
 | A4-6 | Valor inventado é barrado | Não dá para forçar o modelo a errar em produção: coberto pelo teste `tier3.test.ts` | — | ✅ |
 | A4-7 | Cota conta a pergunta | `api $API/clients/$CNPJ/assistant/usage` antes e depois | `used` sobe 1 por pergunta, respondida ou não | ✅ |
-| A4-8 | Custo | Painel da Anthropic depois de algumas perguntas | Cache de leitura (`cache_read_input_tokens`) acima de zero a partir da segunda pergunta | ⛔ |
+| A4-8 | Custo | Painel da Anthropic depois de algumas perguntas | Cache de leitura (`cache_read_input_tokens`) acima de zero a partir da segunda pergunta | — |
 
 ### Onda 5: coleta de DF-e na SEFAZ
 
@@ -295,7 +295,7 @@ Hoje, sem os segredos:
 | SF-2 | Lead sem envio, dito na tela | Pedir a cópia por e-mail | Lead gravado; a tela diz que o envio automático ainda não está ligado (`mail_not_configured`), e não "a cópia vai para…" | ✅ |
 | SF-3 | Doctor avisa | `npm run doctor` (prd) | Aviso `e-mail do diagnóstico`, com a lista de segredos | ✅ |
 
-Com os segredos (`docs/todo_edilson.md`, item 1):
+Com os segredos (`docs/todo_edilson.md`, seção 1, e-mail do diagnóstico):
 
 | ID | Caso | Passos | Esperado | Auto |
 |---|---|---|---|---|
@@ -348,7 +348,7 @@ select created_at, email is not null as tem_lead, report_expires_at,
 |---|---|---|---|---|
 | TK-0 | Extrator com o modelo real | Demonstrativo de exemplo da suíte (`tests/helpers/capag.ts`) pelo `ClaudeCapagExtractor` com a chave de `prd`, sem gravar | `reproduces: true`, `verified: true`, `problems: []`, faixa C, CAPAG de R$ 950.000,00. **Executado em 25/09: passou, em 10 s** | ✅ |
 | TK-1 | Fórmula oficial carregada | `npm run doctor` (prd) | "CAPAG": 5 grupos com a oficial da PGFN conferida, extrator configurado. **Executado em 25/09: passou** | ✅ |
-| TK-2 | Oficial antes da doutrina | `api $API/clients/$CNPJ/capag` | `reference_formulas` com os cinco grupos, `source_kind: oficial_pgfn` e `verified: true`; PJ fora do Simples com `0.5` em V6 | ✅ |
+| TK-2 | Oficial antes da doutrina | `api $API/clients/$CNPJ/capag` (cliente em `simples_hibrido`, `lucro_presumido` ou `lucro_real`) | `reference_formulas` com os cinco grupos, `source_kind: oficial_pgfn` e `verified: true`; PJ fora do Simples com `0.5` em V6 | ✅ |
 | TK-3 | Doutrina nunca conferida | SQL Editor: `update capag_reference_formulas set verified = true where source_kind = 'doutrina';` | Recusado por `capag_referencia_conferida_so_oficial` | ✅ |
 | TK-4 | Tela | Detalhe do cliente → CAPAG | Selo "Oficial (PGFN), conferida" em cada fórmula; grupos com rótulo em português | — |
 | TK-5 | Fora do plano | Cliente `mei` ou `simples_integrado` → CAPAG | Tela "fora do plano", com os planos que incluem; a API responde 403 `feature_not_in_plan` | ✅ |
@@ -374,7 +374,7 @@ npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
 ```
 
 O CI da PR roda os três, mais a imagem Docker respondendo `/health`. O lint
-do Redocly falha por erro, não por aviso: a `main` tem 60 avisos conhecidos
+do Redocly falha por erro, não por aviso: a `main` tem 62 avisos conhecidos
 (licença, servidor de exemplo, operações sem 4xx) e zero erros.
 
 **Intermitência conhecida (resolvida):** `tax_rules` é global e disputada por
@@ -392,11 +392,19 @@ outro teste que depende de regra publicada passar a oscilar, a causa provável
 - Um dia de coleta agendada (SE-4 a SE-6) sem nenhum `656` da SEFAZ.
 - Depois de cada deploy, o comprovante de uma competência já confirmada em
   produção continua com `confirmed_hash_reproduced: true` (SB-4).
+- A CAPAG só vale como aceita depois do TK-6, com um demonstrativo real do
+  REGULARIZE reproduzindo a CAPAG impressa.
 
 ## 7. Registro de execução
 
 | ID | Data | Ambiente | Resultado | Observação |
 |---|---|---|---|---|
+| A2-4 | 25/09/2026 | prd | passou | doctor: "tabelas oficiais de códigos" ok |
+| SG-5 | 25/09/2026 | dev | passou | 18 CST, 164 cClassTrib |
+| TI-1, TI-4 | 25/09/2026 | prd | passou | 386 competências por índice, todas conferidas |
+| A4-3 | 25/09/2026 | prd (Render) | passou | `language_model: claude-opus-5` |
+| TK-0 | 25/09/2026 | prd (chave), sem gravar | passou | demonstrativo de exemplo reproduzido em 10 s |
+| TK-1 | 25/09/2026 | prd | passou | 5 grupos com a fórmula oficial conferida |
 | | | | | |
 
 ## 8. Se algo der errado
