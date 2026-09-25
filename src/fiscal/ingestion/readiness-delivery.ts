@@ -134,6 +134,9 @@ export class ReadinessDelivery {
 
   /** Apaga os relatórios vencidos. Roda a cada diagnóstico: é barata, e não depende de worker. */
   async purgeExpired(): Promise<number> {
+    // Sem chave nada é guardado, e não há o que purgar. Também deixa o
+    // diagnóstico funcionar num banco em que a migration do envio ainda não rodou.
+    if (this.deps.cipher === undefined) return 0;
     const r = await this.deps.pool.query(
       `update readiness_reports set report_ciphertext = null, report_expires_at = null
         where report_ciphertext is not null and report_expires_at <= $1::timestamptz`,
