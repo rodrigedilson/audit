@@ -1,7 +1,7 @@
 -- =============================================================================
 -- audit — passo 36 de 37: trilha_de_seguranca
 --
--- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260927140000_trilha_de_seguranca.sql
+-- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260927150000_trilha_de_seguranca.sql
 -- Não edite aqui: altere a migration de origem.
 --
 -- Execute os passos NA ORDEM: cada um depende das tabelas do anterior.

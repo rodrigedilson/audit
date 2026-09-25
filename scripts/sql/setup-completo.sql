@@ -3865,7 +3865,7 @@ end $$;
 
 
 -- ─────────────────────────────────────────────────────────────────────────
--- supabase/migrations/20260927140000_trilha_de_seguranca.sql
+-- supabase/migrations/20260927150000_trilha_de_seguranca.sql
 -- ─────────────────────────────────────────────────────────────────────────
 
 -- Trilha de segurança: o log operacional que o event log não cobre.
