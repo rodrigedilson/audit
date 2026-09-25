@@ -44,6 +44,8 @@ ISO 27001 ou SOC 2 Type I é a forma de responder isso sem pedir confiança.
 | **Rate limit nas rotas autenticadas** | Por usuário do token, 240/min e 6.000/h, em hook global — rota nova nasce limitada. As públicas já tinham: login (5/min e 20/h), calculadora (30/min), `/plans` (60/min) e diagnóstico público (rajada + quota diária no banco). [`server.ts`](../../src/api/server.ts), [`rate-limit.ts`](../../src/api/plugins/rate-limit.ts) |
 | **Lista de sub-processadores** | [`SUBPROCESSADORES.md`](SUBPROCESSADORES.md) |
 | **Classificação de dados** | [`CLASSIFICACAO-DE-DADOS.md`](CLASSIFICACAO-DE-DADOS.md), cobrindo todos os 74 objetos de **produção** — não só os que as migrations criam |
+| **Plano de resposta a incidente** | [`INCIDENTES.md`](INCIDENTES.md): cinco classes específicas deste sistema, cada uma com como detectar, o que fazer na primeira hora e o que preservar antes de corrigir. Traz o prazo da Resolução CD/ANPD nº 15/2024 — três dias úteis para a comunicação preliminar, contados do conhecimento do fato |
+| **Trilha operacional de segurança** | `security_events` grava login, recusa por token, recusa por papel e limite — o que o event log não cobre, porque aquele é prova fiscal e este é investigação. Registro num ponto só, o tratador de erro, para rota nova não nascer sem trilha. Guarda HMAC de IP e de e-mail, nunca os valores. [`security-trail.ts`](../../src/infrastructure/security/security-trail.ts) |
 | **Exposição à chave pública medida, e não presumida** | O doctor assume o papel `anon` e conta linhas, que é o que o PostgREST faz ao atender a chave. Conferir privilégio não serve: o Supabase concede `select` ao `anon` no schema inteiro e deixa a RLS barrar, então `has_table_privilege` acusaria 69 objetos onde há 6. [`environment-doctor.ts`](../../src/infrastructure/diagnostics/environment-doctor.ts) |
 
 > O limitador é **em memória e por processo**, como o das rotas públicas. Com
@@ -66,8 +68,8 @@ outro controle; estão abertos.
 | **Retenção e descarte** | Sem política de retenção nem procedimento de exclusão a pedido do titular. O event log é append-only **por projeto**, o que torna "apagar dado pessoal" uma questão de arquitetura e não de rotina — precisa de decisão antes de virar procedimento | 8h + decisão |
 
 
-| **Resposta a incidente** | Só o caso de perda da chave mestra está escrito. Falta o resto: quem aciona, em quanto tempo, como comunica | 6h |
-| **Log centralizado e retenção** | Os logs ficam no provedor, com retenção curta. Uma investigação de seis meses atrás não teria material — exceto pelo event log, que cobre o fiscal e não o operacional | 6h |
+
+| **Log centralizado e retenção** | A metade que importa saiu do provedor: autenticação, autorização e limite agora ficam em `security_events`, no banco, com HMAC de IP e de e-mail. Falta o resto — log de aplicação ainda vive no provedor com retenção curta, e não há política de expurgo da trilha nem alerta sobre ela | 4h |
 
 ## O que a certificação vai perguntar e a resposta é boa
 

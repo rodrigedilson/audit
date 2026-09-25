@@ -1,13 +1,3 @@
--- =============================================================================
--- audit — passo 36 de 37: trilha_de_seguranca
---
--- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260927140000_trilha_de_seguranca.sql
--- Não edite aqui: altere a migration de origem.
---
--- Execute os passos NA ORDEM: cada um depende das tabelas do anterior.
--- Pode rodar de novo sem duplicar nada.
--- =============================================================================
-
 -- Trilha de segurança: o log operacional que o event log não cobre.
 --
 -- O event log é append-only e responde "quem mudou este número fiscal". Não
@@ -42,6 +32,12 @@ create table if not exists public.security_events (
   ip_hash     char(64),
   user_agent  text,
 
+  -- HMAC do e-mail tentado, nunca o e-mail. Uma tentativa de login falha carrega
+  -- o endereço de alguém que pode nem ser usuário — digitação errada, varredura
+  -- de lista. Guardar o hash responde "quantas tentativas contra a mesma conta"
+  -- sem colecionar endereço de terceiro.
+  subject_hash char(64),
+
   detail      text
 );
 
@@ -54,6 +50,8 @@ create index if not exists security_events_ip_idx
   on public.security_events (ip_hash, at desc) where ip_hash is not null;
 create index if not exists security_events_user_idx
   on public.security_events (user_id, at desc) where user_id is not null;
+create index if not exists security_events_subject_idx
+  on public.security_events (subject_hash, at desc) where subject_hash is not null;
 
 alter table public.security_events enable row level security;
 
