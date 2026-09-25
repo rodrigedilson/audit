@@ -7,6 +7,7 @@ import {
   checarPrazosNormativos,
   checarCotaDoAssistente,
   checarCnpjAlfanumerico,
+  checarExposicaoAoAnon,
   checarCobranca,
   checarEmailDoDiagnostico,
   checarCertificadosParaColeta,
@@ -752,5 +753,117 @@ describe('checarEmailDoDiagnostico', () => {
     const r = await checarEmailDoDiagnostico(pool(5, 0, 7), env(COMPLETO));
     expect(r.estado).toBe('ok');
     expect(r.detalhe).toMatch(/7 relatório/);
+  });
+});
+
+/**
+ * A chave anon é pública por construção: vai no pacote do frontend. Esta
+ * checagem olha de fora — o que de fato responde ao `anon` — porque a checagem
+ * por lista conhecida passava enquanto uma **view** servia 192 notas fiscais
+ * reais. View não tem RLS, e não estava na lista.
+ */
+describe('checarExposicaoAoAnon', () => {
+  /**
+   * A sonda assume o papel `anon` e conta linhas, que é o que o PostgREST faz ao
+   * atender a chave pública. O cliente falso responde à contagem por objeto e
+   * pode recusar a troca de papel, que é o caso de "não deu para medir".
+   */
+  const poolFalso = (
+    objetos: { nome: string; tipo: string }[],
+    linhasVistasPeloAnon: Record<string, number>,
+    podeTrocarDePapel = true,
+  ): pg.Pool => {
+    const client = {
+      query: async (sql: string) => {
+        if (sql.includes('pg_class')) {
+          return { rows: objetos };
+        }
+        if (sql.includes('set local role anon') && !podeTrocarDePapel) {
+          throw new Error('permission denied to set role "anon"');
+        }
+        const achado = /from public\."([^"]+)"/.exec(sql);
+        if (achado !== null) {
+          return { rows: [{ n: linhasVistasPeloAnon[achado[1]!] ?? 0 }] };
+        }
+        return { rows: [] };
+      },
+      release: () => undefined,
+    };
+    return { connect: async () => client } as unknown as pg.Pool;
+  };
+
+  const catalogo = ['plans', 'plan_features', 'pricing_tiers', 'billing_settings', 'cfops'];
+
+  it('aprova quando só o catálogo declarado devolve linha', async () => {
+    const r = await checarExposicaoAoAnon(
+      poolFalso(
+        catalogo.map((nome) => ({ nome, tipo: 'tabela' })),
+        Object.fromEntries(catalogo.map((nome) => [nome, 3])),
+      ),
+    );
+
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toContain('5 objeto(s)');
+  });
+
+  /**
+   * A view que vazava em produção: 192 notas fiscais reais respondendo à chave
+   * pública. View não tem RLS e, por padrão, atravessa a das tabelas de origem.
+   */
+  it('acusa a view que devolve linha, dizendo que é view', async () => {
+    const r = await checarExposicaoAoAnon(
+      poolFalso(
+        [
+          { nome: 'plans', tipo: 'tabela' },
+          { nome: 'sped_invoices_for_crossref', tipo: 'view' },
+        ],
+        { plans: 5, sped_invoices_for_crossref: 192 },
+      ),
+    );
+
+    expect(r.estado).toBe('falha');
+    expect(r.detalhe).toContain('sped_invoices_for_crossref (view)');
+    expect(r.detalhe).toContain('qualquer pessoa na internet');
+    expect(r.acao).toContain('security_invoker = on');
+  });
+
+  /**
+   * Privilégio não é leitura: o Supabase concede `select` ao `anon` no schema
+   * inteiro e deixa a RLS barrar as linhas. Tabela protegida devolve zero, e
+   * zero não pode virar acusação — senão a checagem vira ruído e é ignorada.
+   */
+  it('não acusa tabela cuja RLS zera o resultado', async () => {
+    const r = await checarExposicaoAoAnon(
+      poolFalso(
+        [
+          { nome: 'clients', tipo: 'tabela' },
+          { nome: 'events', tipo: 'tabela' },
+        ],
+        { clients: 0, events: 0 },
+      ),
+    );
+
+    expect(r.estado).toBe('ok');
+  });
+
+  /**
+   * "Não medi" não pode sair como "está seguro". Sem poder assumir o papel, a
+   * sonda não perguntou nada — e 69 tabelas pareceriam protegidas por silêncio.
+   */
+  it('avisa, em vez de aprovar, quando não consegue assumir o papel anon', async () => {
+    const r = await checarExposicaoAoAnon(
+      poolFalso([{ nome: 'clients', tipo: 'tabela' }], { clients: 9 }, false),
+    );
+
+    expect(r.estado).toBe('aviso');
+    expect(r.detalhe).toContain('não verificado');
+  });
+
+  it('a ação manda declarar a exceção, não afrouxar a regra', async () => {
+    const r = await checarExposicaoAoAnon(
+      poolFalso([{ nome: 'tabela_nova', tipo: 'tabela' }], { tabela_nova: 1 }),
+    );
+
+    expect(r.acao).toContain('LEITURA_ANON_INTENCIONAL');
   });
 });

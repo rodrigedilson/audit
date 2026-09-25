@@ -10,6 +10,11 @@ de a chave entrar no Doppler** — lista desatualizada é pior que lista ausente
 porque quem a lê para de conferir.
 
 > Estado em 25/09/2026, conferido com `npm run doctor` contra produção.
+>
+> A primeira versão deste documento afirmou que não havia provedor de e-mail.
+> Era verdade quando foi escrita e deixou de ser no mesmo dia, com o envio do
+> relatório do diagnóstico público. É exatamente o risco que o parágrafo acima
+> descreve, e serve de lembrete de que a linha entra aqui **antes** da chave.
 
 ## Processam dado de cliente
 
@@ -19,6 +24,7 @@ porque quem a lê para de conferir.
 | **Render** | Hospedagem da API | Tudo o que passa pela API, em memória e em log de aplicação | Ativo |
 | **Vercel** | Hospedagem do front | Não recebe dado fiscal: serve um SPA estático, e o navegador fala direto com a API. Recebe metadado de acesso — IP e user-agent de quem abre o painel | Ativo |
 | **Anthropic** | Camada 3 do assistente fiscal | A pergunta do contador e as evidências já selecionadas pela camada 1 ([`claude-language-model.ts`](../../src/fiscal/assistant/claude-language-model.ts)). São trechos do dado fiscal do CNPJ | Só com `ANTHROPIC_API_KEY` |
+| **Servidor SMTP** (`MAIL_SMTP_URL`) | Entrega do relatório do diagnóstico público | Nome e e-mail do lead, e o link do relatório. O provedor concreto é quem a URL apontar; SPF e DKIM do domínio do `MAIL_FROM` são parte da configuração | Só com `MAIL_SMTP_URL` — hoje desligado em produção |
 | **Asaas** | Cobrança | Nome e CNPJ do escritório, e o e-mail quando informado ([`asaas-client.ts`](../../src/billing/asaas-client.ts)). **Não** recebe dado fiscal dos clientes finais | Só com `ASAAS_API_KEY` — hoje desligado em produção |
 
 ## Guarda segredo, e por isso entra na lista
@@ -44,5 +50,5 @@ Ligar `ANTHROPIC_API_KEY` ou `ASAAS_API_KEY` **não é decisão técnica**: pass
 existir um sub-processador novo recebendo dado de cliente, e o contrato com o
 escritório precisa refleti-lo antes. O `npm run doctor` diz quais estão ligados.
 
-Não há provedor de e-mail: nenhuma variável de ambiente configura envio, e nada
-no código envia mensagem.
+Ligar `MAIL_SMTP_URL` também não é decisão só técnica: passa a sair e-mail com
+dado de lead por um terceiro. O `npm run doctor` diz quais estão ligados.

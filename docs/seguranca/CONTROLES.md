@@ -43,7 +43,8 @@ ISO 27001 ou SOC 2 Type I é a forma de responder isso sem pedir confiança.
 |---|---|
 | **Rate limit nas rotas autenticadas** | Por usuário do token, 240/min e 6.000/h, em hook global — rota nova nasce limitada. As públicas já tinham: login (5/min e 20/h), calculadora (30/min), `/plans` (60/min) e diagnóstico público (rajada + quota diária no banco). [`server.ts`](../../src/api/server.ts), [`rate-limit.ts`](../../src/api/plugins/rate-limit.ts) |
 | **Lista de sub-processadores** | [`SUBPROCESSADORES.md`](SUBPROCESSADORES.md) |
-| **Classificação de dados** | [`CLASSIFICACAO-DE-DADOS.md`](CLASSIFICACAO-DE-DADOS.md), cobrindo todas as tabelas do banco |
+| **Classificação de dados** | [`CLASSIFICACAO-DE-DADOS.md`](CLASSIFICACAO-DE-DADOS.md), cobrindo todos os 74 objetos de **produção** — não só os que as migrations criam |
+| **Exposição à chave pública medida, e não presumida** | O doctor assume o papel `anon` e conta linhas, que é o que o PostgREST faz ao atender a chave. Conferir privilégio não serve: o Supabase concede `select` ao `anon` no schema inteiro e deixa a RLS barrar, então `has_table_privilege` acusaria 69 objetos onde há 6. [`environment-doctor.ts`](../../src/infrastructure/diagnostics/environment-doctor.ts) |
 
 > O limitador é **em memória e por processo**, como o das rotas públicas. Com
 > mais de uma instância, cada uma conta a sua parte e o limite efetivo multiplica
@@ -59,6 +60,7 @@ outro controle; estão abertos.
 |---|---|---|
 | **Backup com restauração testada** | O Supabase faz backup; **ninguém nunca restaurou**. Backup não testado é hipótese, não controle. É a lacuna mais séria da lista. A ferramenta de conferência já existe ([`conferir-restauracao.ts`](../../scripts/conferir-restauracao.ts), procedimento abaixo); falta executar o ensaio contra um backup de verdade | 1–2h |
 
+| **Dado legado fora do modelo de isolamento** | Vinte e dois objetos sobraram da fase anterior do produto, dezoito com dado de clientes reais (notas, itens, tributos, XML). Nenhuma migration os cria e nenhum código os lê, então estão fora do isolamento por `(tenant_id, cnpj)` e de qualquer trilha. Um deles — a view `sped_invoices_for_crossref` — servia 192 notas à chave pública, e isso foi fechado; o acervo continua lá. Migrar, arquivar ou apagar é decisão de negócio, não técnica. Inventariado em [`CLASSIFICACAO-DE-DADOS.md`](CLASSIFICACAO-DE-DADOS.md) | 4h + decisão |
 | **Revisão de acesso** | Não há registro de quem tem acesso a Doppler, Supabase, Render e GitHub, nem revisão periódica. `GET /v1/users` lista o acesso ao produto, não à infraestrutura | 2h + recorrência |
 | **MFA obrigatório nos consoles** | Não verificado nem exigido nos provedores. O procedimento de conferência está abaixo; **ligar o MFA é ação humana em cada console**, e nenhum código aqui alcança isso | 1h |
 | **Retenção e descarte** | Sem política de retenção nem procedimento de exclusão a pedido do titular. O event log é append-only **por projeto**, o que torna "apagar dado pessoal" uma questão de arquitetura e não de rotina — precisa de decisão antes de virar procedimento | 8h + decisão |

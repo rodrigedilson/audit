@@ -17,6 +17,8 @@ import { digitosVerificadoresDeCnpj } from '../../src/esaa/shared/domain/cnpj.js
  * append-only bloqueia DELETE em `events`.
  */
 export async function applyMigrations(pool: pg.Pool): Promise<void> {
+  await criarPapelAnon(pool);
+
   const dir = join(process.cwd(), 'supabase/migrations');
   // Ordem lexicográfica é a ordem cronológica: os arquivos são prefixados com
   // timestamp. Aplicar fora de ordem quebraria as FKs.
@@ -25,6 +27,25 @@ export async function applyMigrations(pool: pg.Pool): Promise<void> {
   for (const file of files) {
     await pool.query(await readFile(join(dir, file), 'utf8'));
   }
+}
+
+/**
+ * Cria o papel `anon`, que no Supabase já existe e num Postgres puro não.
+ *
+ * É o papel que a chave pública do frontend assume. Sem ele, a checagem que mede
+ * o que essa chave alcança não tem como perguntar — e responderia "não
+ * verificado" para sempre, justamente no teste que existe para provar que ela
+ * verifica. As policies das migrations já concedem a `anon` o que é público.
+ */
+async function criarPapelAnon(pool: pg.Pool): Promise<void> {
+  await pool.query(`do $$
+    begin
+      if not exists (select 1 from pg_roles where rolname = 'anon') then
+        create role anon nologin;
+      end if;
+      grant usage on schema public to anon;
+    end
+  $$;`);
 }
 
 /** CNPJ sintético de 14 dígitos. Não valida dígito verificador — o banco não exige. */
