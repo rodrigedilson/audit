@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 26 de 33: versao-das-faixas
+-- audit — passo 26 de 35: versao-das-faixas
 --
 -- Escada de faixas versionada por data: vale a de maior effective_from até
 -- hoje, inteira. Agendar uma escada é inserir as faixas com data futura.

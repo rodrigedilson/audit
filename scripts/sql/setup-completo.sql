@@ -31,7 +31,7 @@
 -- =============================================================================
 
 -- =============================================================================
--- PARTE 1 — migrations (32 arquivos, na ordem de aplicação)
+-- PARTE 1 — migrations (34 arquivos, na ordem de aplicação)
 -- =============================================================================
 
 
@@ -3647,6 +3647,158 @@ create unique index if not exists readiness_reports_forget_idx
 
 comment on table public.readiness_reports is
   'Métrica agregada do diagnóstico público. O resumo do relatório fica cifrado por até 24h, só para o envio por e-mail.';
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260927100000_view_exposta_ao_anon.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- Fecha `sped_invoices_for_crossref`, que servia dado fiscal à chave anon.
+--
+-- A chave anon é **pública por construção**: vai no pacote do frontend e
+-- qualquer pessoa a lê. O que a protege é a RLS de cada tabela.
+--
+-- Esta é uma **view**, e view não tem RLS. Pior: no Postgres ela roda por padrão
+-- com o privilégio de quem a definiu (`security_invoker = off`), então atravessa
+-- a RLS das tabelas de baixo. O resultado, conferido em produção em 25/09/2026:
+-- `GET /rest/v1/sped_invoices_for_crossref` com a chave anon devolvia `200` e
+-- 192 notas reais, com CNPJ do emitente, número, série e data de emissão.
+--
+-- A view é resíduo da fase anterior do produto. Nenhum código a consulta — nem
+-- a API, nem os scripts, nem o frontend.
+--
+-- Não é `drop` de propósito: a definição é a única cópia que existe, e apagá-la
+-- para fechar um furo de permissão seria trocar um problema por outro. As duas
+-- linhas abaixo fecham igual e são reversíveis.
+
+-- Condicional porque a view não é criada por migration nenhuma: ela existe só em
+-- produção, herdada da fase anterior. Num banco novo — o de teste, o de um
+-- desenvolvedor — ela não existe, e um `revoke` direto abortaria a migração com
+-- `relation does not exist`.
+do $$
+begin
+  if to_regclass('public.sped_invoices_for_crossref') is null then
+    return;
+  end if;
+
+  revoke all on public.sped_invoices_for_crossref from anon, authenticated;
+
+  -- Cinto e suspensório: se alguém reconceder o `select` um dia, a view passa a
+  -- respeitar a RLS das tabelas de origem em vez de atravessá-la.
+  execute 'alter view public.sped_invoices_for_crossref set (security_invoker = on)';
+end
+$$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260927120000_indices_financeiros.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Séries de índice financeiro, versionadas por competência.
+--
+-- Toda correção monetária num laudo precisa dizer **qual índice, qual período e
+-- qual fonte**. Sem isso o número não é conferível, e a parte contrária pede
+-- esclarecimento antes de discutir o mérito. As séries ficam em tabela, e não
+-- em código, porque cada mês acrescenta um ponto — e código não é lugar de dado
+-- que muda mensalmente.
+--
+-- As duas tabelas **nascem vazias**, e o catálogo nasce **não conferido**.
+--
+-- IPCA, INPC, IGP-M, TR e SELIC têm publicação mensal oficial que ninguém
+-- carregou ainda. Índice errado numa memória de cálculo que vai ao juízo é pior
+-- do que memória ausente: o laudo pede um valor que não se sustenta, e quem
+-- perde credibilidade é quem assinou. Enquanto a série não cobrir o intervalo,
+-- o cálculo devolve nulo com o motivo — nunca fator 1, que se leria como "não
+-- houve inflação no período".
+--
+-- **Por que globais, sem `tenant_id`:** um índice não pertence a um escritório.
+-- É dado público, igual para todo mundo, como `evaluation_criteria` e
+-- `fiscal_codes`. RLS desligada e `grant select` para leitura; escrita é da
+-- service role.
+--
+-- **Por que a variação é fração, e não percentual:** a fonte publica "0,42%", e
+-- guardar `0.42` faria a correção de um ano render 4.200%. É um erro que passa
+-- despercebido num teste de um mês só e aparece no laudo. `numeric(12,8)` com o
+-- valor `0.00420000` deixa a unidade explícita na própria coluna.
+-- =============================================================================
+
+create table if not exists public.financial_indices (
+  index_id     text primary key,
+  name         text not null check (length(btrim(name)) > 0),
+  -- Quem publica: IBGE, FGV, BCB, TJSP.
+  source       text not null check (length(btrim(source)) > 0),
+  -- Conferida na fonte oficial? Enquanto `false`, o cálculo não afirma.
+  verified     boolean not null default false,
+  source_ref   text,
+  verified_by  uuid,
+  verified_at  timestamptz,
+
+  -- Mesma regra dos critérios de avaliação: conferido exige apontar o texto.
+  constraint indices_conferidos_tem_fonte check (
+    not verified or (source_ref is not null and length(btrim(source_ref)) > 0)
+  )
+);
+
+/**
+ * O catálogo das séries que o produto sabe aplicar, todas NÃO conferidas.
+ *
+ * Nascer não conferido é melhor do que nascer vazio: o escritório vê quais
+ * séries precisa carregar, em vez de encontrar uma tabela vazia sem saber o que
+ * falta. O ponto mensal é que não vem — e sem ponto, não há fator.
+ */
+insert into public.financial_indices (index_id, name, source, verified)
+values
+  ('ipca',  'Índice Nacional de Preços ao Consumidor Amplo', 'IBGE', false),
+  ('inpc',  'Índice Nacional de Preços ao Consumidor',       'IBGE', false),
+  ('igpm',  'Índice Geral de Preços do Mercado',             'FGV',  false),
+  ('tr',    'Taxa Referencial',                              'BCB',  false),
+  ('selic', 'Taxa SELIC acumulada no mês',                   'BCB',  false)
+on conflict (index_id) do nothing;
+
+create table if not exists public.financial_index_points (
+  index_id    text not null references public.financial_indices (index_id) on delete cascade,
+  period      char(7) not null check (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+
+  -- Fração, não percentual: 0,42% é `0.00420000`.
+  variation   numeric(12,8) not null,
+  -- Número-índice, quando a fonte publica. Informativo, não entra no fator.
+  level       numeric(18,8),
+  -- Identificação do dado conferido: URL, número da tabela, data da coleta.
+  source_ref  text,
+
+  loaded_at   timestamptz not null default now(),
+
+  primary key (index_id, period)
+);
+
+/** Busca por intervalo: é sempre "desta competência até aquela". */
+create index if not exists index_points_intervalo_idx
+  on public.financial_index_points (index_id, period);
+
+alter table public.financial_indices      disable row level security;
+alter table public.financial_index_points disable row level security;
+
+/**
+ * Leitura só para `authenticated`, e **não** para `anon`.
+ *
+ * O dado é público na origem — IBGE e BCB publicam —, e essa seria justificativa
+ * suficiente para liberar. Mas não há tela pública que precise das séries: quem
+ * as consome é o módulo de perícia, atrás de autenticação. Liberar ao `anon`
+ * acrescentaria superfície sem acrescentar função.
+ *
+ * A chave `anon` é pública por construção, e o incidente de 25/09/2026 mostrou
+ * o custo de expor o que não precisa estar exposto. A regra que fica: objeto
+ * novo só ganha `anon` quando uma tela pública o exige, e a exigência vai
+ * escrita aqui.
+ */
+do $$
+begin
+  grant select on public.financial_indices      to authenticated;
+  grant select on public.financial_index_points to authenticated;
+exception
+  when undefined_object then null;
+end $$;
 
 
 -- =============================================================================

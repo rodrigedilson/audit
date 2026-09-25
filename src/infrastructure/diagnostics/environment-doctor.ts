@@ -59,6 +59,8 @@ const TABELAS = [
   'audit_executions',
   'audit_findings',
   'audit_reversals',
+  'financial_indices',
+  'financial_index_points',
   'fisco_assessments',
   'fisco_assessment_lines',
   'assessment_divergences',
@@ -153,6 +155,8 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   audit_executions: '28-auditoria-continua.sql',
   audit_findings: '28-auditoria-continua.sql',
   audit_reversals: '28-auditoria-continua.sql',
+  financial_indices: '34-indices-financeiros.sql',
+  financial_index_points: '34-indices-financeiros.sql',
 };
 
 /**

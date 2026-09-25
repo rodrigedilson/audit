@@ -24,6 +24,7 @@ const SAIDA_PASSOS = join(process.cwd(), 'scripts/sql/migracoes');
 
 /** Nome legível de cada migration, para o arquivo numerado. */
 const TITULOS: Record<string, string> = {
+  '20260927120000_indices_financeiros.sql': 'indices-financeiros',
   '20260918120000_multi_tenancy.sql': 'multi-tenancy',
   '20260918130000_certificate_vault.sql': 'cofre-certificados',
   '20260918140000_billing.sql': 'cobranca',
@@ -56,6 +57,10 @@ const TITULOS: Record<string, string> = {
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260927120000_indices_financeiros.sql':
+    'Series de indice financeiro versionadas por competencia, para a correcao\n' +
+    '-- monetaria dizer qual indice, qual periodo e qual fonte. Nascem vazias e\n' +
+    '-- nao conferidas: indice errado num laudo e pior que laudo sem indice.',
   '20260926120000_efd_icms_demais_registros.sql':
     'EFD ICMS/IPI: a conciliação passa a somar energia, transporte, comunicação\n' +
     '-- e varejo (C590, D190, D590, C320 a C890) contra o E110, e cada linha diz\n' +
