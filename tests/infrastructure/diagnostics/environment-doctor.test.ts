@@ -985,4 +985,3 @@ describe('checarTrilhaDeSeguranca', () => {
     expect(r.estado).toBe('ok');
   });
 });
-
