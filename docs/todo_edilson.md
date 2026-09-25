@@ -119,15 +119,6 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
 
 ## 3. Dívida técnica confirmada
 
-- [ ] **`sped-genius-hub` → `src/features/sped-upload/utils/encodingDetector.ts:44`**
-      Erro de TypeScript pré-existente (`Uint8Array` vs `Buffer`). O build passa
-      porque o Vite não roda o typecheck.
-
-- [ ] **As duas telas públicas do Lovable usam `fetch` cru.**
-      `DiagnosticoReforma.tsx` e `CalculadoraPreco.tsx`: zero uso de `auditApi`.
-      Defensável em rota sem autenticação, mas inconsistente com as outras 14
-      telas — e é o cliente que centraliza tradução de erro e token.
-
 - [x] ~~**`projection_snapshots` órfã.**~~ Removida pela migration
       `27-remove-projection-snapshots.sql`; não existe mais em produção. O texto
       abaixo fica só para registro do que era.
@@ -211,6 +202,12 @@ doctor rodado contra produção e o schema de produção lido tabela a tabela.*
 
 ## Resolvido desde a primeira versão desta lista
 
+- ~~Telas públicas com `fetch` cru~~ — passam pelo `auditApi`
+  (`sped-genius-hub`, `fix/telas-publicas-pelo-cliente`). Não era só
+  inconsistência: montavam a URL sem o `/v1`, e em produção a calculadora e o
+  diagnóstico recebiam 401.
+- ~~Erro de TypeScript no `encodingDetector.ts`~~ — escondia um bug: todo SPED
+  era lido como UTF-8, e o de Latin-1 perdia os acentos. Corrigido no mesmo PR.
 - ~~`TRUST_PROXY=true` em produção~~ — gravado no Doppler `prd`; a API recusa
   subir em prod sem ele (PR #57).
 - ~~`TRUST_PROXY` falhando em silêncio~~ — a API agora recusa subir em prod sem
