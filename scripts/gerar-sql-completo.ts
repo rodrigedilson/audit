@@ -25,6 +25,7 @@ const SAIDA_PASSOS = join(process.cwd(), 'scripts/sql/migracoes');
 /** Nome legível de cada migration, para o arquivo numerado. */
 const TITULOS: Record<string, string> = {
   '20260927140000_anon_nos_catalogos.sql': 'anon-nos-catalogos',
+  '20260927200000_capag.sql': 'capag',
   '20260927120000_indices_financeiros.sql': 'indices-financeiros',
   '20260918120000_multi_tenancy.sql': 'multi-tenancy',
   '20260918130000_certificate_vault.sql': 'cofre-certificados',
@@ -58,6 +59,9 @@ const TITULOS: Record<string, string> = {
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260927200000_capag.sql':
+    'CAPAG presumida: a fórmula de referência (doutrina, nunca conferida) e os\n' +
+    '-- demonstrativos do REGULARIZE por CNPJ, extraídos trecho a trecho.',
   '20260927140000_anon_nos_catalogos.sql':
     'Fecha a chave anon os quatro catalogos globais. Dado sem tenant_id nao e\n' +
     '-- o mesmo que dado que precisa ser publico: nenhuma tela publica os\n' +

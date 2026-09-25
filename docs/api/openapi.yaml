@@ -444,6 +444,85 @@ paths:
                         cancelled_at: { type: string, format: date-time, nullable: true }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /clients/{cnpj}/capag:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    get:
+      tags: [ingestion]
+      summary: CAPAG presumida do CNPJ
+      description: >
+        O último demonstrativo do REGULARIZE enviado, com a conferência, e a
+        fórmula de referência por grupo, lida em fonte pública. A referência é
+        sempre `verified: false`: a fórmula oficial só aparece no REGULARIZE, com
+        login do contribuinte (Portaria PGFN 6.757/2022, art. 28).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cnpj: { type: string }
+                  extractor_configured: { type: boolean }
+                  statement:
+                    type: object
+                    nullable: true
+                    description: O último demonstrativo, ou null quando nenhum foi enviado.
+                    allOf:
+                      - $ref: "#/components/schemas/CapagStatement"
+                  reference_formulas:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group: { type: string }
+                        income_multiplier: { type: number }
+                        terms: { type: array, items: { type: object } }
+                        sources: { type: array, items: { type: object } }
+                        legal_basis: { type: string, nullable: true }
+                        extracted_at: { type: string, format: date-time }
+                        verified: { type: boolean, enum: [false] }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /clients/{cnpj}/capag/statements:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    post:
+      tags: [ingestion]
+      summary: Envia o demonstrativo de CAPAG do REGULARIZE (PDF ou HTML)
+      description: >
+        O modelo transcreve fórmula, valores, CAPAG, dívida e classificação, cada
+        número com o trecho literal do documento. O código confere que cada
+        trecho está no texto e que o número está no trecho, lê os valores e
+        refaz a conta. `verified` é `true` só quando a fórmula do demonstrativo,
+        aplicada aos valores dele, chega à CAPAG impressa (tolerância de R$ 1).
+        O arquivo não é guardado, só o extraído e o SHA-256. Owner ou accountant;
+        10 por hora por escritório.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Demonstrativo extraído e registrado, conferido ou não.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cnpj: { type: string }
+                  statement: { $ref: "#/components/schemas/CapagStatement" }
+        "400": { description: "Arquivo ausente, acima de 5 MB, ou PDF sem texto (digitalizado)." }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { description: "Mais de 10 demonstrativos na última hora (`rate_limited`)." }
+        "503": { description: "Sem ANTHROPIC_API_KEY neste ambiente (`capag_extractor_not_configured`)." }
+
   /clients/{cnpj}/dfe/auto:
     parameters:
       - $ref: "#/components/parameters/Cnpj"
@@ -2073,6 +2152,25 @@ components:
           schema: { $ref: "#/components/schemas/Rejection" }
 
   schemas:
+    CapagStatement:
+      type: object
+      properties:
+        statement_id: { type: string, format: uuid }
+        extracted_at: { type: string, format: date-time }
+        document_sha256: { type: string }
+        document_kind: { type: string, enum: [pdf, html, text] }
+        reference_date: { type: string, format: date, nullable: true }
+        group: { type: string, nullable: true }
+        values_cents: { type: object, additionalProperties: { type: integer } }
+        printed_capag_cents: { type: integer, nullable: true }
+        computed_capag_cents: { type: integer, nullable: true }
+        total_debt_cents: { type: integer, nullable: true }
+        printed_band: { type: string, nullable: true, enum: [A, B, C, D, null] }
+        reproduces: { type: boolean }
+        verified: { type: boolean }
+        problems: { type: array, items: { type: string } }
+        extraction: { type: object, description: "A extração com printed e quote de cada número." }
+        model: { type: string }
     DfeAutoSync:
       type: object
       properties:

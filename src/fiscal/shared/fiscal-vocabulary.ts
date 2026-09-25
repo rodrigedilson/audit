@@ -66,6 +66,9 @@ export const ORCHESTRATOR_ACTIONS = [
   // reporting/ — Onda 7
   'book.generated',
 
+  // forensics/ — demonstrativo de CAPAG extraído e conferido
+  'capag.statement_imported',
+
   // audit/ — teste de comprovação e inspeção documentária
   /** Uma trilha executada sobre uma população, com os achados que produziu. */
   'audit.execution.recorded',

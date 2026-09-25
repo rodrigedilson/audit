@@ -10,6 +10,7 @@ import {
   checarExposicaoAoAnon,
   checarTrilhaDeSeguranca,
   checarCobranca,
+  checarCapag,
   checarEmailDoDiagnostico,
   checarCertificadosParaColeta,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
@@ -480,6 +481,11 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
          on conflict do nothing`,
       );
 
+      await pool.query(
+        `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model)
+         values ('pj_nao_simples', 5, '[]'::jsonb, '[]'::jsonb, 'teste do doctor')`,
+      );
+
       const resultado = await diagnosticar({
         ...ENV_BASE,
         DATABASE_URL: urlVazia,
@@ -947,5 +953,36 @@ describe('checarTrilhaDeSeguranca', () => {
     const r = await checarTrilhaDeSeguranca(poolFalso([{ kind: 'limite', n: '1' }], 30));
 
     expect(r.estado).toBe('ok');
+  });
+});
+
+describe('checarCapag', () => {
+  const pool = (referencias: number, demonstrativos = 0, conferidos = 0): pg.Pool =>
+    ({
+      query: async () => ({
+        rows: [{ referencias: String(referencias), demonstrativos: String(demonstrativos), conferidos: String(conferidos) }],
+      }),
+    }) as unknown as pg.Pool;
+  const env = (extra: Record<string, unknown> = {}) => ({ environment: 'prod', ...extra }) as unknown as Parameters<typeof checarCapag>[1];
+  const COM_CHAVE = { anthropic: { apiKey: 'k', model: 'claude-opus-5' } };
+
+  it('prod sem ANTHROPIC_API_KEY: aviso, o envio responde 503', async () => {
+    const r = await checarCapag(pool(1), env());
+    expect(r.estado).toBe('aviso');
+    expect(r.acao).toMatch(/503/);
+  });
+
+  it('sem fórmula de referência: aviso com o comando do buscador', async () => {
+    expect((await checarCapag(pool(0), env(COM_CHAVE))).acao).toMatch(/buscar-formula-capag/);
+  });
+
+  it('dev sem chave e com referência: ok', async () => {
+    expect((await checarCapag(pool(1), env({ environment: 'dev' }))).estado).toBe('ok');
+  });
+
+  it('configurado: ok, com os demonstrativos conferidos', async () => {
+    const r = await checarCapag(pool(2, 5, 3), env(COM_CHAVE));
+    expect(r.estado).toBe('ok');
+    expect(r.detalhe).toMatch(/5 demonstrativo\(s\), 3 conferido/);
   });
 });
