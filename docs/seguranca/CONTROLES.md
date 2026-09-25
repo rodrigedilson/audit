@@ -37,6 +37,19 @@ ISO 27001 ou SOC 2 Type I é a forma de responder isso sem pedir confiança.
 | Segredo commitado | Gitleaks no histórico completo, em job próprio do CI (`fetch-depth: 0`), com três falsos positivos liberados um a um e justificados | [`ci.yml`](../../.github/workflows/ci.yml), [`.gitleaks.toml`](../../.gitleaks.toml) |
 | Segredo em ambiente de teste | A suíte se recusa a rodar com `DATABASE_URL` apontando para outro banco | [`global-db.ts`](../../tests/setup/global-db.ts) |
 
+### Fechados nesta rodada
+
+| Controle | Onde se verifica |
+|---|---|
+| **Rate limit nas rotas autenticadas** | Por usuário do token, 240/min e 6.000/h, em hook global — rota nova nasce limitada. As públicas já tinham: login (5/min e 20/h), calculadora (30/min), `/plans` (60/min) e diagnóstico público (rajada + quota diária no banco). [`server.ts`](../../src/api/server.ts), [`rate-limit.ts`](../../src/api/plugins/rate-limit.ts) |
+| **Lista de sub-processadores** | [`SUBPROCESSADORES.md`](SUBPROCESSADORES.md) |
+| **Classificação de dados** | [`CLASSIFICACAO-DE-DADOS.md`](CLASSIFICACAO-DE-DADOS.md), cobrindo todas as tabelas do banco |
+
+> O limitador é **em memória e por processo**, como o das rotas públicas. Com
+> mais de uma instância, cada uma conta a sua parte e o limite efetivo multiplica
+> pelo número de instâncias. Hoje roda uma instância; passar de uma exige mover a
+> contagem para o banco ou para um Redis, e isso continua aberto.
+
 ## O que não existe
 
 Esta é a tabela que uma auditoria vai usar. Nenhum item aqui está mitigado por
@@ -45,12 +58,12 @@ outro controle; estão abertos.
 | Lacuna | Consequência | Esforço |
 |---|---|---|
 | **Backup com restauração testada** | O Supabase faz backup; **ninguém nunca restaurou**. Backup não testado é hipótese, não controle. É a lacuna mais séria da lista. A ferramenta de conferência já existe ([`conferir-restauracao.ts`](../../scripts/conferir-restauracao.ts), procedimento abaixo); falta executar o ensaio contra um backup de verdade | 1–2h |
-| **Rate limit nas rotas autenticadas** | As rotas públicas já têm limite: login (5/min e 20/h, por IP e por e-mail), calculadora (30/min), `/plans` (60/min) e diagnóstico público (rajada + quota diária no banco). Falta limitar as autenticadas, por token, contra enumeração de CNPJ. O limitador é em memória por processo: suficiente com uma instância, e com mais de uma o limite efetivo multiplica pelo número de instâncias | 2h |
+
 | **Revisão de acesso** | Não há registro de quem tem acesso a Doppler, Supabase, Render e GitHub, nem revisão periódica. `GET /v1/users` lista o acesso ao produto, não à infraestrutura | 2h + recorrência |
-| **MFA obrigatório nos consoles** | Não verificado nem exigido nos provedores | 1h |
+| **MFA obrigatório nos consoles** | Não verificado nem exigido nos provedores. O procedimento de conferência está abaixo; **ligar o MFA é ação humana em cada console**, e nenhum código aqui alcança isso | 1h |
 | **Retenção e descarte** | Sem política de retenção nem procedimento de exclusão a pedido do titular. O event log é append-only **por projeto**, o que torna "apagar dado pessoal" uma questão de arquitetura e não de rotina — precisa de decisão antes de virar procedimento | 8h + decisão |
-| **Classificação de dados** | Sem inventário formal do que é dado pessoal, fiscal e segredo | 3h |
-| **Lista de sub-processadores** | Supabase, Render, Doppler e Asaas processam dado de cliente e não estão declarados em lugar nenhum. Entram também a **Anthropic** (com `ANTHROPIC_API_KEY`, recebe a pergunta e as evidências fiscais do CNPJ na camada 3 do assistente) e o **provedor de e-mail** do diagnóstico público, quando ligado. A SEFAZ recebe o certificado pela coleta de DF-e, mas é o Fisco, não suboperador | 2h |
+
+
 | **Resposta a incidente** | Só o caso de perda da chave mestra está escrito. Falta o resto: quem aciona, em quanto tempo, como comunica | 6h |
 | **Log centralizado e retenção** | Os logs ficam no provedor, com retenção curta. Uma investigação de seis meses atrás não teria material — exceto pelo event log, que cobre o fiscal e não o operacional | 6h |
 
@@ -109,12 +122,38 @@ escopos: a cópia fiel passa, e as três adulterações testadas — gatilho rem
 um `payload` alterado e um evento apagado — foram todas acusadas, cada uma com
 sua mensagem.
 
+## Conferência de MFA nos consoles
+
+Quem tem acesso a qualquer um destes quatro consoles alcança o acervo inteiro,
+por caminhos diferentes. Sem MFA, a proteção de tudo isso é uma senha.
+
+| Console | O que o acesso alcança | Onde se liga |
+|---|---|---|
+| **Doppler** | A chave mestra do cofre. Com ela, todo PFX guardado é decifrável | *Settings → Multi-Factor Authentication* |
+| **Supabase** | O banco inteiro, e a emissão de token de qualquer usuário | *Account → Security → Two-Factor Authentication* |
+| **Render** | As variáveis do serviço e o deploy — quem faz deploy roda código com os segredos | *Account Settings → Two-Factor Authentication* |
+| **GitHub** | O código e, por consequência, o que vai a produção | *Settings → Password and authentication → Two-factor authentication* |
+
+Para cada um, registre **a data da conferência e o método** (aplicativo TOTP ou
+chave física; SMS não conta — é vulnerável a troca de chip). Guarde junto a lista
+de quem tem acesso, que é a lacuna de revisão de acesso, logo abaixo nesta mesma
+tabela: as duas se conferem na mesma sentada e uma sem a outra vale pouco.
+
+Nada no código alcança isto, e por isso não há checagem no `npm run doctor`: o
+MFA vive na conta de cada provedor. Uma checagem que dissesse "ok" sem ter
+verificado seria pior que a lacuna, que ao menos é honesta.
+
 ## Ordem sugerida
 
-1. **Backup restaurado**, porque é o único item cuja falha é irreversível.
-2. **Lista de sub-processadores** e **classificação de dados**, que são baratos
-   e destravam questionário de cliente.
-3. **Rate limit** e **MFA**, que são técnicos e rápidos.
+1. **Backup restaurado**, porque é o único item cuja falha é irreversível. A
+   ferramenta existe; falta o ensaio.
+2. **MFA nos consoles**, que é uma hora de trabalho humano e protege tudo o mais.
+3. **Revisão de acesso**, que se faz na mesma sentada do MFA.
+4. **Resposta a incidente**, que é o que uma auditoria pergunta depois de ver o
+   resto pronto.
+
+Sub-processadores, classificação de dados e rate limit saíram desta lista e estão
+em "o que existe".
 4. **Retenção e descarte**, que precisa de decisão de produto antes de virar
    procedimento — e a decisão é como conciliar LGPD com event log append-only.
 5. **Resposta a incidente** e **revisão de acesso**, que são processo e só
