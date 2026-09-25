@@ -6,6 +6,12 @@ import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../../src/api/server.js';
 import { loadEnv } from '../../src/config/env.js';
 import { createMembership, createTenant } from '../helpers/db.js';
+import {
+  carregarIndices,
+  indicesDesatualizados,
+  startIndicesScheduler,
+  type FetchJson,
+} from '../../src/fiscal/rules/index-loader.js';
 
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 const JWT_SECRET = 'segredo-de-teste-que-nao-vai-para-producao';
@@ -212,6 +218,157 @@ describe.skipIf(!DATABASE_URL)('API — séries de índice e correção monetár
 
       expect(corpo.restated_cents).toBeNull();
       expect(String(corpo.unavailable_reason).length).toBeGreaterThan(0);
+    });
+  });
+
+  /**
+   * Carga das fontes oficiais, com o IBGE e o BCB dublados. A API dublada
+   * responde por janela, como as de verdade: o carregador pede em trechos de
+   * cinco anos, e o SGS responde 404 quando a janela não tem dado.
+   */
+  describe('carga das fontes oficiais', () => {
+    /** 25/09/2026 em Brasília: a última competência fechada é 2026-08. */
+    const AGORA = new Date('2026-09-25T15:00:00Z');
+
+    /** 0,50% ao mês em toda série, salvo o que o teste mudar. */
+    const fonte = (mudar: Record<string, Record<string, string>> = {}, semDado: string[] = []): { fetchJson: FetchJson; urls: string[] } => {
+      const urls: string[] = [];
+      const fetchJson: FetchJson = async (url) => {
+        urls.push(url);
+        const sidra = /values\/t\/(\d+)\/n1\/all\/v\/(\d+)\/p\/(\d{6})-(\d{6})/.exec(url);
+        const sgs = /bcdata\.sgs\.(\d+)\/dados\?formato=json&dataInicial=\d{2}\/(\d{2})\/(\d{4})&dataFinal=\d{2}\/(\d{2})\/(\d{4})/.exec(url);
+        const meses = (de: string, ate: string): string[] => {
+          const r: string[] = [];
+          for (let [a, m] = [Number(de.slice(0, 4)), Number(de.slice(5))]; `${a}-${String(m).padStart(2, '0')}` <= ate; m === 12 ? ((a += 1), (m = 1)) : (m += 1)) {
+            r.push(`${a}-${String(m).padStart(2, '0')}`);
+          }
+          return r;
+        };
+        if (sidra !== null) {
+          const chave = `t${sidra[1]}/v${sidra[2]}`;
+          const lista = meses(`${sidra[3]!.slice(0, 4)}-${sidra[3]!.slice(4)}`, `${sidra[4]!.slice(0, 4)}-${sidra[4]!.slice(4)}`)
+            .filter((p) => !semDado.includes(`${chave}:${p}`));
+          return {
+            status: 200,
+            json: [{ D3C: 'Mês (Código)', V: 'Valor' }, ...lista.map((p) => ({ D3C: p.replace('-', ''), V: mudar[chave]?.[p] ?? '0.50' }))],
+          };
+        }
+        if (sgs !== null) {
+          const lista = meses(`${sgs[3]}-${sgs[2]}`, `${sgs[5]}-${sgs[4]}`).filter((p) => !semDado.includes(`${sgs[1]}:${p}`));
+          if (lista.length === 0) return { status: 404, json: null };
+          return {
+            status: 200,
+            json: lista.map((p) => ({ data: `01/${p.slice(5)}/${p.slice(0, 4)}`, valor: mudar[sgs[1]!]?.[p] ?? '0.50' })).reverse(),
+          };
+        }
+        throw new Error(`URL inesperada: ${url}`);
+      };
+      return { fetchJson, urls };
+    };
+
+    const pontos = async (indexId: string) =>
+      Number((await pool.query('select count(*) n from financial_index_points where index_id = $1', [indexId])).rows[0].n);
+
+    it('sem executar, relata e não grava nada', async () => {
+      const { fetchJson } = fonte();
+      const relatorios = await carregarIndices({ pool, fetchJson, now: AGORA, desde: '2025-01', executar: false });
+
+      expect(relatorios.map((r) => [r.indexId, r.points, r.lastPeriod])).toEqual([
+        ['ipca', 20, '2026-08'],
+        ['inpc', 20, '2026-08'],
+        ['igpm', 20, '2026-08'],
+        ['tr', 20, '2026-08'],
+        ['selic', 20, '2026-08'],
+      ]);
+      expect(await pontos('ipca')).toBe(0);
+    });
+
+    it('grava as cinco séries, conferidas, e a correção passa a sair', async () => {
+      const { fetchJson } = fonte();
+      await carregarIndices({ pool, fetchJson, now: AGORA, desde: '2025-01', executar: true });
+
+      const catalogo = (await call('/v1/financial-indices', owner)).json();
+      expect(catalogo.loaded_count).toBe(5);
+      expect(catalogo.verified_count).toBe(5);
+      const { rows } = await pool.query("select source_ref from financial_indices where index_id = 'ipca'");
+      expect(rows[0].source_ref).toMatch(/IBGE SIDRA t1737\/v63, conferido contra BCB SGS 433; coleta em 2026-09-25/);
+
+      const fator = (await call('/v1/financial-indices/ipca/factor?from=2025-01&to=2025-03', owner)).json();
+      // Dois meses a 0,50%: 1,005² = 1,010025.
+      expect(fator.factor).toBeCloseTo(1.010025, 10);
+    });
+
+    it('IBGE e BCB divergindo: grava, e a série fica não conferida com o mês', async () => {
+      const { fetchJson } = fonte({ '433': { '2026-03': '0.51' } });
+      const [ipca] = await carregarIndices({ pool, fetchJson, now: AGORA, desde: '2025-01', indices: ['ipca'], executar: true });
+
+      expect(ipca!.verified).toBe(false);
+      expect(ipca!.notVerifiedReason).toMatch(/2026-03 \(0\.50% × 0\.51%\)/);
+      expect(await pontos('ipca')).toBe(20);
+      const { rows } = await pool.query("select verified, verified_at from financial_indices where index_id = 'ipca'");
+      expect(rows[0]).toEqual({ verified: false, verified_at: null });
+    });
+
+    it('revisão da fonte é atualizada e relatada', async () => {
+      await carregarIndices({ pool, fetchJson: fonte().fetchJson, now: AGORA, desde: '2026-01', indices: ['selic'], executar: true });
+
+      const [selic] = await carregarIndices({
+        pool,
+        fetchJson: fonte({ '4390': { '2026-02': '0.99' } }).fetchJson,
+        now: AGORA,
+        desde: '2026-01',
+        indices: ['selic'],
+        executar: true,
+      });
+
+      expect(selic!.inserted).toBe(0);
+      expect(selic!.revisions).toEqual([{ period: '2026-02', before: 0.005, after: 0.0099 }]);
+      const { rows } = await pool.query("select variation::text from financial_index_points where index_id = 'selic' and period = '2026-02'");
+      expect(rows[0].variation).toBe('0.00990000');
+    });
+
+    it('janela sem dado no SGS (404) é série vazia naquele trecho, não erro', async () => {
+      const semDado = ['2019', '2020'].flatMap((a) => Array.from({ length: 12 }, (_, i) => `7811:${a}-${String(i + 1).padStart(2, '0')}`));
+      const { fetchJson, urls } = fonte({}, semDado);
+      const [tr] = await carregarIndices({ pool, fetchJson, now: AGORA, desde: '2016-01', indices: ['tr'], executar: false });
+
+      expect(urls.length).toBeGreaterThan(1);
+      expect(tr!.points).toBe(128 - 24);
+    });
+
+    it('índice sem fonte oficial cadastrada é recusado', async () => {
+      await expect(
+        carregarIndices({ pool, fetchJson: fonte().fetchJson, now: AGORA, desde: '2025-01', indices: ['cdi'], executar: false }),
+      ).rejects.toThrow(/cdi/);
+    });
+
+    it('desatualizado enquanto falta a última competência fechada', async () => {
+      expect(await indicesDesatualizados(pool, AGORA)).toBe(true);
+
+      await carregarIndices({ pool, fetchJson: fonte().fetchJson, now: AGORA, desde: '2026-01', executar: true });
+
+      expect(await indicesDesatualizados(pool, AGORA)).toBe(false);
+      expect(await indicesDesatualizados(pool, new Date('2026-10-25T15:00:00Z'))).toBe(true);
+    });
+
+    it('o agendador só busca quando está atrasado, e então só os últimos doze meses', async () => {
+      await carregarIndices({ pool, fetchJson: fonte().fetchJson, now: AGORA, desde: '2024-01', executar: true });
+      const { fetchJson, urls } = fonte();
+      let carregou: (() => void) | undefined;
+      const feito = new Promise<void>((r) => (carregou = r));
+
+      const agendador = startIndicesScheduler(pool, {
+        fetchJson,
+        now: () => new Date('2026-10-25T15:00:00Z'),
+        intervalMs: 5,
+        onLoad: () => carregou?.(),
+      });
+      await feito;
+      await agendador.stop();
+
+      expect(urls.every((u) => !u.includes('2024') || u.includes('2025'))).toBe(true);
+      expect(urls.some((u) => /p\/202508-|dataInicial=01\/08\/2025/.test(u))).toBe(true);
+      expect(await indicesDesatualizados(pool, new Date('2026-10-25T15:00:00Z'))).toBe(false);
     });
   });
 });

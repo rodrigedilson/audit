@@ -11,6 +11,7 @@ import {
   checarTrilhaDeSeguranca,
   checarCobranca,
   checarEmailDoDiagnostico,
+  checarIndicesFinanceiros,
   checarCertificadosParaColeta,
 } from '../../../src/infrastructure/diagnostics/environment-doctor.js';
 import { applyMigrations } from '../../helpers/db.js';
@@ -480,6 +481,18 @@ describe.skipIf(!DATABASE_URL)('diagnosticar — contra banco real', () => {
          on conflict do nothing`,
       );
 
+      // Séries de índice em dia e conferidas: o último mês fechado, em todas.
+      const agora = new Date(Date.now() - 3 * 3600_000);
+      const passado = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() - 1, 1));
+      const competencia = `${passado.getUTCFullYear()}-${String(passado.getUTCMonth() + 1).padStart(2, '0')}`;
+      await pool.query(
+        `insert into financial_index_points (index_id, period, variation, source_ref)
+         select index_id, $1, 0.005, 'teste do doctor' from financial_indices
+         on conflict do nothing`,
+        [competencia],
+      );
+      await pool.query(`update financial_indices set verified = true, source_ref = 'teste do doctor', verified_at = now()`);
+
       const resultado = await diagnosticar({
         ...ENV_BASE,
         DATABASE_URL: urlVazia,
@@ -947,5 +960,35 @@ describe('checarTrilhaDeSeguranca', () => {
     const r = await checarTrilhaDeSeguranca(poolFalso([{ kind: 'limite', n: '1' }], 30));
 
     expect(r.estado).toBe('ok');
+  });
+});
+
+describe('checarIndicesFinanceiros', () => {
+  const AGORA = new Date('2026-09-25T15:00:00Z');
+  const pool = (linhas: { index_id: string; verified: boolean; pontos: string; ultimo: string | null }[]): pg.Pool =>
+    ({ query: async () => ({ rows: linhas }) }) as unknown as pg.Pool;
+
+  it('vazio: aviso com o comando de carga', async () => {
+    const r = await checarIndicesFinanceiros(pool([{ index_id: 'ipca', verified: false, pontos: '0', ultimo: null }]), AGORA);
+    expect(r.estado).toBe('aviso');
+    expect(r.detalhe).toMatch(/sem pontos: ipca/);
+    expect(r.acao).toMatch(/carregar-indices-oficiais/);
+  });
+
+  it('atrasado há mais de dois meses, ou não conferido: aviso', async () => {
+    const r = await checarIndicesFinanceiros(
+      pool([
+        { index_id: 'ipca', verified: true, pontos: '380', ultimo: '2026-05' },
+        { index_id: 'tr', verified: false, pontos: '386', ultimo: '2026-08' },
+      ]),
+      AGORA,
+    );
+    expect(r.detalhe).toMatch(/atrasados: ipca \(2026-05\)/);
+    expect(r.detalhe).toMatch(/não conferidos: tr/);
+  });
+
+  it('em dia e conferido: ok, com a cobertura', async () => {
+    const r = await checarIndicesFinanceiros(pool([{ index_id: 'ipca', verified: true, pontos: '386', ultimo: '2026-08' }]), AGORA);
+    expect(r).toMatchObject({ estado: 'ok', detalhe: 'ipca: 386 até 2026-08' });
   });
 });

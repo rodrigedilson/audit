@@ -282,6 +282,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     );
     checagens.push(await isolar('cobrança (Asaas)', () => checarCobranca(pool, env)));
     checagens.push(await isolar('certificados para a coleta de DF-e', () => checarCertificadosParaColeta(pool)));
+    checagens.push(await isolar('índices financeiros', () => checarIndicesFinanceiros(pool, new Date())));
     checagens.push(await isolar('e-mail do diagnóstico', () => checarEmailDoDiagnostico(pool, env)));
     checagens.push(await isolar('escritório e usuário', () => checarEscritorio(pool)));
   } finally {
@@ -1199,6 +1200,55 @@ export async function checarEmailDoDiagnostico(pool: pg.Pool, env: Env): Promise
       `SMTP configurado · ${rows[0]!.enviados} relatório(s) enviado(s) nos últimos 7 dias` +
       (env.ipHashSecret === undefined ? ' · sem IP_HASH_SECRET, o hash do IP ainda deriva da chave do cofre' : ''),
   };
+}
+
+/**
+ * Séries de índice (IPCA, INPC, IGP-M, TR, SELIC) carregadas e em dia.
+ *
+ * Aviso, não falha: sem série a API sobe e a correção monetária responde
+ * `null` com o motivo. O que o doctor aponta é o laudo que não vai conseguir
+ * corrigir valor nenhum — ou vai corrigir até um mês que já passou.
+ */
+export async function checarIndicesFinanceiros(pool: pg.Pool, now: Date): Promise<Checagem> {
+  const nome = 'índices financeiros';
+  const { rows } = await pool.query<{ index_id: string; verified: boolean; pontos: string; ultimo: string | null }>(
+    `select i.index_id, i.verified, count(p.period)::text as pontos, max(p.period) as ultimo
+       from financial_indices i
+       left join financial_index_points p on p.index_id = i.index_id
+      group by i.index_id, i.verified
+      order by i.index_id`,
+  );
+
+  // Dois meses de folga: a fonte publica o mês anterior perto do dia 10.
+  const local = new Date(now.getTime() - 3 * 3600_000);
+  const limite = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() - 2, 1));
+  const minimo = `${limite.getUTCFullYear()}-${String(limite.getUTCMonth() + 1).padStart(2, '0')}`;
+
+  const vazios = rows.filter((r) => Number(r.pontos) === 0).map((r) => r.index_id);
+  const atrasados = rows.filter((r) => r.ultimo !== null && r.ultimo < minimo).map((r) => `${r.index_id} (${r.ultimo})`);
+  const naoConferidos = rows.filter((r) => Number(r.pontos) > 0 && !r.verified).map((r) => r.index_id);
+  const resumo = rows.map((r) => `${r.index_id}: ${r.pontos}${r.ultimo ? ` até ${r.ultimo}` : ''}`).join(' · ');
+
+  if (vazios.length > 0 || atrasados.length > 0 || naoConferidos.length > 0) {
+    return {
+      nome,
+      estado: 'aviso',
+      detalhe: [
+        vazios.length > 0 ? `sem pontos: ${vazios.join(', ')}` : null,
+        atrasados.length > 0 ? `atrasados: ${atrasados.join(', ')}` : null,
+        naoConferidos.length > 0 ? `não conferidos: ${naoConferidos.join(', ')}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      acao:
+        'Carregue das fontes oficiais (IBGE e BCB), conferindo IPCA e INPC entre as duas:\n' +
+        '  npx tsx scripts/carregar-indices-oficiais.ts            (simulação)\n' +
+        '  npx tsx scripts/carregar-indices-oficiais.ts --executar\n' +
+        '  Em produção, o agendador diário da API mantém as séries em dia.',
+    };
+  }
+
+  return { nome, estado: 'ok', detalhe: resumo };
 }
 
 /**
