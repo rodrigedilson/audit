@@ -13,11 +13,11 @@ import { readFile } from 'node:fs/promises';
  * (x.509). Daí a existência deste cliente separado: `fetch` do Node não expõe
  * certificado de cliente, e a chamada precisa de `node:https` com o PFX.
  *
- * **De onde vem o certificado.** Hoje, de um arquivo que o operador aponta —
- * `CFF_CERT_PFX` e `CFF_CERT_PASSWORD`. Não vem do cofre, e a razão é uma
- * decisão de arquitetura que ainda não foi tomada: o cofre **não guarda a senha
- * do PFX**, de propósito, e sem ela não há como usar o certificado sem alguém
- * digitando. Ver `docs/adr/ADR-006-uso-nao-assistido-do-certificado.md`.
+ * **De onde vem o certificado.** De um arquivo que o operador aponta —
+ * `CFF_CERT_PFX` e `CFF_CERT_PASSWORD`. Não vem do cofre de propósito: o cofre
+ * guarda o A1 **de cada cliente**, e este certificado é da operação, usado para
+ * carregar tabela global de referência. Ver
+ * `docs/adr/ADR-007-uso-nao-assistido-do-certificado.md`.
  *
  * A SVRS pede uma consulta por dia por empresa — as tabelas não mudam
  * diariamente, e laço contínuo é uso indevido do serviço.

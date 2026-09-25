@@ -145,3 +145,38 @@ describe('loadEnv — assistente', () => {
     );
   });
 });
+
+describe('loadEnv — e-mail do diagnóstico', () => {
+  const DEV = { ...BASE, AUDIT_ENV: 'dev' } as const;
+  const EMAIL = {
+    MAIL_SMTP_URL: 'smtps://usuario:senha@smtp.exemplo.com.br:465',
+    MAIL_FROM: 'Diagnóstico <diagnostico@exemplo.com.br>',
+    PUBLIC_API_URL: 'https://api.exemplo.com.br/',
+  } as const;
+
+  it('sem as variáveis, não há envio, e a API sobe', () => {
+    expect(loadEnv({ ...DEV }).mail).toBeUndefined();
+  });
+
+  it('com as três, o envio fica configurado, e a URL perde a barra final', () => {
+    expect(loadEnv({ ...DEV, ...EMAIL }).mail).toEqual({
+      smtpUrl: EMAIL.MAIL_SMTP_URL,
+      from: EMAIL.MAIL_FROM,
+      publicApiUrl: 'https://api.exemplo.com.br',
+    });
+  });
+
+  /** O e-mail leva o link de remoção: sem a URL pública, ele sairia sem como exercer o direito. */
+  it('recusa só parte delas', () => {
+    expect(erroDe({ ...DEV, MAIL_SMTP_URL: EMAIL.MAIL_SMTP_URL, MAIL_FROM: EMAIL.MAIL_FROM })).toContain('PUBLIC_API_URL');
+  });
+
+  it('recusa URL SMTP sem esquema smtp', () => {
+    expect(erroDe({ ...DEV, ...EMAIL, MAIL_SMTP_URL: 'https://smtp.exemplo.com.br' })).toContain('smtp://');
+  });
+
+  it('recusa chave curta do relatório e do HMAC do IP', () => {
+    expect(erroDe({ ...DEV, REPORT_ENCRYPTION_KEY: 'curta' })).toContain('REPORT_ENCRYPTION_KEY');
+    expect(erroDe({ ...DEV, IP_HASH_SECRET: 'curta' })).toContain('IP_HASH_SECRET');
+  });
+});

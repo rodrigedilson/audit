@@ -1,4 +1,5 @@
 import type { CreditState, PeriodState, Regime } from './fiscal-vocabulary.js';
+import type { CriterionRef } from './evaluation-criterion.js';
 
 /**
  * Projeção de um CNPJ: o estado atual derivado do event log daquele par
@@ -219,6 +220,17 @@ export interface OutputRejectedPayload {
   details: string;
   original_action: string;
   validation_layer: number;
+  /**
+   * Contra o quê se julgou. Ausente nas rejeições que recusam a forma da
+   * requisição, presente em toda rejeição das 7 camadas.
+   *
+   * Entra no payload do evento, e não na projeção, de propósito: as trilhas de
+   * auditoria leem `output.rejected` direto da tabela `events`
+   * (`ReportingService.loadRejections`), então o critério chega ao Book sem
+   * alterar a forma do objeto hasheado — nenhum `projection_hash` já gravado
+   * deixa de conferir por causa disto.
+   */
+  criterion?: CriterionRef;
 }
 
 export interface AssessmentConfirmedPayload {

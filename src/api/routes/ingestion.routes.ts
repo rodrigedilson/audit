@@ -6,6 +6,7 @@ import { readXmlUpload } from '../multipart.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 import { PADRAO_DA_CHAVE } from '../../fiscal/ingestion/access-key.js';
 import { CANCELAMENTO_EXIGE_RETIFICACAO } from '../../fiscal/dfe/dfe-sync.service.js';
+import { autoSync, setAutoSync } from '../../fiscal/dfe/dfe-auto-sync.js';
 
 interface CnpjParams {
   cnpj: string;
@@ -274,7 +275,7 @@ export async function registerIngestionRoutes(
     },
     async (request, reply) => {
       const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
-      const [estado, resumos, documentos, eventos] = await Promise.all([
+      const [estado, resumos, documentos, eventos, agendada] = await Promise.all([
         deps.pool.query(
           `select ult_nsu, max_nsu, last_cstat, last_motivo, last_run_at, blocked_until
              from dfe_sync_state where tenant_id = $1::uuid and cnpj = $2::char(14)`,
@@ -300,6 +301,7 @@ export async function registerIngestionRoutes(
             order by dh_evento`,
           [scope.tenantId, scope.cnpj, CANCELAMENTO_EXIGE_RETIFICACAO],
         ),
+        autoSync(deps.pool, scope),
       ]);
       const d = documentos.rows[0]!;
       const e = estado.rows[0];
@@ -326,6 +328,8 @@ export async function registerIngestionRoutes(
         },
         // Nota cancelada na SEFAZ depois de a competência ser confirmada. O número
         // confirmado não muda sozinho (INV-001): a correção é a retificação.
+        // Coleta agendada (ADR-007): quem ligou e quando.
+        auto_sync: agendada,
         cancellations_needing_rectification: eventos.rows.map((x) => ({
           access_key: x.access_key,
           tp_evento: x.tp_evento,
@@ -333,6 +337,55 @@ export async function registerIngestionRoutes(
           cancelled_at: x.dh_evento,
         })),
       });
+    },
+  );
+
+  /**
+   * Liga ou desliga a coleta agendada (ADR-007). Só o owner: é a autorização de
+   * uso do A1 sem alguém acionando. Indisponível onde não há gateway da SEFAZ —
+   * em dev o banco é o de produção, e ligar daqui faria o agendador de produção
+   * coletar por uma decisão tomada num ambiente de teste.
+   */
+  app.put<{ Params: CnpjParams; Body: { enabled: boolean } }>(
+    '/clients/:cnpj/dfe/auto',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['cnpj'],
+          properties: { cnpj: { type: 'string', pattern: PADRAO_DE_CNPJ } },
+        },
+        body: {
+          type: 'object',
+          required: ['enabled'],
+          additionalProperties: false,
+          properties: { enabled: { type: 'boolean' } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const context = request.tenant;
+      deps.tenantResolver.assertIsOwner(context);
+      const scope = await deps.tenantResolver.scopeFor(context, request.params.cnpj);
+
+      if (deps.dfe === undefined) {
+        return reply.code(503).send({
+          code: 'dfe_gateway_not_configured',
+          message:
+            'Coleta de DF-e indisponível neste ambiente, e com ela a coleta agendada. Em dev ' +
+            'isso é esperado: o banco é o de produção, e dev não fala com a SEFAZ.',
+        });
+      }
+
+      const orchestrator = await deps.orchestratorFor(scope);
+      const estado = await setAutoSync(
+        deps.pool,
+        scope,
+        request.body.enabled,
+        context.user.userId,
+        orchestrator,
+      );
+      return reply.code(200).send({ cnpj: scope.cnpj, auto_sync: estado });
     },
   );
 }

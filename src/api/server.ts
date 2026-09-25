@@ -7,6 +7,11 @@ import type { Env } from '../config/env.js';
 import { JwtVerifier } from './auth/jwt-verifier.js';
 import { TenantResolver, type TenantContext } from './auth/tenant-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
+import { registerPlanGate } from './plugins/plan-gate.js';
+import { PlanFeatures } from '../billing/plan-features.js';
+import { SmtpMailGateway, type MailGateway } from '../infrastructure/mail/mail-gateway.js';
+import { ReadinessDelivery } from '../fiscal/ingestion/readiness-delivery.js';
+import { ReadinessReportCipher } from '../fiscal/ingestion/readiness-cipher.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
 import { registerPortfolioRoutes } from './routes/portfolio.routes.js';
 import { registerEventRoutes } from './routes/events.routes.js';
@@ -20,6 +25,7 @@ import { registerReportingRoutes } from './routes/reporting.routes.js';
 import { registerReconciliationRoutes } from './routes/reconciliation.routes.js';
 import { registerAssistantRoutes } from './routes/assistant.routes.js';
 import { registerCreditRoutes } from './routes/credit.routes.js';
+import { registerAuditRoutes } from './routes/audit.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
 import { registerDossierRoutes } from './routes/dossier.routes.js';
 import { registerEfdIcmsIpiRoutes } from './routes/efd-icms-ipi.routes.js';
@@ -28,12 +34,13 @@ import type { LanguageModelPort } from '../fiscal/assistant/language-model.port.
 import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.js';
 import { SefazSoapClient, type SefazDfeGateway } from '../fiscal/dfe/sefaz-gateway.js';
 import { DfeSyncService } from '../fiscal/dfe/dfe-sync.service.js';
-import { startDfeWorker } from '../fiscal/dfe/dfe-worker.js';
+import { startDfeScheduler, startDfeWorker } from '../fiscal/dfe/dfe-worker.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
 import type { EventScope } from '../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { loadConfig } from '../config/esaa-config.js';
+import { createBurstLimiter, exigirLimite } from './plugins/rate-limit.js';
 
 export interface ApiDeps {
   env: Env;
@@ -60,6 +67,10 @@ export interface ApiDeps {
    * homologação gravaria notas de teste na base real (ADR-006).
    */
   dfe?: DfeSyncService;
+  /** O que o plano de cada regime inclui (`plans.features`). */
+  planFeatures: PlanFeatures;
+  /** Guarda cifrada e envio por e-mail do relatório do diagnóstico público. */
+  readinessDelivery: ReadinessDelivery;
 }
 
 declare module 'fastify' {
@@ -92,6 +103,9 @@ export const PUBLIC_ROUTES = new Set([
   // O lead é anexado depois do relatório, e a tela que o envia também não tem
   // sessão. O id do diagnóstico é o que autoriza a escrita.
   '/v1/reform-readiness/lead',
+  // O link "apagar meu e-mail" do relatório enviado: quem o abre não tem sessão,
+  // e o token no link é o que autoriza.
+  '/v1/reform-readiness/forget',
   /**
    * Páginas de metodologia. Nenhuma das duas lê `request.tenant`, e as duas
    * existem para ser lidas ANTES de contratar: a do simulador diz o que ele não
@@ -118,6 +132,8 @@ export interface BuildServerOptions {
   asaas?: AsaasGateway;
   /** Modelo de linguagem. Os testes injetam um dublê; sem ele, vem de `ANTHROPIC_API_KEY`. */
   languageModel?: LanguageModelPort;
+  /** Envio de e-mail. Os testes injetam um dublê; sem ele, SMTP de `MAIL_SMTP_URL`. */
+  mail?: MailGateway;
   /** Gateway da SEFAZ. Os testes injetam um dublê; sem ele, só em `prod`. */
   sefaz?: SefazDfeGateway;
   /**
@@ -149,6 +165,17 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     pool,
     jwtVerifier: new JwtVerifier(env),
     tenantResolver: new TenantResolver(pool),
+    planFeatures: new PlanFeatures(pool),
+    readinessDelivery: new ReadinessDelivery({
+      pool,
+      ...(env.reportEncryptionKey === undefined ? {} : { cipher: new ReadinessReportCipher(env.reportEncryptionKey) }),
+      ...(options.mail !== undefined
+        ? { mail: options.mail }
+        : env.mail === undefined
+          ? {}
+          : { mail: new SmtpMailGateway(env.mail.smtpUrl, env.mail.from) }),
+      ...(env.mail === undefined ? {} : { publicApiUrl: env.mail.publicApiUrl }),
+    }),
     ...(options.asaas !== undefined
       ? { asaas: options.asaas }
       : env.asaas === undefined
@@ -213,7 +240,13 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     const worker = startDfeWorker(deps.dfe, {
       onError: (erro) => app.log.error({ err: erro }, 'worker da coleta de DF-e'),
     });
-    app.addHook('onClose', async () => worker.stop());
+    const agendador = startDfeScheduler(deps.dfe, {
+      onError: (erro) => app.log.error({ err: erro }, 'agendador da coleta de DF-e'),
+    });
+    app.addHook('onClose', async () => {
+      await agendador.stop();
+      await worker.stop();
+    });
   }
 
   await app.register(cors, {
@@ -244,6 +277,31 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
   app.get('/v1/health', async () => ({ status: 'ok' }));
 
   /**
+   * Limite das rotas autenticadas, por usuário do token.
+   *
+   * As rotas públicas já tinham limite; estas não tinham nenhum. Com token
+   * válido dava para varrer `GET /clients/{cnpj}/…` no ritmo que a rede
+   * aguentasse — e como cada chamada resolve escritório e consulta o banco, o
+   * custo do abuso caía inteiro sobre o Postgres.
+   *
+   * A chave é o usuário, e não o IP: o IP de um escritório é compartilhado entre
+   * os contadores dele, e limitar por IP puniria o escritório grande. O usuário
+   * é quem o token identifica, e é quem responde pelo que fez.
+   *
+   * Os números são folgados de propósito. 240/min é bem mais do que uma tela
+   * dispara ao abrir — o alvo é o laço automatizado, não o humano apressado.
+   * Apertar isto sem medir transformaria o controle em chamado de suporte.
+   *
+   * **Em memória e por processo**, como o limitador das rotas públicas: com mais
+   * de uma instância, cada uma conta a sua parte e o limite efetivo multiplica
+   * pelo número de instâncias. Está registrado em `docs/seguranca/CONTROLES.md`.
+   */
+  const limitesAutenticados = [
+    createBurstLimiter({ windowMs: 60_000, max: 240 }),
+    createBurstLimiter({ windowMs: 3_600_000, max: 6_000 }),
+  ];
+
+  /**
    * Autenticação por hook global, não por rota: rota nova nasce protegida, e
    * esquecer de adicionar um `preHandler` não cria um vazamento silencioso. O
    * custo é manter `PUBLIC_ROUTES` explícito.
@@ -254,8 +312,20 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     }
 
     const user = await deps.jwtVerifier.verify(request.headers.authorization);
+
+    // Antes de resolver o escritório, que é ida ao banco: sob abuso, o limite
+    // deve custar menos que a requisição que ele recusa.
+    exigirLimite(
+      limitesAutenticados,
+      [user.userId],
+      'Muitas requisições. Espere e tente de novo.',
+    );
+
     request.tenant = await deps.tenantResolver.resolve(user);
   });
+
+  // Depois da autenticação e da validação: recusa o que o plano do CNPJ não inclui.
+  registerPlanGate(app, deps.pool, deps.planFeatures);
 
   await app.register(
     async (instance) => {
@@ -273,6 +343,7 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerReconciliationRoutes(instance, deps);
       await registerAssistantRoutes(instance, deps);
       await registerCreditRoutes(instance, deps);
+    await registerAuditRoutes(instance, deps);
       await registerSimulationRoutes(instance, deps);
       await registerDossierRoutes(instance, deps);
       await registerEfdIcmsIpiRoutes(instance, deps);

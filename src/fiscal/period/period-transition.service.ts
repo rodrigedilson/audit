@@ -16,6 +16,13 @@ const ACTION_TO_STATE: Partial<Record<FiscalAction, PeriodState>> = {
   'assessment.adjusted': 'assessed',
   'assessment.compared': 'reconciled',
   'assessment.confirmed': 'confirmed',
+  /**
+   * O estorno muda débito e crédito da competência. Deixá-la em `reconciled`
+   * diria que a contra-apuração na tela foi calculada contra números que já não
+   * existem — e o contador a levaria ao Fisco. `reconciled → assessed` já é
+   * transição legal, então a máquina de estados não muda.
+   */
+  'audit.reversal.applied': 'assessed',
 };
 
 /** Ações que exigem competência aberta, isto é, não confirmada. */
@@ -35,6 +42,14 @@ const MUTATING_ACTIONS: readonly FiscalAction[] = [
   'credit.conditioned',
   'credit.released',
   'period.closed',
+  /**
+   * Só o estorno. `audit.execution.recorded` e `audit.finding.reviewed` ficam
+   * de fora de propósito: o contador tem de poder auditar e revisar uma
+   * competência já confirmada — é justamente para os meses entregues ao Fisco
+   * que a trilha de defesa serve. Nenhuma das duas escreve número, então
+   * INV-001 não é violada.
+   */
+  'audit.reversal.applied',
 ];
 
 export class PeriodTransitionService {

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ApiDeps } from '../server.js';
 import { readXmlUpload } from '../multipart.js';
@@ -6,6 +6,7 @@ import { createBurstLimiter, RateLimitedError } from '../plugins/rate-limit.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { PublicInputError } from '../public-errors.js';
 import { summarizeReadiness, type ReadinessReport } from '../../fiscal/ingestion/readiness.js';
+import type { DeliveryOutcome } from '../../fiscal/ingestion/readiness-delivery.js';
 
 /**
  * Superfície anônima da API.
@@ -54,7 +55,7 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
       });
     }
 
-    const ipHash = hashDoIp(request, deps.env.certificateMasterKey);
+    const ipHash = hashDoIp(request, deps.env);
 
     const veredito = rajada.hit(ipHash);
     if (!veredito.allowed) {
@@ -64,7 +65,9 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
       );
     }
 
-    await exigirQuotaDiaria(deps, ipHash);
+    // A vaga da quota é reservada antes do parsing, na mesma transação da
+    // contagem: vinte requisições simultâneas não passam todas pela contagem.
+    const reportId = await reservarDiagnostico(deps, ipHash);
 
     /**
      * `readXmlUpload` é compartilhado com a ingestão autenticada, onde recusar
@@ -81,6 +84,7 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
         allowedFields: ['email', 'consent', 'source'],
       }));
     } catch (erro) {
+      await liberarVaga(deps, reportId);
       if (erro instanceof ValidationError) {
         throw new PublicInputError(erro.details);
       }
@@ -91,6 +95,7 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
     // malformado não justifica 50 parses.
     const email = fields['email']?.trim();
     if (email && !EMAIL.test(email)) {
+      await liberarVaga(deps, reportId);
       throw new PublicInputError('E-mail inválido.');
     }
     const consentiu = fields['consent'] === 'true' || fields['consent'] === '1';
@@ -98,12 +103,16 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
     const relatorio = summarizeReadiness(files);
 
     const leadRegistrado = Boolean(email) && consentiu;
-    const reportId = await registrarMetrica(deps, {
-      ipHash,
+    await registrarMetrica(deps, reportId, {
       relatorio,
       ...(leadRegistrado && email ? { email } : {}),
       ...(fields['source'] ? { source: fields['source'] } : {}),
     });
+
+    const entrega = deps.readinessDelivery;
+    await entrega.purgeExpired();
+    const guardadoAte = await entrega.store(reportId, relatorio);
+    const envio = leadRegistrado ? await entrega.send(reportId) : undefined;
 
     return reply.code(200).send({
       /**
@@ -116,10 +125,17 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
       generated_at: new Date().toISOString(),
       ...serializar(relatorio),
       limits: { max_files: MAX_ARQUIVOS, max_total_bytes: MAX_BYTES_DO_LOTE },
-      // Literal e proposital: é o compromisso do produto dito na própria
-      // resposta, e é o que um teste consegue afirmar.
-      persisted: false,
+      /**
+       * O compromisso do produto dito na própria resposta: os XMLs nunca são
+       * guardados. O resumo que a tela mostra fica cifrado até `summary_until`
+       * (24h), só para o envio por e-mail, e é apagado assim que sai.
+       */
+      persisted: {
+        documents: false,
+        summary_until: guardadoAte?.toISOString() ?? null,
+      },
       lead_registered: leadRegistrado,
+      ...(envio === undefined ? {} : descreverEnvio(envio)),
     });
   });
 
@@ -166,7 +182,7 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
         });
       }
 
-      const ipHash = hashDoIp(request, deps.env.certificateMasterKey);
+      const ipHash = hashDoIp(request, deps.env);
       const veredito = rajada.hit(`lead:${ipHash}`);
       if (!veredito.allowed) {
         throw new RateLimitedError(
@@ -186,6 +202,24 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
         throw new PublicInputError('É preciso consentir com o envio para registrar o e-mail.');
       }
 
+      const entrega = deps.readinessDelivery;
+      await entrega.purgeExpired();
+
+      // Com envio configurado, relatório vencido é 410 e o lead não é gravado:
+      // registrar um e-mail para um relatório que não vai sair seria prometer o
+      // que não se cumpre.
+      if (entrega.enabled) {
+        const disponivel = await entrega.availability(request.body.report_id);
+        if (disponivel === 'expired') {
+          return reply.code(410).send({
+            code: 'report_expired',
+            message:
+              'O relatório deste diagnóstico não está mais guardado: ele fica no máximo 24 horas. ' +
+              'Gere o diagnóstico de novo para recebê-lo por e-mail.',
+          });
+        }
+      }
+
       const { rows } = await deps.pool.query<{ registrar_lead_do_diagnostico: boolean }>(
         'select registrar_lead_do_diagnostico($1::uuid, $2::text, $3::text)',
         [request.body.report_id, email, request.body.source ?? null],
@@ -201,67 +235,150 @@ export async function registerPublicRoutes(app: FastifyInstance, deps: ApiDeps):
         });
       }
 
-      return reply.code(200).send({ lead_registered: true });
+      const envio = await entrega.send(request.body.report_id);
+      return reply.code(200).send({ lead_registered: true, ...descreverEnvio(envio) });
     },
+  );
+
+  /**
+   * `GET /reform-readiness/forget?token=` — o link "apagar meu e-mail" do
+   * relatório enviado. Apaga e-mail, consentimento e o que restar do relatório.
+   * Responde uma página curta, porque quem abre é uma pessoa no navegador.
+   */
+  app.get<{ Querystring: { token?: string } }>(
+    '/reform-readiness/forget',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: { token: { type: 'string', minLength: 20, maxLength: 100 } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const veredito = rajada.hit(`forget:${hashDoIp(request, deps.env)}`);
+      if (!veredito.allowed) {
+        throw new RateLimitedError(veredito.retryAfterSeconds, 'Muitas tentativas. Aguarde alguns instantes.');
+      }
+      const token = request.query.token ?? '';
+      const apagado = token !== '' && (await deps.readinessDelivery.forget(token));
+      return reply
+        .code(apagado ? 200 : 404)
+        .type('text/html; charset=utf-8')
+        .send(
+          pagina(
+            apagado
+              ? 'Pronto: o seu e-mail foi apagado da nossa base, junto com o consentimento.'
+              : 'Este link não vale mais: ou o e-mail já foi apagado, ou o endereço está incompleto.',
+          ),
+        );
+    },
+  );
+}
+
+function descreverEnvio(envio: DeliveryOutcome): { email_sent: boolean; email_not_sent_reason?: string } {
+  return envio.sent ? { email_sent: true } : { email_sent: false, email_not_sent_reason: envio.reason };
+}
+
+function pagina(mensagem: string): string {
+  return (
+    '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Remoção de e-mail</title></head>' +
+    `<body style="font-family:sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem"><p>${mensagem}</p></body></html>`
   );
 }
 
 /**
  * Hash do IP do visitante.
  *
- * O salt deriva da chave mestra por separação de domínio: é determinístico entre
- * instâncias e reinícios — sem isso a quota diária não funcionaria — e não expõe
- * a chave nem reusa o mesmo material do cofre de certificados.
+ * HMAC com `IP_HASH_SECRET`: determinístico entre instâncias e reinícios — sem
+ * isso a quota diária não funcionaria — e desacoplado da chave dos
+ * certificados. Sem o segredo, o sal deriva da chave mestra por separação de
+ * domínio, como antes, para a quota não zerar num deploy sem a variável.
  */
-function hashDoIp(request: FastifyRequest, masterKey: string): string {
-  const salt = createHash('sha256').update(`public-diagnostic-ip-hash:${masterKey}`).digest('hex');
+function hashDoIp(request: FastifyRequest, env: ApiDeps['env']): string {
+  if (env.ipHashSecret !== undefined) {
+    return createHmac('sha256', env.ipHashSecret).update(`public-diagnostic-ip:${request.ip}`).digest('hex');
+  }
+  const salt = createHash('sha256').update(`public-diagnostic-ip-hash:${env.certificateMasterKey}`).digest('hex');
   return createHash('sha256').update(`${salt}:${request.ip}`).digest('hex');
 }
 
-async function exigirQuotaDiaria(deps: ApiDeps, ipHash: string): Promise<void> {
-  // O `retry_after` é o tempo até o diagnóstico mais antigo da janela vencer, e
-  // não uma hora fixa: é quando de fato abre uma vaga.
-  const { rows } = await deps.pool.query<{ usadas: string; libera_em: string | null }>(
-    `select count(*) as usadas,
-            extract(epoch from (min(created_at) + interval '1 day' - now()))::text as libera_em
-       from readiness_reports
-      where ip_hash = $1::char(64) and created_at > now() - interval '1 day'`,
-    [ipHash],
-  );
+/**
+ * Reserva a vaga da quota diária e devolve o id do diagnóstico.
+ *
+ * Contagem e inserção na mesma transação, sob um lock por `ip_hash`: sem isso,
+ * requisições simultâneas passavam todas pela contagem antes de qualquer uma
+ * gravar, e a quota de 20 virava a quantidade de abas abertas.
+ */
+async function reservarDiagnostico(deps: ApiDeps, ipHash: string): Promise<string> {
+  const client = await deps.pool.connect();
+  try {
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [ipHash]);
 
-  if (Number(rows[0]?.usadas ?? 0) >= QUOTA_DIARIA) {
-    // O brief é explícito: o 429 não é tela de upgrade. Diz o limite e quando
-    // tentar de novo, e nada mais.
-    throw new RateLimitedError(
-      Math.max(1, Math.ceil(Number(rows[0]?.libera_em ?? 3600))),
-      `Você fez muitos diagnósticos hoje (limite de ${QUOTA_DIARIA} por dia). ` +
-        'Tente de novo mais tarde.',
+    // O `retry_after` é o tempo até o diagnóstico mais antigo da janela vencer, e
+    // não uma hora fixa: é quando de fato abre uma vaga.
+    const { rows } = await client.query<{ usadas: string; libera_em: string | null }>(
+      `select count(*) as usadas,
+              extract(epoch from (min(created_at) + interval '1 day' - now()))::text as libera_em
+         from readiness_reports
+        where ip_hash = $1::char(64) and created_at > now() - interval '1 day'`,
+      [ipHash],
     );
+
+    if (Number(rows[0]?.usadas ?? 0) >= QUOTA_DIARIA) {
+      await client.query('rollback');
+      // O brief é explícito: o 429 não é tela de upgrade. Diz o limite e quando
+      // tentar de novo, e nada mais.
+      throw new RateLimitedError(
+        Math.max(1, Math.ceil(Number(rows[0]?.libera_em ?? 3600))),
+        `Você fez muitos diagnósticos hoje (limite de ${QUOTA_DIARIA} por dia). ` +
+          'Tente de novo mais tarde.',
+      );
+    }
+
+    const { rows: nova } = await client.query<{ id: string }>(
+      'insert into readiness_reports (ip_hash) values ($1::char(64)) returning id',
+      [ipHash],
+    );
+    await client.query('commit');
+    return nova[0]!.id;
+  } catch (erro) {
+    if (!(erro instanceof RateLimitedError)) {
+      await client.query('rollback').catch(() => undefined);
+    }
+    throw erro;
+  } finally {
+    client.release();
   }
 }
 
+/** Upload recusado antes do parsing não gasta a quota do visitante. */
+async function liberarVaga(deps: ApiDeps, reportId: string): Promise<void> {
+  await deps.pool.query('delete from readiness_reports where id = $1::uuid', [reportId]);
+}
+
 interface MetricaArgs {
-  ipHash: string;
   relatorio: ReadinessReport;
   email?: string;
   source?: string;
 }
 
-/** Só contadores. Nenhuma coluna guarda dado do documento do visitante. */
-async function registrarMetrica(deps: ApiDeps, args: MetricaArgs): Promise<string> {
+/** Só contadores, e o lead consentido. O relatório em si vai cifrado, à parte. */
+async function registrarMetrica(deps: ApiDeps, reportId: string, args: MetricaArgs): Promise<void> {
   const { relatorio } = args;
 
-  const { rows } = await deps.pool.query<{ id: string }>(
-    `insert into readiness_reports (
-       ip_hash, documents_total, documents_parsed, documents_rejected,
-       documents_with_reform, items_total, items_with_reform,
-       distinct_issuers, distinct_ncms, periods_covered,
-       email, email_consent_at, source
-     ) values ($1::char(64), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               case when $11::text is null then null else now() end, $12)
-     returning id`,
+  await deps.pool.query(
+    `update readiness_reports
+        set documents_total = $2, documents_parsed = $3, documents_rejected = $4,
+            documents_with_reform = $5, items_total = $6, items_with_reform = $7,
+            distinct_issuers = $8, distinct_ncms = $9, periods_covered = $10,
+            email = $11, email_consent_at = case when $11::text is null then null else now() end,
+            source = $12
+      where id = $1::uuid`,
     [
-      args.ipHash,
+      reportId,
       relatorio.totals.documents,
       relatorio.totals.parsed,
       relatorio.totals.rejected,
@@ -275,8 +392,6 @@ async function registrarMetrica(deps: ApiDeps, args: MetricaArgs): Promise<strin
       args.source ?? null,
     ],
   );
-
-  return rows[0]!.id;
 }
 
 function serializar(relatorio: ReadinessReport): Record<string, unknown> {

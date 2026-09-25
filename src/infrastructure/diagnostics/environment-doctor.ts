@@ -35,7 +35,6 @@ const TABELAS = [
   'clients',
   'periods',
   'events',
-  'projection_snapshots',
   'jobs',
   'certificates',
   'plans',
@@ -56,6 +55,10 @@ const TABELAS = [
   'assessment_adjustments',
   'audit_trails',
   'books',
+  'evaluation_criteria',
+  'audit_executions',
+  'audit_findings',
+  'audit_reversals',
   'fisco_assessments',
   'fisco_assessment_lines',
   'assessment_divergences',
@@ -103,7 +106,6 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   clients: '01-multi-tenancy.sql',
   periods: '01-multi-tenancy.sql',
   events: '01-multi-tenancy.sql',
-  projection_snapshots: '01-multi-tenancy.sql',
   jobs: '01-multi-tenancy.sql',
   certificates: '02-cofre-certificados.sql',
   plans: '03-cobranca.sql',
@@ -143,10 +145,14 @@ const TABELA_PARA_PASSO: Record<string, string> = {
   dfe_sync_state: '19-coleta-dfe.sql',
   dfe_summaries: '19-coleta-dfe.sql',
   dfe_documents: '19-coleta-dfe.sql',
-  dfe_events: '27-cancelamento-de-nfe.sql',
+  dfe_events: '29-cancelamento-de-nfe.sql',
   pricing_tiers: '22-faixas-de-volume.sql',
   readiness_reports: '23-diagnostico-publico.sql',
   plan_features: '25-rotulos-e-lead.sql',
+  evaluation_criteria: '28-auditoria-continua.sql',
+  audit_executions: '28-auditoria-continua.sql',
+  audit_findings: '28-auditoria-continua.sql',
+  audit_reversals: '28-auditoria-continua.sql',
 };
 
 /**
@@ -263,6 +269,7 @@ export async function diagnosticar(source: NodeJS.ProcessEnv = process.env): Pro
     );
     checagens.push(await isolar('cobrança (Asaas)', () => checarCobranca(pool, env)));
     checagens.push(await isolar('certificados para a coleta de DF-e', () => checarCertificadosParaColeta(pool)));
+    checagens.push(await isolar('e-mail do diagnóstico', () => checarEmailDoDiagnostico(pool, env)));
     checagens.push(await isolar('escritório e usuário', () => checarEscritorio(pool)));
   } finally {
     await pool.end().catch(() => undefined);
@@ -908,6 +915,77 @@ export async function checarCnpjAlfanumerico(pool: pg.Pool): Promise<Checagem> {
       `${rows.length} tabela(s) ainda exigem CNPJ só de dígitos: ${tabelas}. ` +
       'Cadastrar empresa aberta de 31/07/2026 em diante devolve 500.',
     acao: 'Rode scripts/sql/migracoes/20-cnpj_alfanumerico.sql.',
+  };
+}
+
+/**
+ * Envio do relatório do diagnóstico público por e-mail.
+ *
+ * Aviso, não falha: sem SMTP o diagnóstico funciona, o lead é gravado e a
+ * resposta diz que o e-mail não saiu. O que o doctor aponta é a promessa da tela
+ * ("receba por e-mail") sem o meio de cumpri-la, e envio que vem falhando.
+ */
+export async function checarEmailDoDiagnostico(pool: pg.Pool, env: Env): Promise<Checagem> {
+  const nome = 'e-mail do diagnóstico';
+  const { rows: colunas } = await pool.query<{ n: string }>(
+    `select count(*)::text as n from information_schema.columns
+      where table_schema = 'public' and table_name = 'readiness_reports'
+        and column_name in ('report_ciphertext', 'report_expires_at', 'email_sent_at', 'email_error', 'forget_token_hash')`,
+  );
+  if (Number(colunas[0]!.n) < 5) {
+    return {
+      nome,
+      estado: 'falha',
+      detalhe: 'schema do envio ausente em readiness_reports',
+      acao:
+        'O diagnóstico público vai falhar ao guardar o relatório. Aplique\n' +
+        '  scripts/sql/migracoes/NN-relatorio-do-diagnostico.sql — é idempotente.',
+    };
+  }
+
+  const faltando = [
+    env.mail === undefined ? 'MAIL_SMTP_URL, MAIL_FROM e PUBLIC_API_URL' : null,
+    env.reportEncryptionKey === undefined ? 'REPORT_ENCRYPTION_KEY' : null,
+  ].filter((x): x is string => x !== null);
+
+  const { rows } = await pool.query<{ falhas: string; enviados: string }>(
+    `select count(*) filter (where email_error is not null and email_sent_at is null)::text as falhas,
+            count(*) filter (where email_sent_at is not null)::text as enviados
+       from readiness_reports where created_at > now() - interval '7 days'`,
+  );
+  const falhas = Number(rows[0]!.falhas);
+
+  // Dev sem envio é o normal, como a cobrança sem gateway: o lead é gravado e a
+  // resposta diz que o e-mail não saiu. A promessa da tela é cobrada de prod.
+  if (faltando.length > 0 && env.environment === 'dev') {
+    return { nome, estado: 'ok', detalhe: `dev sem ${faltando.join(' e ')}: o lead é gravado e o e-mail não sai` };
+  }
+  if (faltando.length > 0) {
+    return {
+      nome,
+      estado: 'aviso',
+      detalhe: `sem ${faltando.join(' e ')}: o lead é gravado e o relatório não sai por e-mail`,
+      acao:
+        'Para enviar (docs/setup/SEGREDOS.md, seção E-mail do diagnóstico):\n' +
+        '  1. MAIL_SMTP_URL (smtps://usuario:senha@smtp.seu-dominio:465), MAIL_FROM e PUBLIC_API_URL;\n' +
+        '  2. REPORT_ENCRYPTION_KEY e IP_HASH_SECRET, cada uma com openssl rand -base64 48;\n' +
+        '  3. SPF e DKIM do domínio do MAIL_FROM, para o e-mail não cair em spam.',
+    };
+  }
+  if (falhas > 0) {
+    return {
+      nome,
+      estado: 'aviso',
+      detalhe: `${falhas} envio(s) com falha nos últimos 7 dias`,
+      acao: 'Veja readiness_reports.email_error: credencial do SMTP, remetente não autorizado ou limite do provedor.',
+    };
+  }
+  return {
+    nome,
+    estado: 'ok',
+    detalhe:
+      `SMTP configurado · ${rows[0]!.enviados} relatório(s) enviado(s) nos últimos 7 dias` +
+      (env.ipHashSecret === undefined ? ' · sem IP_HASH_SECRET, o hash do IP ainda deriva da chave do cofre' : ''),
   };
 }
 

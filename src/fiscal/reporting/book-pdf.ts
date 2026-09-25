@@ -1,6 +1,24 @@
 import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
 import type { TrailResult, TrailsSummary } from './audit-trails.js';
+import {
+  AMBAR,
+  CINZA,
+  MARGEM,
+  TEXTO,
+  VERDE,
+  VERMELHO,
+  cabecalhoDeTabela,
+  caixa,
+  formatarBRL,
+  formatarCnpj,
+  linhaDeDados,
+  linhaDeTabela,
+  rodapes,
+  secao,
+} from './pdf-primitives.js';
+
+export { formatarBRL } from './pdf-primitives.js';
 
 /**
  * Renderiza o Book de fechamento em PDF.
@@ -60,14 +78,6 @@ export interface RenderedBook {
   sha256: string;
 }
 
-/** Verde institucional do design system EJR, só em título e destaque. */
-const VERDE = '#365D5A';
-const CINZA = '#6B6660';
-const TEXTO = '#2D2A26';
-const VERMELHO = '#DC2424';
-const AMBAR = '#BD740F';
-
-const MARGEM = 48;
 /** Linhas da memória de cálculo por Book: acima disso ninguém lê o anexo. */
 export const MAX_LINHAS_TRACE = 400;
 
@@ -102,7 +112,7 @@ export async function renderBook(input: BookInput): Promise<RenderedBook> {
     memoriaDeCalculo(doc, input);
   }
 
-  const paginas = rodapes(doc, input);
+  const paginas = rodapes(doc, `${formatarCnpj(input.cnpj)} · ${input.period} · hash ${input.projectionHash}`);
   doc.end();
 
   const pdf = await finalizado;
@@ -393,124 +403,10 @@ function memoriaDeCalculo(doc: PDFKit.PDFDocument, input: BookInput): void {
   }
 }
 
-/**
- * Rodapé em todas as páginas, com o hash. Feito no fim porque só então se sabe
- * o total de páginas — e porque o hash precisa estar na folha isolada, não só
- * na capa.
- */
-function rodapes(doc: PDFKit.PDFDocument, input: BookInput): number {
-  const intervalo = doc.bufferedPageRange();
-
-  for (let i = 0; i < intervalo.count; i++) {
-    doc.switchToPage(intervalo.start + i);
-
-    // O pdfkit descarta texto escrito abaixo da margem inferior, e o rodapé
-    // fica de propósito na faixa reservada para ele. Zerar a margem da página
-    // é o que libera essa faixa; nada de corpo é escrito depois daqui.
-    doc.page.margins.bottom = 0;
-
-    const y = doc.page.height - MARGEM - 6;
-    doc.fontSize(7).font('Helvetica').fillColor(CINZA);
-
-    doc.text(
-      `${formatarCnpj(input.cnpj)} · ${input.period} · hash ${input.projectionHash}`,
-      MARGEM,
-      y,
-      { width: doc.page.width - MARGEM * 2, align: 'left', lineBreak: false },
-    );
-
-    doc.text(`${i + 1}/${intervalo.count}`, MARGEM, y, {
-      width: doc.page.width - MARGEM * 2,
-      align: 'right',
-      lineBreak: false,
-    });
-  }
-
-  return intervalo.count;
-}
-
-// ------------------------------------------------------------- primitivos
-
-function secao(doc: PDFKit.PDFDocument, titulo: string, noTopo = false): void {
-  if (!noTopo) {
-    doc.moveDown(1);
-  }
-  doc.fillColor(VERDE).fontSize(13).font('Helvetica-Bold').text(titulo);
-  doc.moveDown(0.4);
-}
-
-function caixa(doc: PDFKit.PDFDocument, titulo: string, corpo: string): void {
-  doc.fontSize(9.5).font('Helvetica-Bold').fillColor(TEXTO).text(titulo);
-  doc.fontSize(9).font('Helvetica').fillColor(CINZA).text(corpo, { align: 'justify' });
-}
-
-function linhaDeDados(doc: PDFKit.PDFDocument, pares: [string, string][]): void {
-  for (const [rotulo, valor] of pares) {
-    doc.fontSize(9).font('Helvetica').fillColor(CINZA).text(`${rotulo}: `, { continued: true });
-    doc.font('Helvetica-Bold').fillColor(TEXTO).text(valor);
-  }
-}
-
-function cabecalhoDeTabela(
-  doc: PDFKit.PDFDocument,
-  colunas: string[],
-  larguras: number[],
-): void {
-  const y = doc.y;
-  let x = MARGEM;
-
-  doc.fontSize(8).font('Helvetica-Bold').fillColor(CINZA);
-  colunas.forEach((titulo, i) => {
-    doc.text(titulo, x, y, { width: larguras[i]!, align: i === 0 ? 'left' : 'right' });
-    x += larguras[i]!;
-  });
-
-  doc.x = MARGEM;
-  doc.moveDown(0.2);
-  doc
-    .moveTo(MARGEM, doc.y)
-    .lineTo(MARGEM + larguras.reduce((a, b) => a + b, 0), doc.y)
-    .strokeColor('#E2DFDB')
-    .lineWidth(0.5)
-    .stroke();
-  doc.moveDown(0.3);
-}
-
-function linhaDeTabela(
-  doc: PDFKit.PDFDocument,
-  celulas: string[],
-  larguras: number[],
-  cor = TEXTO,
-  tamanho = 8.5,
-): void {
-  // Quebra de página manual: o rodapé reserva espaço, e escrever por cima dele
-  // deixaria o hash ilegível justamente na página que precisa dele.
-  if (doc.y > doc.page.height - MARGEM - 48) {
-    doc.addPage();
-  }
-
-  const y = doc.y;
-  let x = MARGEM;
-
-  doc.fontSize(tamanho).font('Helvetica').fillColor(cor);
-  celulas.forEach((valor, i) => {
-    doc.text(valor, x, y, { width: larguras[i]!, align: i === 0 ? 'left' : 'right', lineBreak: false });
-    x += larguras[i]!;
-  });
-
-  doc.x = MARGEM;
-  doc.y = y + tamanho + 3.5;
-}
 
 // ---------------------------------------------------------------- rótulos
 
-export function formatarBRL(centavos: number): string {
-  return (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-}
 
-function formatarCnpj(cnpj: string): string {
-  return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
-}
 
 function rotuloDeStatus(status: TrailResult['status']): string {
   const mapa: Record<TrailResult['status'], string> = {

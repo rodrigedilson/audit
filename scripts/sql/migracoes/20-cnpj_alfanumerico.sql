@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 20 de 29: cnpj_alfanumerico
+-- audit — passo 20 de 33: cnpj_alfanumerico
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260924140000_cnpj_alfanumerico.sql
 -- Não edite aqui: altere a migration de origem.

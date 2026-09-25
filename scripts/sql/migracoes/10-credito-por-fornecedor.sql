@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 10 de 29: credito-por-fornecedor
+-- audit — passo 10 de 33: credito-por-fornecedor
 --
 -- Extrato bancário, casamento pagamento × documento e o crédito em risco por
 -- fornecedor. Não há tabela de posição de crédito de propósito: o estado é

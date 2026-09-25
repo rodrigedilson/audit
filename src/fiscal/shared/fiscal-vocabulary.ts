@@ -66,6 +66,14 @@ export const ORCHESTRATOR_ACTIONS = [
   // reporting/ — Onda 7
   'book.generated',
 
+  // audit/ — teste de comprovação e inspeção documentária
+  /** Uma trilha executada sobre uma população, com os achados que produziu. */
+  'audit.execution.recorded',
+  /** O contador aceitou, recusou ou deu por resolvido um achado. */
+  'audit.finding.reviewed',
+  /** Estorno efetivado por humano identificado. Muda número da apuração. */
+  'audit.reversal.applied',
+
   // Transversal: toda intenção barrada por uma das 7 camadas.
   'output.rejected',
 ] as const;

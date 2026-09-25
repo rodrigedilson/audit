@@ -49,3 +49,43 @@ export function startDfeWorker(
     },
   };
 }
+
+/** Dez minutos: a SEFAZ bloqueia por uma hora depois de alcançada a fila, e o agendador só pede o que venceu. */
+const INTERVALO_DO_AGENDADOR = 600_000;
+
+/**
+ * Agendador da coleta com opt-in (ADR-007). A cada tique enfileira a coleta de
+ * todo CNPJ com a opção ligada que pode coletar agora; quem executa é o worker.
+ * Duas instâncias não duplicam job: `enqueue` devolve o pendente.
+ */
+export function startDfeScheduler(
+  service: Pick<DfeSyncService, 'scheduleDue'>,
+  options: { intervalMs?: number; onError?: (erro: unknown) => void } = {},
+): DfeWorker {
+  const intervalo = options.intervalMs ?? INTERVALO_DO_AGENDADOR;
+  let parar = false;
+  let emCurso: Promise<void> = Promise.resolve();
+  let timer: NodeJS.Timeout | undefined;
+
+  const agendar = (): void => {
+    if (parar) return;
+    timer = setTimeout(() => {
+      emCurso = service
+        .scheduleDue()
+        .then(() => undefined)
+        .catch((erro) => options.onError?.(erro))
+        .finally(agendar);
+    }, intervalo);
+    timer.unref();
+  };
+
+  agendar();
+
+  return {
+    async stop() {
+      parar = true;
+      if (timer !== undefined) clearTimeout(timer);
+      await emCurso;
+    },
+  };
+}

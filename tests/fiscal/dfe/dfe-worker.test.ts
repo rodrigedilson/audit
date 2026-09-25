@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { startDfeWorker } from '../../../src/fiscal/dfe/dfe-worker.js';
+import { describe, it, expect, vi } from 'vitest';
+import { startDfeScheduler, startDfeWorker } from '../../../src/fiscal/dfe/dfe-worker.js';
 import type { DfeSyncService } from '../../../src/fiscal/dfe/dfe-sync.service.js';
 
 /** Serviço dublado: uma fila de ids, e `null` quando acaba. */
@@ -54,5 +54,40 @@ describe('startDfeWorker', () => {
 
     expect(erros).toHaveLength(1);
     expect(chamadas()).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('startDfeScheduler', () => {
+  it('pede o agendamento a cada intervalo, e para quando mandado', async () => {
+    vi.useFakeTimers();
+    try {
+      const scheduleDue = vi.fn().mockResolvedValue(0);
+      const agendador = startDfeScheduler({ scheduleDue }, { intervalMs: 1000 });
+
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(scheduleDue).toHaveBeenCalledTimes(3);
+
+      await agendador.stop();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(scheduleDue).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('erro de um tique não derruba o agendador', async () => {
+    vi.useFakeTimers();
+    try {
+      const onError = vi.fn();
+      const scheduleDue = vi.fn().mockRejectedValueOnce(new Error('banco fora')).mockResolvedValue(0);
+      const agendador = startDfeScheduler({ scheduleDue }, { intervalMs: 1000, onError });
+
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(scheduleDue).toHaveBeenCalledTimes(2);
+      await agendador.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

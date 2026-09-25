@@ -4,6 +4,7 @@ import { InvalidTransitionError } from '../../../shared/types/esaa-errors.js';
 import type { FiscalProjection } from '../../../../fiscal/shared/fiscal-projection.types.js';
 import { PeriodTransitionService } from '../../../../fiscal/period/period-transition.service.js';
 import { isValidPeriodId } from '../../../../fiscal/shared/fiscal-vocabulary.js';
+import { CRITERIOS_INTERNOS } from '../../../../fiscal/shared/criterios-internos.js';
 
 /**
  * Camada 4 — ciclo de vida da competência.
@@ -25,7 +26,8 @@ export class StateMachineValidator {
         4,
         'schema_violation',
         `Competência '${periodId}' fora do formato YYYY-MM.`,
-      );
+      CRITERIOS_INTERNOS['contrato-intencao'],
+    );
     }
 
     // `period.opened` cria a competência; as demais exigem que ela exista.
@@ -35,7 +37,8 @@ export class StateMachineValidator {
           4,
           'invalid_transition',
           `Competência ${periodId} já está aberta.`,
-        );
+        CRITERIOS_INTERNOS['ciclo-da-competencia'],
+      );
       }
       return;
     }
@@ -46,14 +49,15 @@ export class StateMachineValidator {
         4,
         'invalid_transition',
         `Competência ${periodId} não foi aberta para este CNPJ.`,
-      );
+      CRITERIOS_INTERNOS['ciclo-da-competencia'],
+    );
     }
 
     try {
       this.transitions.resolve(intention.action, period.state, periodId);
     } catch (cause) {
       if (cause instanceof InvalidTransitionError) {
-        throw new ValidationError(4, 'invalid_transition', cause.message);
+        throw new ValidationError(4, 'invalid_transition', cause.message, CRITERIOS_INTERNOS['ciclo-da-competencia']);
       }
       throw cause;
     }

@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 15 de 29: remove_tabelas_orfas
+-- audit — passo 15 de 33: remove_tabelas_orfas
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260922210000_remove_tabelas_orfas.sql
 -- Não edite aqui: altere a migration de origem.

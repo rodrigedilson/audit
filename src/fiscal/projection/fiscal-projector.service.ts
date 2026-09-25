@@ -74,7 +74,21 @@ export class FiscalProjectorService {
   }
 
   private apply(projection: FiscalProjection, event: ESAAEventData): void {
-    switch (event.action as FiscalAction) {
+    /**
+     * A ação entra numa variável local, e o `switch` é sobre ela, para que o
+     * `default` de fato estreite o tipo para `never`.
+     *
+     * Antes o `switch` era sobre `event.action as FiscalAction` e o `default`
+     * fazia `event.action as never`. Como o `switch` era sobre uma expressão
+     * de conversão, `event.action` continuava `string` no `default`, e
+     * `string as never` é asserção legal — `never` é subtipo de `string`. O
+     * efeito é que acrescentar ação ao vocabulário sem tratá-la aqui
+     * **compilava**, e a falha só aparecia no replay, em produção. A rede de
+     * segurança existia no comentário e não no compilador.
+     */
+    const action: FiscalAction = event.action as FiscalAction;
+
+    switch (action) {
       // ------------------------------------------------ portfolio (Onda 2)
       case 'client.enrolled':
         this.applyClientEnrolled(projection, event);
@@ -155,14 +169,44 @@ export class FiscalProjectorService {
       case 'deadline.approaching':
       case 'book.generated':
       // Propostas de agente: registradas como trilha, sem efetivar estado.
+      // ------------------------------------------------------------- audit/
+      /**
+       * Execução e revisão não mexem em número: o detalhe vive nas tabelas de
+       * leitura, reconstruíveis por replay, e trazê-lo para a projeção faria
+       * um censo de vinte mil notas entrar no objeto que é re-hasheado a cada
+       * intenção.
+       */
+      case 'audit.execution.recorded':
+      case 'audit.finding.reviewed':
+        break;
+
+      /**
+       * O estorno reabre a apuração da competência, como qualquer ajuste: a
+       * contra-apuração que estava na tela foi calculada contra números que já
+       * não existem.
+       *
+       * O VALOR não entra na projeção, e isso é consistência e não omissão:
+       * nenhum valor monetário entra. A apuração inteira vive em tabela, e a
+       * projeção guarda estado e identidade. Trazer centavos para cá mudaria a
+       * forma do objeto hasheado e invalidaria todo `projection_hash` já
+       * gravado, em troca de um número que a tabela já dá.
+       */
+      case 'audit.reversal.applied':
+        this.setPeriodState(projection, event, 'assessed');
+        break;
+
       case 'item.classify':
       case 'issue.report':
       case 'assessment.review':
       case 'credit.flag':
         break;
 
-      default:
-        throw new ProjectionError(event.action as never, event.event_seq);
+      default: {
+        // Sem asserção: se faltar um `case`, `action` não é `never` aqui e o
+        // build quebra, que é o momento certo para descobrir.
+        const naoTratada: never = action;
+        throw new ProjectionError(naoTratada, event.event_seq);
+      }
     }
   }
 

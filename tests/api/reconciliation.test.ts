@@ -137,10 +137,11 @@ describe.skipIf(!DATABASE_URL)('API — contra-apuração e calendário', () => 
     cnpj = randomCnpj();
     fornecedor = randomCnpj();
 
-    // `simples_integrado` isola este arquivo do da apuração dual e do Book, que
+    // `simples_hibrido` isola este arquivo do da apuração dual e do Book, que
     // usam `lucro_real` e `lucro_presumido`: `tax_rules` é dado normativo global
-    // e os arquivos rodam em paralelo.
-    await createClient(pool, tenantId, cnpj, { regime: 'simples_integrado' });
+    // e os arquivos rodam em paralelo. E é o menor plano com contra-apuração e
+    // calendário — o `simples_integrado` não os inclui, e a rota responde 403.
+    await createClient(pool, tenantId, cnpj, { regime: 'simples_hibrido' });
     await call('POST', `/v1/clients/${cnpj}/periods`, { period: PERIODO });
   });
 

@@ -73,7 +73,7 @@ Resposta `200`:
       "message": "Documento sem itens (grupo det)." }
   ],
   "limits": { "max_files": 50, "max_total_bytes": 10485760 },
-  "persisted": false,
+  "persisted": { "documents": false, "summary_until": "2026-09-26T12:00:00.000Z" },
   "lead_registered": false
 }
 ```
@@ -83,9 +83,10 @@ Resposta `200`:
 ### Antes do envio
 
 Cabeçalho curto: o que é, quanto custa (nada), o que acontece com os arquivos.
-Diga de forma literal e visível: **"Seus XMLs não são armazenados. O relatório é
-calculado na hora e descartado."** Isso é verdade — a API devolve
-`persisted: false` — e é o que vence a objeção que todo contador tem.
+Diga de forma literal e visível: **"Seus XMLs não são armazenados."** Isso é
+verdade — a API devolve `persisted.documents: false` — e é o que vence a objeção
+que todo contador tem. Se `persisted.summary_until` vier preenchido, diga também
+que o resumo fica guardado cifrado até aquela hora, só para o envio por e-mail.
 
 Área de upload grande, com drag-and-drop de pasta. Mostre o limite antes de a
 pessoa errar: "até 50 arquivos, 10 MB no total". Ao soltar os arquivos, liste

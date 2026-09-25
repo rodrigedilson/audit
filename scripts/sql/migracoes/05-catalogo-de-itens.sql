@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 5 de 29: catalogo-de-itens
+-- audit — passo 5 de 33: catalogo-de-itens
 --
 -- Catálogo de itens com classificação versionada por vigência, tabelas de
 -- códigos oficiais e as funções effective_classification() e

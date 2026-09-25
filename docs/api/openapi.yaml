@@ -12,6 +12,11 @@ info:
     - `cnpj` sempre com 14 dígitos, sem máscara.
     - `period` no formato `YYYY-MM` (competência).
     - Toda resposta de escrita devolve o `event_seq` gravado e o `projection_hash`.
+    - Recurso fora do plano do CNPJ responde `403` com `code: feature_not_in_plan`,
+      `feature`, `regime` e `plans_with_feature` (os regimes cujo plano o inclui).
+      O plano é por regime, e o que cada um inclui vem de `GET /plans`. O mapa
+      rota → feature está em `src/api/plugins/plan-gate.ts`. `/deadlines`, que é
+      da carteira, abre se algum CNPJ dela tiver `calendario`.
 servers:
   - url: http://localhost:3000/v1
     description: desenvolvimento
@@ -425,6 +430,53 @@ paths:
                         type: integer
                         description: NF-e baixada de competência ainda não aberta; entra na coleta seguinte à abertura.
                       rejected_by_pipeline: { type: integer }
+                  auto_sync:
+                    $ref: "#/components/schemas/DfeAutoSync"
+                  cancellations_needing_rectification:
+                    type: array
+                    description: Nota cancelada na SEFAZ depois da confirmação da competência; a correção é a retificação.
+                    items:
+                      type: object
+                      properties:
+                        access_key: { type: string }
+                        tp_evento: { type: string }
+                        protocol: { type: string, nullable: true }
+                        cancelled_at: { type: string, format: date-time, nullable: true }
+
+  /clients/{cnpj}/dfe/auto:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+    put:
+      tags: [ingestion]
+      summary: Liga ou desliga a coleta agendada do CNPJ (ADR-007)
+      description: >
+        Só o owner. Com a opção ligada, o agendador enfileira a coleta sozinho,
+        uma vez por hora no máximo, e o A1 é usado em nome do orquestrador
+        (`closer`), com quem ligou no payload do `certificate.used`. Ligar exige
+        certificado utilizável (`409 dfe_certificate_not_usable` ou
+        `dfe_no_certificate`). Onde não há gateway da SEFAZ (dev), `503`. A
+        mudança vai para o log como `client.updated`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Estado da opção depois da mudança.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cnpj: { type: string }
+                  auto_sync:
+                    $ref: "#/components/schemas/DfeAutoSync"
 
   /clients/{cnpj}/sped:
     parameters:
@@ -1772,9 +1824,11 @@ paths:
         XMLs nem abrem" —, não falha parcial.
 
 
-        **Nada do documento é persistido.** Só contadores agregados, sem CNPJ,
-        chave de acesso ou razão social. A resposta carrega `persisted: false`
-        como compromisso explícito.
+        **Nenhum XML é guardado.** A métrica são contadores agregados, sem CNPJ,
+        chave de acesso ou razão social. Com `REPORT_ENCRYPTION_KEY`, o resumo que
+        a tela mostra fica cifrado até `persisted.summary_until` (24h), só para o
+        envio por e-mail, e é apagado assim que sai. Com e-mail e `consent=true`
+        no próprio upload, o relatório sai na hora (`email_sent`).
 
 
         Limites: 50 arquivos e 10 MB por lote; 3 diagnósticos por minuto e 20 por
@@ -1837,6 +1891,25 @@ paths:
                   code: { type: string, enum: [diagnostic_disabled] }
                   message: { type: string }
 
+  /reform-readiness/forget:
+    get:
+      tags: [public]
+      operationId: forgetReadinessLead
+      summary: Apaga o e-mail do diagnóstico (link do relatório enviado)
+      description: >
+        O link que vai no corpo do e-mail. Apaga e-mail, consentimento, origem e
+        o que restar do resumo. Responde uma página HTML curta, porque quem abre
+        é uma pessoa no navegador. O token só vale uma vez.
+      security: []
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema: { type: string, minLength: 20, maxLength: 100 }
+      responses:
+        "200": { description: E-mail apagado., content: { text/html: { schema: { type: string } } } }
+        "404": { description: Link inválido ou já usado., content: { text/html: { schema: { type: string } } } }
+
   /reform-readiness/lead:
     post:
       tags: [public]
@@ -1873,14 +1946,32 @@ paths:
                 source: { type: string, maxLength: 120 }
       responses:
         "200":
-          description: Lead registrado
+          description: >
+            Lead registrado, e o relatório enviado em PDF quando o envio está
+            configurado. `email_sent: false` não é erro da requisição: o lead
+            ficou, e `email_not_sent_reason` diz por que o e-mail não saiu.
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   lead_registered: { type: boolean, enum: [true] }
+                  email_sent: { type: boolean }
+                  email_not_sent_reason:
+                    type: string
+                    enum: [mail_not_configured, report_not_available, send_failed]
         "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: >
+            O resumo do diagnóstico não está mais guardado (24h). O lead não é
+            gravado: a tela deve oferecer gerar o diagnóstico de novo.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, enum: [report_expired] }
+                  message: { type: string }
         "400":
           description: E-mail malformado ou consentimento ausente. Frase pronta para a tela.
           content:
@@ -1961,6 +2052,12 @@ components:
           schema: { $ref: "#/components/schemas/Rejection" }
 
   schemas:
+    DfeAutoSync:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        enabled_by: { type: string, format: uuid, nullable: true }
+        enabled_at: { type: string, format: date-time, nullable: true }
     PriceQuote:
       type: object
       description: >
@@ -2095,9 +2192,22 @@ components:
             max_files: { type: integer }
             max_total_bytes: { type: integer }
         persisted:
-          type: boolean
-          description: Sempre `false`. É o compromisso do produto dito na própria resposta.
+          type: object
+          description: O compromisso do produto dito na própria resposta.
+          properties:
+            documents: { type: boolean, enum: [false], description: Os XMLs nunca são guardados. }
+            summary_until:
+              type: string
+              format: date-time
+              nullable: true
+              description: Até quando o resumo fica cifrado para o envio por e-mail. `null` quando nada foi guardado.
         lead_registered: { type: boolean }
+        email_sent:
+          type: boolean
+          description: Só presente quando o upload trouxe e-mail com consentimento.
+        email_not_sent_reason:
+          type: string
+          enum: [mail_not_configured, report_not_available, send_failed]
 
     PeriodId:
       type: string

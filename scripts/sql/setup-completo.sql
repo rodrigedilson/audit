@@ -31,7 +31,7 @@
 -- =============================================================================
 
 -- =============================================================================
--- PARTE 1 — migrations (28 arquivos, na ordem de aplicação)
+-- PARTE 1 — migrations (32 arquivos, na ordem de aplicação)
 -- =============================================================================
 
 
@@ -3001,6 +3001,442 @@ comment on column public.pricing_tiers.effective_from is
 
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260925130000_remove_projection_snapshots.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Remove `projection_snapshots`, órfã desde a primeira migration.
+--
+-- Ela nasceu em `20260918120000_multi_tenancy.sql` com um propósito declarado no
+-- próprio comentário: *"Elimina o replay integral a cada intenção. O snapshot
+-- pode divergir do log, então guarda last_event_seq e o hash: POST /verify
+-- sempre reprojeta do zero."*
+--
+-- Esse cache nunca foi escrito. Conferido por grep em `src/`, `tests/` e
+-- `scripts/`: a única menção é a lista de tabelas esperadas do
+-- `environment-doctor`, que apenas confere que ela existe. Nenhuma linha lê,
+-- nenhuma escreve, e `FiscalOrchestratorService` reprojeta o log inteiro a cada
+-- intenção — que é o custo que a tabela existia para evitar.
+--
+-- **Por que sair, e não ficar esperando uso:** uma tabela vazia com nome de
+-- cache afirma que existe um cache. Quem lê o schema para entender o sistema
+-- conclui que a projeção é materializada, e ela não é. Esse é o mesmo defeito
+-- que `20260922210000_remove_tabelas_orfas.sql` removeu em sete tabelas — a
+-- diferença é que estas eram de outro repositório, e esta é nossa.
+--
+-- **O que muda se o cache for mesmo necessário um dia:** nada se perde. A
+-- migration que o introduzir vai desenhá-lo com o shape que o código exigir, e
+-- hoje já se sabe que o shape atual não serviria para o caso mais provável.
+-- Congelar a projeção canônica de uma competência confirmada — para que um
+-- `projection_hash` gravado continue verificável depois que a forma da projeção
+-- evoluir — precisa de chave por **competência** e da `schema_version` em que o
+-- hash foi gerado. A chave aqui é `(tenant_id, cnpj)`, um snapshot por CNPJ, e
+-- não há coluna de versão. Ou seja: manter a tabela não adiantaria o trabalho,
+-- só manteria a promessa falsa.
+--
+-- A guarda antes do drop segue o precedente da remoção anterior: entre o
+-- levantamento e o deploy alguém pode ter passado a escrever nela, e nesse caso
+-- a pergunta deixa de ser "apagar" e passa a ser "quem escreveu".
+-- =============================================================================
+
+do $$
+declare
+  linhas bigint;
+begin
+  if to_regclass('public.projection_snapshots') is null then
+    raise notice 'projection_snapshots já não existe; nada a fazer.';
+    return;
+  end if;
+
+  execute 'select count(*) from public.projection_snapshots' into linhas;
+
+  if linhas > 0 then
+    raise exception
+      'projection_snapshots tem % linha(s) e não será removida. '
+      'Ela estava órfã no levantamento: descubra quem passou a escrever nela '
+      'antes de decidir.', linhas;
+  end if;
+
+  drop table public.projection_snapshots;
+  raise notice 'projection_snapshots removida (estava vazia e sem leitor).';
+end $$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260925140000_auditoria_continua.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Auditoria contínua: teste de comprovação e inspeção documentária
+--
+-- O método vem da perícia contábil: um lançamento é examinado por cinco
+-- verificações vinculadas a um **critério de avaliação** rastreável. Passando
+-- nas cinco há evidência de confiabilidade; falhando uma há distorção
+-- relevante, e o perito invalida e estorna o lançamento, gerando saldo devedor
+-- para uma parte e credor para a outra. Aqui as partes são o contribuinte e o
+-- Fisco, e estornar crédito de entrada é exatamente isso.
+--
+-- O que o schema precisa tornar impossível, e por quê:
+--
+-- - **Afirmar sem critério conferido.** `evaluation_criteria` nasce com as
+--   linhas necessárias e todas com `verified = false`: as citações foram
+--   derivadas de leitura, não conferidas em texto oficial. A constraint
+--   `criterios_conferidos_tem_fonte` impede marcar como conferido sem apontar o
+--   texto. Enquanto não for conferido, o achado existe, aparece e **não afirma**
+--   — `assertable = false`.
+--
+--   Nascer não conferida é estritamente melhor do que nascer vazia: o escritório
+--   vê quais normas precisa confirmar, em vez de encontrar uma tabela vazia sem
+--   saber o que falta.
+--
+-- - **Dizer "conferido" onde nada foi comparado.** `audit_executions.status`
+--   tem `inconclusive`, e ele **não** é `completed` com zero achados. Sem essa
+--   distinção a tela diria "limpo" para uma competência em que o critério não
+--   estava carregado.
+--
+-- - **Estornar sem humano.** `audit_reversals.applied_by` é `not null`. O
+--   sistema propõe; quem invalida um lançamento fiscal é uma pessoa
+--   identificada. É a mesma regra que o produto já vende: nenhuma IA altera um
+--   número fiscal sozinha.
+--
+-- Não há tabela de posição de achado por competência: o achado é derivado da
+-- execução, e a execução é substituída quando a trilha roda de novo. O
+-- identificador determinístico (`trilha:competência:sujeito`) é o que torna a
+-- reexecução um `on conflict do update` em vez de um acúmulo — e é o que
+-- preserva o `accepted` de um achado já revisado por humano.
+-- =============================================================================
+
+-- ------------------------------------------------- pré-condições do passo
+/**
+ * Confere o que este passo pressupõe, e falha dizendo o que falta.
+ *
+ * Sem isto, um banco que não passou pelos passos anteriores quebra no primeiro
+ * `foreign key (tenant_id, cnpj) references public.clients` com
+ * `column "tenant_id" does not exist` — mensagem que aponta para a coluna
+ * errada e não diz qual passo ficou para trás. A guarda custa dez linhas e
+ * troca meia hora de investigação por uma frase.
+ */
+do $$
+begin
+  if to_regclass('public.clients') is null then
+    raise exception
+      'Pré-condição ausente: a tabela public.clients não existe. '
+      'Aplique o passo 01 (multi-tenancy) antes deste.';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'clients'
+       and column_name in ('tenant_id', 'cnpj')
+     group by table_name having count(*) = 2
+  ) then
+    raise exception
+      'Pré-condição ausente: public.clients não tem as colunas tenant_id e cnpj. '
+      'O banco não está no estado que o passo 01 deixa.';
+  end if;
+
+  if not exists (
+    select 1
+      from pg_constraint con
+      join pg_class rel on rel.oid = con.conrelid
+      join pg_namespace n on n.oid = rel.relnamespace
+     where n.nspname = 'public' and rel.relname = 'clients'
+       and con.contype in ('p', 'u')
+       and con.conkey @> array[
+             (select attnum from pg_attribute
+               where attrelid = rel.oid and attname = 'tenant_id'),
+             (select attnum from pg_attribute
+               where attrelid = rel.oid and attname = 'cnpj')
+           ]::smallint[]
+  ) then
+    raise exception
+      'Pré-condição ausente: public.clients não tem chave única em '
+      '(tenant_id, cnpj). As tabelas deste passo a referenciam.';
+  end if;
+
+  if to_regprocedure('public.is_member_of(uuid)') is null then
+    raise exception
+      'Pré-condição ausente: a função public.is_member_of(uuid) não existe. '
+      'Ela vem do passo 01 e é o que as policies de RLS usam.';
+  end if;
+end $$;
+
+/**
+ * Recusa seguir se alguma tabela deste passo já existe com outra forma.
+ *
+ * `create table if not exists` pula em SILÊNCIO quando o nome já está ocupado,
+ * e o passo segue como se tivesse criado. O primeiro `create index` sobre a
+ * tabela alheia então falha com `column "tenant_id" does not exist` — mensagem
+ * que culpa a coluna quando o problema é a tabela, e que custou três rodadas de
+ * investigação contra a produção.
+ *
+ * Reproduzido: com uma `public.audit_executions` de outra origem no banco, o
+ * passo devolvia exatamente esse erro. A checagem abaixo devolve, em vez disso,
+ * o nome da tabela e a coluna que falta.
+ *
+ * Tabela nossa de uma aplicação anterior passa por aqui sem ruído, e o passo
+ * continua idempotente.
+ */
+do $$
+declare
+  esperado record;
+  faltando text;
+begin
+  for esperado in
+    select * from (values
+      ('evaluation_criteria', array['criterion_id', 'kind', 'citation', 'verified']),
+      ('audit_executions',    array['tenant_id', 'cnpj', 'period', 'procedure_id', 'status']),
+      ('audit_findings',      array['tenant_id', 'cnpj', 'finding_id', 'severity', 'status']),
+      ('audit_reversals',     array['tenant_id', 'cnpj', 'finding_id', 'applied_by'])
+    ) as t(tabela, colunas)
+  loop
+    if to_regclass('public.' || esperado.tabela) is null then
+      continue;
+    end if;
+
+    select string_agg(c, ', ')
+      into faltando
+      from unnest(esperado.colunas) as c
+     where not exists (
+       select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = esperado.tabela
+          and column_name = c
+     );
+
+    if faltando is not null then
+      raise exception
+        'A tabela public.% já existe e não é a deste passo: faltam as colunas %. '
+        'Ela veio de outra origem. Confira o conteúdo, e se estiver vazia e não '
+        'for sua, remova-a antes de aplicar: drop table public.%;',
+        esperado.tabela, faltando, esperado.tabela;
+    end if;
+  end loop;
+end $$;
+
+-- --------------------------------------------------------- critérios
+create table if not exists public.evaluation_criteria (
+  criterion_id  text primary key,
+  kind          text not null check (kind in (
+                  'constituicao', 'lei_complementar', 'lei_ordinaria',
+                  'medida_provisoria', 'decreto', 'instrucao_normativa',
+                  'portaria', 'resolucao', 'convenio_ou_ajuste', 'nota_tecnica',
+                  'sumula', 'precedente', 'norma_contabil',
+                  'invariante_do_produto', 'decisao_de_arquitetura',
+                  'contrato_de_api'
+                )),
+  citation      text not null check (length(btrim(citation)) > 0),
+  parameter     text not null check (length(btrim(parameter)) > 0),
+  valid_from    date,
+  valid_to      date,
+  source_ref    text,
+  verified      boolean not null default false,
+  verified_by   uuid,
+  verified_at   timestamptz,
+
+  -- Os dentes da regra: conferido exige apontar o texto conferido.
+  constraint criterios_conferidos_tem_fonte check (
+    not verified or (source_ref is not null and length(btrim(source_ref)) > 0)
+  )
+);
+
+/**
+ * Os critérios que as trilhas iniciais citam. Todos NÃO conferidos.
+ *
+ * A citação saiu de leitura de doutrina e do briefing, e não da abertura do
+ * texto oficial — que, no caso da LC 214, ainda é alterada por norma posterior.
+ * Marcar `verified = true` aqui faria o produto afirmar "este crédito é
+ * indevido conforme o art. X" sem que ninguém tenha aberto o art. X.
+ */
+insert into public.evaluation_criteria
+  (criterion_id, kind, citation, parameter, valid_from, verified)
+values
+  ('lc-214-credito-documento-habil', 'lei_complementar',
+   'LC 214/2025, art. 156-A',
+   'O crédito de IBS/CBS exige documento hábil e idôneo que lastreie a operação.',
+   '2026-01-01', false),
+  ('lc-214-competencia-do-credito', 'lei_complementar',
+   'LC 214/2025',
+   'O crédito é apropriado na competência da emissão do documento.',
+   '2026-01-01', false),
+  ('lc-214-uso-e-consumo', 'lei_complementar',
+   'LC 214/2025',
+   'Bem de uso e consumo pessoal não gera direito a crédito.',
+   '2026-01-01', false),
+  ('it-rt-2025-002', 'nota_tecnica',
+   'IT RT 2025.002',
+   'A combinação de CST, cClassTrib, NCM e CFOP segue as tabelas oficiais.',
+   '2026-01-01', false)
+on conflict (criterion_id) do nothing;
+
+alter table public.evaluation_criteria disable row level security;
+
+-- --------------------------------------------------------- execuções
+create table if not exists public.audit_executions (
+  id                   uuid primary key default gen_random_uuid(),
+  tenant_id            uuid not null,
+  cnpj                 char(14) not null,
+  period               char(7) not null check (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  procedure_id         text not null,
+
+  status               text not null check (status in ('completed', 'inconclusive')),
+  inconclusive_reason  text,
+
+  population_size      integer not null default 0 check (population_size >= 0),
+  examined_count       integer not null default 0 check (examined_count >= 0),
+  findings_count       integer not null default 0 check (findings_count >= 0),
+  total_impact_cents   bigint not null default 0,
+
+  sampling_technique   text not null default 'censo'
+                         check (sampling_technique in ('censo', 'aleatoria_simples', 'por_relevancia')),
+  sampling_size        integer,
+  sampling_seed        text,
+
+  criterion_id         text not null references public.evaluation_criteria (criterion_id),
+  criterion_verified   boolean not null default false,
+
+  event_seq            bigint not null,
+  executed_by          uuid,
+  executed_at          timestamptz not null default now(),
+
+  -- Inconclusivo sem motivo seria a mesma opacidade que a coluna existe para
+  -- evitar: "não conferi" precisa dizer por quê.
+  constraint execucao_inconclusiva_tem_motivo check (
+    status <> 'inconclusive'
+    or (inconclusive_reason is not null and length(btrim(inconclusive_reason)) > 0)
+  ),
+
+  foreign key (tenant_id, cnpj) references public.clients (tenant_id, cnpj) on delete cascade
+);
+
+create index if not exists audit_executions_scope_idx
+  on public.audit_executions (tenant_id, cnpj, period, procedure_id, executed_at desc);
+
+/** A fila do que ficou por conferir, que é o que o doctor e a tela precisam ver. */
+create index if not exists audit_executions_inconclusivas_idx
+  on public.audit_executions (tenant_id, cnpj, period)
+  where status = 'inconclusive';
+
+alter table public.audit_executions enable row level security;
+drop policy if exists audit_executions_select_own on public.audit_executions;
+create policy audit_executions_select_own on public.audit_executions
+  for select using (public.is_member_of(tenant_id));
+
+-- ------------------------------------------------------------ achados
+create table if not exists public.audit_findings (
+  tenant_id       uuid not null,
+  cnpj            char(14) not null,
+  -- `trilha:competência:sujeito`. Determinístico, para reexecutar substituir.
+  finding_id      text not null,
+
+  execution_id    uuid not null references public.audit_executions (id) on delete cascade,
+  procedure_id    text not null,
+  period          char(7) not null check (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  subject         text not null,
+  subject_kind    text not null check (subject_kind in (
+                    'documentos_de_entrada', 'documentos_de_saida',
+                    'itens_do_catalogo', 'creditos_de_entrada'
+                  )),
+
+  -- As cinco com o resultado de cada, e as comparações que as sustentam.
+  verifications   jsonb not null default '[]'::jsonb,
+  failed          text[] not null default '{}',
+
+  impact_cents    bigint not null default 0,
+  impact_side     text not null check (impact_side in (
+                    'credito_a_estornar', 'debito_a_constituir', 'sem_efeito_no_saldo'
+                  )),
+
+  likelihood      smallint check (likelihood between 1 and 5),
+  impact          smallint check (impact between 1 and 5),
+  risk_score      smallint check (risk_score between 1 and 25),
+  severity        text not null check (severity in ('low', 'medium', 'high', 'critical')),
+  -- O denominador da frequência: "5 de 5" e "5000 de 5000" dão a mesma
+  -- probabilidade e não significam a mesma coisa para quem lê o Book.
+  observed_failures integer not null default 0,
+  observed_examined integer not null default 0,
+
+  criterion_id    text not null references public.evaluation_criteria (criterion_id),
+  assertable      boolean not null default false,
+
+  status          text not null default 'open'
+                    check (status in ('open', 'accepted', 'rejected', 'resolved')),
+  reviewed_by     uuid,
+  reviewed_at     timestamptz,
+  review_note     text,
+
+  event_seq       bigint not null,
+
+  -- Aceitar ou recusar é ato de humano; `resolved` vem de reexecução e não tem
+  -- revisor. Discordar sem motivo escrito não é revisão.
+  constraint achado_revisado_tem_revisor check (
+    status not in ('accepted', 'rejected')
+    or (reviewed_by is not null and reviewed_at is not null)
+  ),
+  constraint achado_recusado_tem_motivo check (
+    status <> 'rejected' or (review_note is not null and length(btrim(review_note)) > 0)
+  ),
+
+  primary key (tenant_id, cnpj, finding_id),
+  foreign key (tenant_id, cnpj) references public.clients (tenant_id, cnpj) on delete cascade
+);
+
+/** Fila de trabalho: o que está aberto, mais grave e mais caro primeiro. */
+create index if not exists audit_findings_fila_idx
+  on public.audit_findings (tenant_id, cnpj, period, status, severity, impact_cents desc);
+
+/** "O que este documento tem contra ele" — o drill-down da tela. */
+create index if not exists audit_findings_subject_idx
+  on public.audit_findings (tenant_id, cnpj, subject);
+
+alter table public.audit_findings enable row level security;
+drop policy if exists audit_findings_select_own on public.audit_findings;
+create policy audit_findings_select_own on public.audit_findings
+  for select using (public.is_member_of(tenant_id));
+
+-- ------------------------------------------------------------ estornos
+create table if not exists public.audit_reversals (
+  id                       uuid primary key default gen_random_uuid(),
+  tenant_id                uuid not null,
+  cnpj                     char(14) not null,
+  finding_id               text not null,
+  period                   char(7) not null check (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+
+  credit_reversed_cents    bigint not null default 0 check (credit_reversed_cents >= 0),
+  debit_constituted_cents  bigint not null default 0 check (debit_constituted_cents >= 0),
+  net_effect_cents         bigint not null,
+
+  -- A verificação que fundamenta o estorno, e a norma contra a qual se julgou.
+  verification             text not null,
+  criterion_id             text not null references public.evaluation_criteria (criterion_id),
+  citation                 text not null check (length(btrim(citation)) > 0),
+
+  event_seq                bigint not null,
+  -- O requisito humano, no schema: o sistema propõe, a pessoa invalida.
+  applied_by               uuid not null,
+  applied_at               timestamptz not null default now(),
+
+  foreign key (tenant_id, cnpj) references public.clients (tenant_id, cnpj) on delete cascade
+);
+
+/** Um estorno por achado: aplicar duas vezes dobraria o efeito na apuração. */
+create unique index if not exists audit_reversals_por_achado_idx
+  on public.audit_reversals (tenant_id, cnpj, finding_id);
+
+alter table public.audit_reversals enable row level security;
+drop policy if exists audit_reversals_select_own on public.audit_reversals;
+create policy audit_reversals_select_own on public.audit_reversals
+  for select using (public.is_member_of(tenant_id));
+
+do $$
+begin
+  grant select on public.evaluation_criteria to anon, authenticated;
+exception
+  when undefined_object then null;
+end $$;
+
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- supabase/migrations/20260926100000_cancelamento_de_nfe.sql
 -- ─────────────────────────────────────────────────────────────────────────
 
@@ -3131,6 +3567,86 @@ update public.plan_features
                   || 'recebidos. O leiaute 021 entra quando o leiaute oficial for publicado em formato legível.',
        updated_at = now()
  where key = 'sped_completo';
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260926140000_coleta_agendada.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Coleta de DF-e agendada, por opt-in do cliente (ADR-007)
+--
+-- A coleta só rodava quando alguém pedia. Com a opção ligada pelo owner, o
+-- agendador enfileira a coleta sozinho: o A1 passa a ser usado sem alguém
+-- acionando, e por isso é opt-in por CNPJ, com quem ligou e quando.
+-- =============================================================================
+
+alter table public.clients
+  add column if not exists dfe_auto_sync    boolean not null default false,
+  add column if not exists dfe_auto_sync_by uuid,
+  add column if not exists dfe_auto_sync_at timestamptz;
+
+comment on column public.clients.dfe_auto_sync is
+  'Coleta de DF-e agendada ligada pelo owner (ADR-007). O A1 é usado sem alguém acionando.';
+
+-- Job do agendador não tem quem pediu: `requested_by` fica nulo, e o `trigger`
+-- diz por quê. O uso do certificado sai em nome do orquestrador (`closer`),
+-- com quem ligou a opção no payload do `certificate.used`.
+alter table public.jobs
+  add column if not exists trigger text not null default 'manual'
+    check (trigger in ('manual', 'schedule'));
+
+create index if not exists clients_dfe_auto_sync_idx
+  on public.clients (tenant_id, cnpj)
+  where dfe_auto_sync;
+
+-- O rótulo prometia "automática" antes de haver agendamento. Agora há, e só
+-- quando o cliente liga.
+update public.plan_features
+   set description = 'Busca as notas na SEFAZ com o certificado A1: sozinha, a cada hora, quando '
+                  || 'o owner liga a coleta agendada, ou quando alguém pede.',
+       updated_at = now()
+ where key = 'coleta_dfe';
+
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- supabase/migrations/20260926160000_relatorio_do_diagnostico.sql
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- =============================================================================
+-- Relatório do diagnóstico público por e-mail
+--
+-- O diagnóstico prometia "receba o relatório por e-mail" e só gravava o lead.
+-- Para enviar depois que o visitante vê o resultado, o relatório fica guardado
+-- CIFRADO por no máximo 24h (chave própria, `REPORT_ENCRYPTION_KEY`) e é apagado
+-- assim que sai. Os XMLs continuam sem ser guardados; o que fica por 24h é o
+-- resumo que a tela já mostrou.
+-- =============================================================================
+
+alter table public.readiness_reports
+  add column if not exists report_ciphertext  text,
+  add column if not exists report_expires_at  timestamptz,
+  add column if not exists email_sent_at      timestamptz,
+  add column if not exists email_error        text,
+  -- sha256 do token do link "apagar meu e-mail" (LGPD). O token não é guardado.
+  add column if not exists forget_token_hash  char(64);
+
+alter table public.readiness_reports
+  drop constraint if exists readiness_relatorio_com_prazo;
+alter table public.readiness_reports
+  add constraint readiness_relatorio_com_prazo
+    check (report_ciphertext is null or report_expires_at is not null);
+
+create index if not exists readiness_reports_expira_idx
+  on public.readiness_reports (report_expires_at)
+  where report_ciphertext is not null;
+
+create unique index if not exists readiness_reports_forget_idx
+  on public.readiness_reports (forget_token_hash)
+  where forget_token_hash is not null;
+
+comment on table public.readiness_reports is
+  'Métrica agregada do diagnóstico público. O resumo do relatório fica cifrado por até 24h, só para o envio por e-mail.';
 
 
 -- =============================================================================
