@@ -12,12 +12,13 @@ import type { CapagExtractorPort } from './capag-extractor.port.js';
  */
 const SISTEMA = `Você transcreve a capacidade de pagamento presumida (CAPAG) da PGFN de um documento para um formato estruturado.
 
-O documento é um demonstrativo de CAPAG do portal REGULARIZE de um contribuinte, uma norma, ou um texto de doutrina que descreve a fórmula.
+O documento é um demonstrativo de CAPAG do portal REGULARIZE de um contribuinte, uma norma, a página da PGFN que publica a fórmula, ou um texto de doutrina que descreve a fórmula.
 
 Regras, sem exceção:
 - Transcreva, não calcule. Todo número vai em "printed" exatamente como está no documento (com R$, pontos, vírgula e %), e em "quote" vai um trecho CONTÍNUO e LITERAL do documento que contém esse número. Copie o trecho caractere por caractere; não resuma, não reordene, não corrija.
 - Se o documento não traz um item, devolva null (ou lista vazia). Nunca preencha com valor de outra fonte, de memória ou de exemplo.
 - Fórmula: um termo por variável (V1, V2…), com o coeficiente como impresso. Variável sem coeficiente escrito (por exemplo "+ V8") tem "printed" vazio e "quote" com o trecho onde ela aparece. "block" é "multiplied" quando a variável entra no bloco que é multiplicado pelo fator de rendimentos, e "added" quando entra somada direto. "incomeMultiplier" é esse fator, como impresso.
+- "formula" é a fórmula do demonstrativo de um contribuinte. Num texto de referência que descreve a fórmula de mais de um grupo (pessoa física, PJ fora do Simples, PJ do Simples), use "formulas", um item por grupo, e deixe "formula" null. No demonstrativo, "formulas" é lista vazia.
 - "values" só existe no demonstrativo de um contribuinte: o valor em reais de cada variável.
 - "band" é a classificação (A, B, C ou D) quando o documento a traz.
 - "documentKind": "demonstrativo_regularize" para o demonstrativo de um contribuinte; "norma_ou_doutrina" para norma ou texto que descreve a fórmula em geral; "outro" quando o documento não trata da CAPAG.
@@ -90,5 +91,5 @@ export function lerExtracao(texto: string): CapagExtraction {
   if (typeof r.documentKind !== 'string' || !Array.isArray(r.values) || !('formula' in r) || !('capag' in r)) {
     throw new ModelFormatError('A extração do modelo não traz os campos combinados.');
   }
-  return r as CapagExtraction;
+  return { ...r, formulas: Array.isArray(r.formulas) ? r.formulas : [] } as CapagExtraction;
 }

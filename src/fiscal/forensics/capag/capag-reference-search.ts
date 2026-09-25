@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { MODELO_PADRAO, ModelRefusalError } from '../../assistant/claude-language-model.js';
-import { conferirExtracao, normalizar } from './capag-extraction.js';
+import { conferirExtracao, normalizar, type CapagExtraction } from './capag-extraction.js';
 import type { CapagExtractorPort } from './capag-extractor.port.js';
 import { extractDocumentText } from './document-text.js';
 import type { CapagTerm } from '../calc/capag.js';
@@ -18,8 +18,11 @@ import type { CapagTerm } from '../calc/capag.js';
  *    conferência trecho a trecho. Fonte cujo coeficiente não está, literal, na
  *    página baixada é descartada.
  *
- * O resultado é referência, e nunca conferido: a fórmula oficial só aparece no
- * REGULARIZE, com login do contribuinte (Portaria PGFN 6.757/2022, art. 28).
+ * A fórmula conferida é a da página oficial da PGFN ("Consultar a Capacidade de
+ * Pagamento", no gov.br), com todo coeficiente achado literal na página. A de
+ * doutrina é registrada como referência, e nunca conferida: pode estar
+ * desatualizada (a versão que circula tem 0,05·V6 para a PJ fora do Simples,
+ * onde a PGFN publica 0,50·V6).
  */
 
 export interface ReferenceSource {
@@ -27,8 +30,14 @@ export interface ReferenceSource {
   quotes: string[];
 }
 
+/** `oficial_pgfn`: a página da PGFN no gov.br. `doutrina`: qualquer outra. */
+export type ReferenceSourceKind = 'oficial_pgfn' | 'doutrina';
+
 export interface ReferenceCandidate {
   group: string;
+  sourceKind: ReferenceSourceKind;
+  /** Só a fonte oficial, com todo trecho conferido na página baixada. */
+  verified: boolean;
   incomeMultiplier: number;
   terms: readonly CapagTerm[];
   legalBasis: string | null;
@@ -43,7 +52,7 @@ export interface SearchReport {
 }
 
 const PEDIDO_DE_BUSCA =
-  'Procure páginas públicas (PGFN, normas, artigos de escritórios de advocacia ou contabilidade) que descrevam a ' +
+  'Procure páginas públicas (a página da PGFN no gov.br primeiro, depois normas, artigos de escritórios de advocacia ou contabilidade) que descrevam a ' +
   'fórmula da capacidade de pagamento presumida (CAPAG-P) da PGFN, com as variáveis (V1, V2…) e os coeficientes. ' +
   'Faça as buscas e, ao final, liste as URLs mais relevantes, uma por linha. Não reproduza a fórmula de memória.';
 
@@ -86,6 +95,37 @@ export const fetchBytesPadrao: FetchBytes = async (url) => {
   return { bytes: new Uint8Array(await resposta.arrayBuffer()), contentType: resposta.headers.get('content-type') };
 };
 
+/** A página em que a PGFN publica as três fórmulas. O script a lê sempre, além do que a busca achar. */
+export const URL_OFICIAL_PGFN =
+  'https://www.gov.br/pgfn/pt-br/servicos/orientacoes-contribuintes/consultar-a-capacidade-de-pagamento';
+
+/**
+ * A página da PGFN no gov.br é a fonte oficial da fórmula: é a própria
+ * Procuradoria publicando a metodologia da Portaria 6.757/2022. Qualquer outro
+ * endereço é doutrina, por mais fiel que seja.
+ */
+export function tipoDaFonte(url: string): ReferenceSourceKind {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname === 'www.gov.br' && u.pathname.startsWith('/pgfn/')
+      ? 'oficial_pgfn'
+      : 'doutrina';
+  } catch {
+    return 'doutrina';
+  }
+}
+
+type BlocoDeFormula = { group: string; formula: NonNullable<CapagExtraction['formula']> };
+
+/** Os blocos de fórmula de uma página: um por grupo, ou o único que ela traz. */
+function blocosDaExtracao(extracao: CapagExtraction): BlocoDeFormula[] {
+  if (extracao.formulas.length > 0) {
+    return extracao.formulas.map((f) => ({ group: f.group, formula: { incomeMultiplier: f.incomeMultiplier, terms: f.terms } }));
+  }
+  if (extracao.formula === null) return [];
+  return [{ group: extracao.group ?? 'pj_nao_simples', formula: extracao.formula }];
+}
+
 /** Etapas 2 e 3, sobre URLs já levantadas. Separadas para dar para testar sem rede nem modelo. */
 export async function extrairReferencias(
   urls: readonly string[],
@@ -106,47 +146,69 @@ export async function extrairReferencias(
     }
 
     const extracao = await extractor.extract({ text: texto, hint: 'referencia' });
-    if (extracao.formula === null || extracao.formula.terms.length === 0) {
+    const blocos = blocosDaExtracao(extracao).filter((b) => b.formula.terms.length > 0);
+    if (blocos.length === 0) {
       discarded.push({ url, reason: 'a página não traz a fórmula' });
       continue;
     }
-    // Referência não tem valores nem CAPAG do contribuinte: só a fórmula conta.
-    const conferencia = conferirExtracao(
-      { ...extracao, documentKind: 'norma_ou_doutrina', values: [], capag: null, totalDebt: null, band: null, referenceDate: null },
-      texto,
-    );
-    const problemasDaFormula = conferencia.problems.filter((p) => !p.startsWith('O documento não identifica o grupo'));
-    if (problemasDaFormula.length > 0 || conferencia.formula === null) {
-      discarded.push({ url, reason: `trecho não confere: ${problemasDaFormula[0] ?? 'fórmula incompleta'}` });
-      continue;
-    }
+    const sourceKind = tipoDaFonte(url);
 
-    const formula = conferencia.formula;
-    const grupo = extracao.group ?? 'pj_nao_simples';
-    const assinatura = JSON.stringify([
-      grupo,
-      formula.incomeMultiplier,
-      formula.terms.map((t) => [t.variable, t.coefficient, t.block]),
-    ]);
-    const quotes = [
-      ...(extracao.formula.incomeMultiplier ? [normalizar(extracao.formula.incomeMultiplier.quote)] : []),
-      ...extracao.formula.terms.map((t) => normalizar(t.coefficient.quote)),
-    ];
-    const existente = porFormula.get(assinatura);
-    if (existente) {
-      existente.sources.push({ url, quotes });
-    } else {
-      porFormula.set(assinatura, {
-        group: grupo,
-        incomeMultiplier: formula.incomeMultiplier,
-        terms: formula.terms,
-        legalBasis: extracao.legalBasis,
-        sources: [{ url, quotes }],
-      });
+    for (const bloco of blocos) {
+      // Referência não tem valores nem CAPAG do contribuinte: só a fórmula conta.
+      const conferencia = conferirExtracao(
+        {
+          ...extracao,
+          documentKind: 'norma_ou_doutrina',
+          group: bloco.group as CapagExtraction['group'],
+          formula: bloco.formula,
+          formulas: [],
+          values: [],
+          capag: null,
+          totalDebt: null,
+          band: null,
+          referenceDate: null,
+        },
+        texto,
+      );
+      const problemasDaFormula = conferencia.problems.filter((p) => !p.startsWith('O documento não identifica o grupo'));
+      if (problemasDaFormula.length > 0 || conferencia.formula === null) {
+        const onde = blocos.length > 1 ? ` (grupo ${bloco.group})` : '';
+        discarded.push({ url, reason: `trecho não confere${onde}: ${problemasDaFormula[0] ?? 'fórmula incompleta'}` });
+        continue;
+      }
+
+      const formula = conferencia.formula;
+      const assinatura = JSON.stringify([
+        sourceKind,
+        bloco.group,
+        formula.incomeMultiplier,
+        formula.terms.map((t) => [t.variable, t.coefficient, t.block]),
+      ]);
+      const quotes = [
+        ...(bloco.formula.incomeMultiplier ? [normalizar(bloco.formula.incomeMultiplier.quote)] : []),
+        ...bloco.formula.terms.map((t) => normalizar(t.coefficient.quote)),
+      ];
+      const existente = porFormula.get(assinatura);
+      if (existente) {
+        existente.sources.push({ url, quotes });
+      } else {
+        porFormula.set(assinatura, {
+          group: bloco.group,
+          incomeMultiplier: formula.incomeMultiplier,
+          terms: formula.terms,
+          legalBasis: extracao.legalBasis,
+          sourceKind,
+          // Todo trecho já conferiu, ou o bloco teria sido descartado acima.
+          verified: sourceKind === 'oficial_pgfn',
+          sources: [{ url, quotes }],
+        });
+      }
     }
   }
 
-  // A fórmula que mais fontes trazem vem primeiro.
-  const candidates = [...porFormula.values()].sort((a, b) => b.sources.length - a.sources.length);
+  // A oficial vem primeiro; entre as de doutrina, a que mais fontes trazem.
+  const candidates = [...porFormula.values()].sort(
+    (a, b) => Number(b.verified) - Number(a.verified) || b.sources.length - a.sources.length,
+  );
   return { urlsFound: [...urls], discarded, candidates };
 }

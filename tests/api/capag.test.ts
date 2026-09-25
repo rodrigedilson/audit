@@ -177,7 +177,7 @@ describe.skipIf(!DATABASE_URL)('API — CAPAG presumida', () => {
     expect(r.statusCode).toBe(429);
   });
 
-  it('GET traz o último demonstrativo e a fórmula de referência, sempre não conferida', async () => {
+  it('GET traz o último demonstrativo e a fórmula de referência de doutrina, não conferida', async () => {
     await pool.query(
       `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, legal_basis, model)
        values ('pj_nao_simples', 5, '[]'::jsonb, '[{"url":"https://exemplo.com.br/capag","quotes":["5 x (0,10 V1"]}]'::jsonb, 'doutrina', 'teste')`,
@@ -190,17 +190,51 @@ describe.skipIf(!DATABASE_URL)('API — CAPAG presumida', () => {
     expect(corpo.statement.verified).toBe(true);
     expect(corpo.reference_formulas.find((f: { group: string }) => f.group === 'pj_nao_simples')).toMatchObject({
       income_multiplier: 5,
+      source_kind: 'doutrina',
       verified: false,
     });
   });
 
-  it('a referência não pode ser marcada conferida, nem por SQL', async () => {
+  it('só a referência oficial da PGFN pode ser conferida, nem por SQL a de doutrina', async () => {
+    const fonte = '[{"url":"https://www.gov.br/pgfn/x","quotes":["5(0.3V1"]}]';
     await expect(
       pool.query(
         `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model, verified)
-         values ('mei', 1, '[]'::jsonb, '[]'::jsonb, 'teste', true)`,
+         values ('mei', 1, '[]'::jsonb, $1::jsonb, 'teste', true)`,
+        [fonte],
       ),
-    ).rejects.toThrow(/capag_referencia_nunca_conferida/);
+    ).rejects.toThrow(/capag_referencia_conferida_so_oficial/);
+    await expect(
+      pool.query(
+        `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model, source_kind, verified)
+         values ('mei', 1, '[]'::jsonb, '[]'::jsonb, 'teste', 'oficial_pgfn', true)`,
+      ),
+    ).rejects.toThrow(/capag_referencia_conferida_so_oficial/);
+    await pool.query(
+      `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model, source_kind, verified)
+       values ('mei', 1, '[]'::jsonb, $1::jsonb, 'teste', 'oficial_pgfn', true)`,
+      [fonte],
+    );
+  });
+
+  it('GET prefere a fórmula oficial conferida à de doutrina mais recente', async () => {
+    await pool.query(
+      `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model, source_kind, verified, extracted_at)
+       values ('pessoa_fisica', 5, '[]'::jsonb, '[{"url":"https://www.gov.br/pgfn/x","quotes":["5(0.3V1"]}]'::jsonb,
+               'teste', 'oficial_pgfn', true, now() - interval '1 day')`,
+    );
+    await pool.query(
+      `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model)
+       values ('pessoa_fisica', 4, '[]'::jsonb, '[{"url":"https://exemplo.com.br/capag","quotes":["4 x"]}]'::jsonb, 'teste')`,
+    );
+
+    const corpo = (await ler()).json();
+
+    expect(corpo.reference_formulas.find((f: { group: string }) => f.group === 'pessoa_fisica')).toMatchObject({
+      income_multiplier: 5,
+      source_kind: 'oficial_pgfn',
+      verified: true,
+    });
   });
 
   it('o linha do demonstrativo não guarda o arquivo, só o extraído', async () => {

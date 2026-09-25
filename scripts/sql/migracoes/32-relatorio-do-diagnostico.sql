@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 32 de 40: relatorio-do-diagnostico
+-- audit — passo 32 de 41: relatorio-do-diagnostico
 --
 -- Relatório do diagnóstico público por e-mail: o resumo fica cifrado por até
 -- 24h, só para o envio, e o link de remoção do e-mail (LGPD).

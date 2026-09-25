@@ -25,6 +25,10 @@ describe('leitura de números em pt-BR', () => {
     expect(lerNumero('5')).toBe(5);
     expect(lerNumero('5x')).toBe(5);
     expect(lerNumero('cinco')).toBeNull();
+    // A página da PGFN imprime os coeficientes com ponto: "5(0.3V1 + 0.1V2 + V3)".
+    expect(lerNumero('0.3')).toBe(0.3);
+    expect(lerNumero('0.80')).toBe(0.8);
+    expect(lerNumero('1.234,5')).toBeNull();
   });
 
   it('normaliza espaço, quebra de linha e NBSP', () => {

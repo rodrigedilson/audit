@@ -23,7 +23,8 @@ const CNPJ_PARAM = {
 
 /**
  * CAPAG presumida do CNPJ: o demonstrativo do REGULARIZE, extraído e conferido,
- * e a fórmula de referência (doutrina, nunca conferida) ao lado.
+ * e a fórmula de referência ao lado: a oficial da PGFN, conferida, quando
+ * carregada, e senão a de doutrina, não conferida.
  *
  * Feature `capag`, nos planos que já incluem o assistente fiscal (Simples
  * híbrido para cima): cada demonstrativo é uma chamada ao modelo. O controle é
@@ -95,9 +96,8 @@ export async function registerCapagRoutes(app: FastifyInstance, deps: ApiDeps): 
         /** O último demonstrativo, com a conferência. `null` quando nenhum foi enviado. */
         statement,
         /**
-         * Fórmula lida em fonte pública, por grupo. É referência, e nunca
-         * conferida: a fórmula oficial só aparece no REGULARIZE, com login do
-         * contribuinte.
+         * Fórmula lida em fonte pública, por grupo. Conferida só a da página
+         * oficial da PGFN; a de doutrina vem como referência, não conferida.
          */
         reference_formulas: references,
       });

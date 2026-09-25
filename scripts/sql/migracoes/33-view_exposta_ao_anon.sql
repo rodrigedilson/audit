@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 33 de 40: view_exposta_ao_anon
+-- audit — passo 33 de 41: view_exposta_ao_anon
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260927100000_view_exposta_ao_anon.sql
 -- Não edite aqui: altere a migration de origem.

@@ -1,10 +1,11 @@
 /**
  * Busca em fonte pública a fórmula de referência da CAPAG presumida e a grava
- * em `capag_reference_formulas`, sempre como NÃO conferida.
+ * em `capag_reference_formulas`.
  *
- * A fórmula oficial só aparece no REGULARIZE, com login do contribuinte
- * (Portaria PGFN 6.757/2022, art. 28). O que se acha em público é doutrina:
- * serve de referência ao lado do demonstrativo, e nunca para afirmar a CAPAG.
+ * A página da PGFN no gov.br ("Consultar a Capacidade de Pagamento") é lida
+ * sempre, e a fórmula dela fica conferida quando todo coeficiente está, literal,
+ * na página. O que vier de outro endereço é doutrina: fica como referência, e
+ * nunca conferida.
  *
  * O Claude só busca. O script baixa cada página, extrai a fórmula pelo mesmo
  * extrator do demonstrativo, e descarta a fonte cujo coeficiente não está,
@@ -20,7 +21,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import pg from 'pg';
 import { ignorarErroDeClienteOcioso } from '../src/infrastructure/persistence/pool-errors.js';
 import { ClaudeCapagExtractor } from '../src/fiscal/forensics/capag/claude-capag-extractor.js';
-import { buscarUrls, extrairReferencias, fetchBytesPadrao } from '../src/fiscal/forensics/capag/capag-reference-search.js';
+import { URL_OFICIAL_PGFN, buscarUrls, extrairReferencias, fetchBytesPadrao } from '../src/fiscal/forensics/capag/capag-reference-search.js';
 
 function argumento(nome: string): string | null {
   const i = process.argv.indexOf(nome);
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
   const extractor = new ClaudeCapagExtractor({ client });
 
   const informadas = argumento('--urls')?.split(',').map((u) => u.trim()).filter(Boolean);
-  const urls = informadas ?? (await buscarUrls(client));
+  const urls = informadas ?? [...new Set([URL_OFICIAL_PGFN, ...(await buscarUrls(client))])];
   console.log(`${urls.length} página(s) para ler:`);
   for (const u of urls) console.log(`  ${u}`);
 
@@ -46,12 +47,13 @@ async function main(): Promise<void> {
   }
   for (const c of relatorio.candidates) {
     const termos = c.terms.map((t) => `${t.coefficient}·${t.variable}${t.block === 'added' ? ' (somada)' : ''}`).join(' + ');
-    console.log(`\nGrupo ${c.group}: ${c.incomeMultiplier} × (${termos})`);
+    const tipo = c.verified ? 'oficial (PGFN), conferida' : 'doutrina, não conferida';
+    console.log(`\nGrupo ${c.group}, ${tipo}: ${c.incomeMultiplier} × (${termos})`);
     console.log(`  ${c.sources.length} fonte(s): ${c.sources.map((s) => s.url).join(', ')}`);
   }
 
   if (!executar) {
-    console.log('\nSimulação. Use --executar para gravar (sempre como não conferida).');
+    console.log('\nSimulação. Use --executar para gravar.');
     return;
   }
 
@@ -62,12 +64,23 @@ async function main(): Promise<void> {
   try {
     for (const c of relatorio.candidates) {
       await pool.query(
-        `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, legal_basis, model)
-         values ($1, $2, $3::jsonb, $4::jsonb, $5, $6)`,
-        [c.group, c.incomeMultiplier, JSON.stringify(c.terms), JSON.stringify(c.sources), c.legalBasis, extractor.name],
+        `insert into capag_reference_formulas
+           (capag_group, income_multiplier, terms, sources, legal_basis, model, source_kind, verified)
+         values ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8)`,
+        [
+          c.group,
+          c.incomeMultiplier,
+          JSON.stringify(c.terms),
+          JSON.stringify(c.sources),
+          c.legalBasis,
+          extractor.name,
+          c.sourceKind,
+          c.verified,
+        ],
       );
     }
-    console.log(`\nGravadas ${relatorio.candidates.length} fórmula(s) de referência, não conferidas.`);
+    const conferidas = relatorio.candidates.filter((c) => c.verified).length;
+    console.log(`\nGravadas ${relatorio.candidates.length} fórmula(s) de referência, ${conferidas} conferida(s).`);
   } finally {
     await pool.end();
   }

@@ -482,7 +482,13 @@ paths:
                         sources: { type: array, items: { type: object } }
                         legal_basis: { type: string, nullable: true }
                         extracted_at: { type: string, format: date-time }
-                        verified: { type: boolean, enum: [false] }
+                        source_kind:
+                          type: string
+                          enum: [oficial_pgfn, doutrina]
+                          description: oficial_pgfn é a página da PGFN no gov.br; doutrina é qualquer outra fonte.
+                        verified:
+                          type: boolean
+                          description: Só a oficial, com todo coeficiente achado literal na página. Doutrina nunca.
         "404": { $ref: "#/components/responses/NotFound" }
 
   /clients/{cnpj}/capag/statements:

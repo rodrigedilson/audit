@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 23 de 40: diagnostico-publico
+-- audit — passo 23 de 41: diagnostico-publico
 --
 -- Métrica agregada do diagnóstico público de prontidão. Uma linha por
 -- diagnóstico, sem CNPJ, chave de acesso ou razão social: o relatório é

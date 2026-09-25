@@ -48,8 +48,10 @@ export interface CapagReferenceView {
   sources: unknown;
   legal_basis: string | null;
   extracted_at: string;
-  /** Sempre `false`: doutrina, sem texto oficial público para conferir. */
-  verified: false;
+  /** `oficial_pgfn`: lida da página da PGFN no gov.br. `doutrina`: qualquer outra fonte. */
+  source_kind: 'oficial_pgfn' | 'doutrina';
+  /** Só a oficial, com todo coeficiente achado literal na página. Doutrina nunca. */
+  verified: boolean;
 }
 
 interface LinhaDoDemonstrativo {
@@ -179,7 +181,10 @@ export class CapagService {
     return rows[0] === undefined ? null : paraView(rows[0]);
   }
 
-  /** A fórmula de referência mais recente de cada grupo. */
+  /**
+   * A fórmula de referência de cada grupo: a oficial conferida, quando há, e
+   * senão a de doutrina mais recente.
+   */
   async references(): Promise<CapagReferenceView[]> {
     const { rows } = await this.pool.query<{
       capag_group: string;
@@ -188,9 +193,12 @@ export class CapagService {
       sources: unknown;
       legal_basis: string | null;
       extracted_at: Date;
+      source_kind: 'oficial_pgfn' | 'doutrina';
+      verified: boolean;
     }>(
-      `select distinct on (capag_group) capag_group, income_multiplier::text, terms, sources, legal_basis, extracted_at
-         from capag_reference_formulas order by capag_group, extracted_at desc`,
+      `select distinct on (capag_group) capag_group, income_multiplier::text, terms, sources, legal_basis, extracted_at,
+              source_kind, verified
+         from capag_reference_formulas order by capag_group, verified desc, extracted_at desc`,
     );
     return rows.map((r) => ({
       group: r.capag_group,
@@ -199,7 +207,8 @@ export class CapagService {
       sources: r.sources,
       legal_basis: r.legal_basis,
       extracted_at: r.extracted_at.toISOString(),
-      verified: false,
+      source_kind: r.source_kind,
+      verified: r.verified,
     }));
   }
 }
