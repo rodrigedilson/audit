@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 38 de 42: capag
+-- audit — passo 38 de 43: capag
 --
 -- CAPAG presumida: a fórmula de referência (doutrina, nunca conferida) e os
 -- demonstrativos do REGULARIZE por CNPJ, extraídos trecho a trecho.

@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 35 de 42: anon-nos-catalogos
+-- audit — passo 35 de 43: anon-nos-catalogos
 --
 -- Fecha a chave anon os quatro catalogos globais. Dado sem tenant_id nao e
 -- o mesmo que dado que precisa ser publico: nenhuma tela publica os

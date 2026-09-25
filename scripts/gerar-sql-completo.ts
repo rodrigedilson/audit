@@ -29,6 +29,7 @@ const TITULOS: Record<string, string> = {
   '20260927210000_capag_no_plano.sql': 'capag-no-plano',
   '20260927220000_capag_fonte_oficial.sql': 'capag-fonte-oficial',
   '20260927230000_capag_pj_inativa.sql': 'capag-pj-inativa',
+  '20260927240000_acervo_legado_em_schema.sql': 'acervo-legado-em-schema',
   '20260927120000_indices_financeiros.sql': 'indices-financeiros',
   '20260918120000_multi_tenancy.sql': 'multi-tenancy',
   '20260918130000_certificate_vault.sql': 'cofre-certificados',
@@ -62,6 +63,9 @@ const TITULOS: Record<string, string> = {
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260927240000_acervo_legado_em_schema.sql':
+    'Acervo legado: copia as 21 tabelas da fase anterior para o schema `legado`,\n' +
+    '-- sem alterar os originais em public. Conferir com arquivar-legado.ts conferir-schema.',
   '20260927230000_capag_pj_inativa.sql':
     'CAPAG presumida: grupo da pessoa jurídica inativa (nula, baixada, suspensa\n' +
     '-- ou inapta), a quinta fórmula publicada pela PGFN.',
