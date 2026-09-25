@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 22 de 41: faixas-de-volume
+-- audit — passo 22 de 42: faixas-de-volume
 --
 -- Degressão por volume: faixas marginais de desconto por quantidade de CNPJs
 -- faturáveis, e a coluna do teto de assinatura. O desconto marginal é

@@ -217,6 +217,23 @@ describe.skipIf(!DATABASE_URL)('API — CAPAG presumida', () => {
     );
   });
 
+  it('PJ inativa é grupo aceito na referência e no demonstrativo; grupo inventado não', async () => {
+    await pool.query(
+      `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model)
+       values ('pj_inativa', 5, '[]'::jsonb, '[]'::jsonb, 'teste')`,
+    );
+    await expect(
+      pool.query(
+        `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model)
+         values ('pj_qualquer', 5, '[]'::jsonb, '[]'::jsonb, 'teste')`,
+      ),
+    ).rejects.toThrow(/capag_reference_formulas_capag_group_check/);
+    const { rows } = await pool.query(
+      `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'capag_statements_capag_group_check'`,
+    );
+    expect(rows[0].def).toContain('pj_inativa');
+  });
+
   it('GET prefere a fórmula oficial conferida à de doutrina mais recente', async () => {
     await pool.query(
       `insert into capag_reference_formulas (capag_group, income_multiplier, terms, sources, model, source_kind, verified, extracted_at)

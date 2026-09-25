@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 25 de 41: rotulos-e-lead
+-- audit — passo 25 de 42: rotulos-e-lead
 --
 -- Rótulo em PT-BR de cada feature do plano, para a tela de preço não
 -- inventar nomes, e a função que anexa o lead a um diagnóstico já feito,
