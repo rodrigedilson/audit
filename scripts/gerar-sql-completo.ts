@@ -26,6 +26,7 @@ const SAIDA_PASSOS = join(process.cwd(), 'scripts/sql/migracoes');
 const TITULOS: Record<string, string> = {
   '20260927140000_anon_nos_catalogos.sql': 'anon-nos-catalogos',
   '20260927200000_capag.sql': 'capag',
+  '20260927210000_capag_no_plano.sql': 'capag-no-plano',
   '20260927120000_indices_financeiros.sql': 'indices-financeiros',
   '20260918120000_multi_tenancy.sql': 'multi-tenancy',
   '20260918130000_certificate_vault.sql': 'cofre-certificados',
@@ -59,6 +60,9 @@ const TITULOS: Record<string, string> = {
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260927210000_capag_no_plano.sql':
+    'CAPAG presumida nos planos Simples híbrido, Lucro Presumido e Lucro Real,\n' +
+    '-- os que já incluem o assistente fiscal.',
   '20260927200000_capag.sql':
     'CAPAG presumida: a fórmula de referência (doutrina, nunca conferida) e os\n' +
     '-- demonstrativos do REGULARIZE por CNPJ, extraídos trecho a trecho.',

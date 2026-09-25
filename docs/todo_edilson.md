@@ -69,13 +69,13 @@ foram aplicadas, e a da perícia está em PR aberto.*
       referência: `npx tsx scripts/buscar-formula-capag.ts` (simulação) e
       `--executar` — ela fica sempre não conferida.
 
-- [ ] **CAPAG: um demonstrativo real para o aceite.** Baixar do REGULARIZE o
-      demonstrativo de CAPAG de um cliente (PDF original, não digitalizado) e
-      enviar pela tela. O esperado é `reproduces: true` e `verified: true`. Se não
-      reproduzir, o `problems` diz qual número ou trecho não bateu.
-
-- [ ] **CAPAG: em qual plano entra.** As rotas nasceram sem feature de plano,
-      como as séries de índice. É decisão comercial.
+- [ ] **Pendente: CAPAG com um demonstrativo real do REGULARIZE.** Adiado de
+      propósito. Quando houver um cliente com o demonstrativo em mãos, baixá-lo
+      do REGULARIZE (PDF original, não digitalizado) e enviar pela tela. O
+      esperado é `reproduces: true` e `verified: true`. Se não reproduzir, o
+      `problems` diz qual número ou trecho não bateu, e é por ele que se ajusta o
+      extrator: até esse aceite, a extração só foi exercitada com documento de
+      exemplo.
 
 - [ ] **Ligar o envio do relatório do diagnóstico por e-mail (Doppler `prd`).**
       O código está no ar desde o PR #65, e o SQL do passo 31 já está aplicado.
@@ -317,6 +317,9 @@ chutar. Mas quem tira do "não conferi" é você.
 
 ## Resolvido desde a primeira versão desta lista
 
+- ~~CAPAG: em qual plano entra~~ — Simples híbrido, Lucro Presumido e Lucro
+  Real, os planos que já incluem o assistente fiscal: cada demonstrativo é uma
+  chamada ao modelo. Reversível em `plans.features` (passo 39).
 - ~~Telas públicas com `fetch` cru~~ — passam pelo `auditApi`
   (`sped-genius-hub`, `fix/telas-publicas-pelo-cliente`). Não era só
   inconsistência: montavam a URL sem o `/v1`, e em produção a calculadora e o

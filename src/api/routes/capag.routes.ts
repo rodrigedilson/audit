@@ -25,8 +25,9 @@ const CNPJ_PARAM = {
  * CAPAG presumida do CNPJ: o demonstrativo do REGULARIZE, extraído e conferido,
  * e a fórmula de referência (doutrina, nunca conferida) ao lado.
  *
- * Sem feature de plano, como as séries de índice: qual plano inclui a CAPAG é
- * decisão comercial ainda em aberto.
+ * Feature `capag`, nos planos que já incluem o assistente fiscal (Simples
+ * híbrido para cima): cada demonstrativo é uma chamada ao modelo. O controle é
+ * do `plan-gate`, como nas outras rotas fechadas por plano.
  */
 export async function registerCapagRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
   const limite = createBurstLimiter(LIMITE);

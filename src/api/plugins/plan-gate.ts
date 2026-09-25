@@ -39,6 +39,9 @@ export const FEATURE_POR_ROTA: Readonly<Record<string, string>> = {
 
   '/clients/:cnpj/efd-icms-ipi': 'sped_completo',
   '/clients/:cnpj/icms-ipi-reconciliation/:period': 'sped_completo',
+
+  '/clients/:cnpj/capag': 'capag',
+  '/clients/:cnpj/capag/statements': 'capag',
 };
 
 /** Rotas do escritório inteiro: abertas se algum CNPJ da carteira tiver a feature. */

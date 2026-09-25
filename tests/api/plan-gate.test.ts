@@ -19,6 +19,7 @@ const FECHADAS_PARA_O_MEI: readonly [string, string][] = [
   ['credito_em_risco', 'credits/at-risk'],
   ['dossie_saldo_credor', 'credit-dossier/2026-01'],
   ['sped_completo', 'icms-ipi-reconciliation/2026-01'],
+  ['capag', 'capag'],
 ];
 
 describe.skipIf(!DATABASE_URL)('API — o que o plano do CNPJ inclui', () => {

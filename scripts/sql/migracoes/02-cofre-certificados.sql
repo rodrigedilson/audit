@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 2 de 39: cofre-certificados
+-- audit — passo 2 de 40: cofre-certificados
 --
 -- Cofre dos certificados A1. O PFX entra cifrado pela aplicação; o banco
 -- nunca vê a chave nem a senha.
