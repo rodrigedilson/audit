@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 37 de 42: request_id_na_trilha
+-- audit — passo 37 de 43: request_id_na_trilha
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260927180000_request_id_na_trilha.sql
 -- Não edite aqui: altere a migration de origem.

@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 41 de 42: capag-pj-inativa
+-- audit — passo 41 de 43: capag-pj-inativa
 --
 -- CAPAG presumida: grupo da pessoa jurídica inativa (nula, baixada, suspensa
 -- ou inapta), a quinta fórmula publicada pela PGFN.

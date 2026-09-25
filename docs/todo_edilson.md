@@ -15,15 +15,42 @@ valor.*
 
 ## 0. Agora — acervo legado em produção
 
-- [ ] **Decidir o destino do acervo legado.**
+- [ ] **Migrar o acervo legado sem perder nada** (decidido em 25/09/2026).
       Vinte e dois objetos em produção sobraram da fase anterior, e **dezoito
-      têm dado** de clientes reais — notas, itens, tributos, XML. Nenhuma
-      migration os cria, nenhum código os lê, e estão fora do isolamento por
-      `(tenant_id, cnpj)` e de qualquer trilha. A view que respondia à chave
-      anon já foi fechada (ver "Resolvido"); o acervo continua lá.
+      têm dado** de clientes reais — notas, itens, tributos, XML. Estão fora do
+      isolamento por `(tenant_id, cnpj)` e de qualquer trilha. A decisão: os
+      originais (XML em `xml_documents.raw_xml` e o SPED em
+      `sped_parsed_records.raw_line`) entram pelo pipeline atual, que recalcula
+      tudo com evento no log; o que o sistema antigo calculou fica arquivado,
+      intacto. **Nenhuma tabela legada é apagada neste trabalho.**
 
-      Migrar, arquivar ou apagar. Apagar dado fiscal de cliente é decisão sua.
-      Inventário com contagem de linhas em
+      **Fase 0, a cópia de segurança, antes de qualquer outra coisa:**
+
+      1. Liberar desta máquina o acesso ao Postgres de produção (portas 5432 e
+         6543 do pooler do Supabase fecharam em 25/09; a 443 abre).
+      2. Pôr a `SUPABASE_SERVICE_ROLE_KEY` no Doppler `prd`: sem ela os
+         arquivos dos buckets (`sped-files`, `xml-uploads`, `reports`) não
+         baixam, e o conteúdo deles não está no Postgres.
+      3. Gerar o arquivo cifrado, com uma senha que só você tem (16+
+         caracteres; sem ela o arquivo não se abre, e ela não é gravada em
+         lugar nenhum):
+
+         ```bash
+         read -rs LEGADO_SENHA && export LEGADO_SENHA
+         doppler run --project audit --config prd -- npx tsx scripts/arquivar-legado.ts gerar --saida ~/acervo-legado
+         ```
+
+         O comando relê o arquivo do disco e refaz cada hash antes de dizer
+         que terminou. Guardar o arquivo em dois lugares e a senha num terceiro.
+      4. Aplicar o passo 42 (`acervo-legado-em-schema`), que copia as 21
+         tabelas para o schema `legado` sem tocar nos originais, e conferir:
+         `… scripts/arquivar-legado.ts conferir-schema` — as 21 têm de sair
+         "idêntica".
+
+      Fases seguintes, só depois da 0: reingestão dos XML
+      (`scripts/migrar-do-front.ts`, que já existe), reconstrução do SPED
+      conferida contra o `file_hash` do upload original, e o relatório que
+      compara o antigo com o novo nota a nota. Inventário em
       [`seguranca/CLASSIFICACAO-DE-DADOS.md`](seguranca/CLASSIFICACAO-DE-DADOS.md).
 
 ---

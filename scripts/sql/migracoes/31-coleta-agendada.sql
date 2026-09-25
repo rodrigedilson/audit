@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 31 de 42: coleta-agendada
+-- audit — passo 31 de 43: coleta-agendada
 --
 -- Coleta de DF-e agendada por opt-in do owner (ADR-007): quem ligou e quando
 -- ficam no cadastro, e o job do agendador é marcado como tal.
