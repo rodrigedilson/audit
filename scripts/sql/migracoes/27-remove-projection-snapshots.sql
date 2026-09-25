@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 27 de 39: remove-projection-snapshots
+-- audit — passo 27 de 40: remove-projection-snapshots
 --
 -- Remove a tabela de snapshot da projeção, órfã desde a primeira migration:
 -- nada nunca escreveu nela, e um cache vazio afirma um cache que não existe.
