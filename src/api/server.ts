@@ -36,6 +36,7 @@ import { ClaudeLanguageModel } from '../fiscal/assistant/claude-language-model.j
 import { SefazSoapClient, type SefazDfeGateway } from '../fiscal/dfe/sefaz-gateway.js';
 import { DfeSyncService } from '../fiscal/dfe/dfe-sync.service.js';
 import { startDfeScheduler, startDfeWorker } from '../fiscal/dfe/dfe-worker.js';
+import { startIndicesScheduler } from '../fiscal/rules/index-loader.js';
 import { FiscalOrchestratorService } from '../esaa/orchestrator/fiscal-orchestrator.service.js';
 import { ContractLoaderService } from '../esaa/core/contracts/contract-loader.service.js';
 import { PostgresEventStoreRepository } from '../infrastructure/persistence/postgres-event-store.repository.js';
@@ -297,6 +298,25 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
     app.addHook('onClose', async () => {
       await agendador.stop();
       await worker.stop();
+    });
+  }
+
+  /**
+   * Séries de índice (IPCA, INPC, IGP-M, TR, SELIC), uma vez por dia, só em
+   * produção e com os workers: o dado é público e igual para todos, e dev
+   * gravaria no mesmo banco o que prod já grava.
+   */
+  if (options.startWorkers && env.environment === 'prod') {
+    const indices = startIndicesScheduler(pool, {
+      onError: (erro) => app.log.error({ err: erro }, 'atualização das séries de índice'),
+      onLoad: (relatorios) =>
+        app.log.info(
+          { indices: relatorios.map((r) => ({ id: r.indexId, ultimo: r.lastPeriod, conferida: r.verified })) },
+          'séries de índice atualizadas',
+        ),
+    });
+    app.addHook('onClose', async () => {
+      await indices.stop();
     });
   }
 
