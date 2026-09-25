@@ -111,6 +111,8 @@ export interface SnapshotOptions {
   schema?: string;
   tables?: readonly string[];
   views?: readonly string[];
+  /** Índice do storage. Só os testes trocam: fora do Supabase não há `storage.objects`. */
+  storageTable?: { schema: string; table: string };
 }
 
 /** Identificador SQL seguro: só o que um nome de tabela legítimo tem. */
@@ -203,6 +205,8 @@ export async function snapshotLegacy(pool: pg.Pool, opcoes: SnapshotOptions = {}
   const schema = opcoes.schema ?? 'public';
   const tabelas = opcoes.tables ?? LEGACY_TABLES;
   const views = opcoes.views ?? LEGACY_VIEWS;
+  const storage = opcoes.storageTable ?? { schema: 'storage', table: 'objects' };
+  const indiceDoStorage = `${ident(storage.schema)}.${ident(storage.table)}`;
 
   const client = await pool.connect();
   try {
@@ -254,14 +258,16 @@ export async function snapshotLegacy(pool: pg.Pool, opcoes: SnapshotOptions = {}
       [schema, `\\m(${[...tabelas, ...views].join('|')})\\M`],
     );
 
-    const temStorage = await client.query<{ ok: boolean }>(`select to_regclass('storage.objects') is not null as ok`);
+    const temStorage = await client.query<{ ok: boolean }>(`select to_regclass($1) is not null as ok`, [
+      indiceDoStorage,
+    ]);
     let storageObjects: StoredObjectRef[] | null = null;
     if (temStorage.rows[0]!.ok) {
       const objetos = await client.query<{
         bucket: string;
         name: string;
         metadata: unknown;
-      }>(`select bucket_id as bucket, name, metadata from storage.objects order by bucket_id, name`);
+      }>(`select bucket_id as bucket, name, metadata from ${indiceDoStorage} order by bucket_id, name`);
       storageObjects = objetos.rows;
     }
 

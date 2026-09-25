@@ -183,6 +183,56 @@ describe.skipIf(!DATABASE_URL)('snapshot do acervo legado', () => {
     );
   });
 
+  it('com storage: o índice e os objetos entram, e objeto adulterado ou ausente é apontado', async () => {
+    await pool.query(`create table ${schema}.objetos (bucket_id text, name text, metadata jsonb)`);
+    await pool.query(`insert into ${schema}.objetos values ('sped-files', 'u/efd.txt', '{"size": 3}')`);
+    const s = await snapshotLegacy(pool, {
+      schema,
+      tables: tabelas,
+      views: [],
+      storageTable: { schema, table: 'objetos' },
+    });
+    expect(s.storageObjects).toEqual([{ bucket: 'sped-files', name: 'u/efd.txt', metadata: { size: 3 } }]);
+
+    const objeto = { ...s.storageObjects![0]!, bytes: new Uint8Array([1, 2, 3]), sha256: '' };
+    objeto.sha256 = (await import('node:crypto')).createHash('sha256').update(objeto.bytes).digest('hex');
+    const conteudo = registrosDoArquivo(s, [objeto]);
+    const completo = conferirConteudo(conteudo);
+    expect(completo.problems).toEqual([]);
+    expect(completo.manifest).toMatchObject({ storageIncluded: true, objects: [{ bucket: 'sped-files', bytes: 3 }] });
+
+    const adulterado = conteudo.replace(/"base64":"[^"]*"/, `"base64":"${Buffer.from([9, 9, 9]).toString('base64')}"`);
+    expect(conferirConteudo(adulterado).problems).toEqual([expect.stringMatching(/hash do conteúdo não confere/)]);
+
+    const semObjeto = conteudo
+      .split('\n')
+      .filter((l) => !l.includes('"type":"object"'))
+      .join('\n');
+    expect(conferirConteudo(semObjeto).problems).toEqual([expect.stringMatching(/o objeto não está no arquivo/)]);
+  });
+
+  it('sem --sem-storage explícito, o manifesto diz que o storage não entrou', async () => {
+    const s = await tirar();
+    expect(conferirConteudo(registrosDoArquivo(s, null)).manifest.storageIncluded).toBe(false);
+  });
+
+  it('estrutura ausente e manifesto inválido são apontados', async () => {
+    const conteudo = registrosDoArquivo(await tirar(), []);
+    const semEstrutura = conteudo
+      .split('\n')
+      .filter((l) => !(l.includes('"type":"table"') && l.includes('"name":"xml_document_items"')))
+      .join('\n');
+    expect(conferirConteudo(semEstrutura).problems).toEqual([
+      expect.stringMatching(/xml_document_items: a estrutura não está no arquivo/),
+    ]);
+    expect(() => conferirConteudo('{"type":"row"}')).toThrow(/manifesto/);
+    expect(() => conferirConteudo('')).toThrow(/manifesto/);
+  });
+
+  it('nome de objeto fora do padrão não chega ao SQL', async () => {
+    await expect(linhasDaTabela(pool, schema, 'x; drop table y')).rejects.toThrow(/Nome de objeto inesperado/);
+  });
+
   it('tabela do inventário que não existe: falha, e nada é copiado', async () => {
     await expect(
       snapshotLegacy(pool, {
