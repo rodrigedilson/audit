@@ -1,8 +1,8 @@
-# Plano de testes — substituição de mocks (Ondas 0 a 5 e segunda varredura)
+# Plano de testes — substituição de mocks (Ondas 0 a 5, segunda e terceira varreduras)
 
 > **Para quem é:** quem vai aceitar em ambiente real o que foi entregue entre
-> 23 e 25/09/2026. A suíte automatizada já cobre a lógica de cada entrega (1705
-> testes na `main` em `dad44d8`, com o CI verde). Este plano cobre **o que só se
+> 23 e 25/09/2026. A suíte automatizada já cobre a lógica de cada entrega (1817
+> testes na `main` em `4cc11be`). Este plano cobre **o que só se
 > prova no ambiente de verdade**: SEFAZ, Asaas, Anthropic, SMTP, Render, Vercel
 > e o banco de produção.
 
@@ -26,6 +26,9 @@
 | E: coleta agendada por opt-in (ADR-007) | #62 | `dfe-auto-sync.ts`, `dfe-worker.ts` |
 | F: relatório do diagnóstico por e-mail | #65, front #30 | `readiness-delivery.ts`, `DiagnosticoReforma.tsx` |
 | G: comprovante em PDF e validação do Conformidade Fácil | #67, front `feat/comprovante-em-pdf` | `integrity-proof.service.ts`, `conformidade-facil.client.ts` |
+| **Terceira varredura**, índices oficiais de correção monetária | #79 | `index-sources.ts`, `index-loader.ts` |
+| CLI `audit close` | #80 | `period-confirmation.service.ts`, `src/cli/audit.ts` |
+| CAPAG presumida: demonstrativo, fórmula oficial da PGFN e planos | #81 a #84, front `feat/capag`, `feat/capag-fora-do-plano`, `fix/capag-formula-oficial`, `feat/capag-pj-inativa` | `src/fiscal/forensics/capag/`, `CapagDoCliente.tsx` |
 
 **Fora do escopo:** o que depende de API oficial ainda inexistente (formato
 oficial da proposta do Fisco, Calculadora RFB, open finance), os eventos de
@@ -322,6 +325,36 @@ select created_at, email is not null as tem_lead, report_expires_at,
 | SG-5 | Validador aceita a tabela real | `doppler run --config dev -- npx tsx scripts/carregar-classificacao-ibs-cbs.ts --portal` (simulação, não grava) | "18 CST(s), 164 cClassTrib" e a amostra, sem erro de formato. **Executado em 25/09: passou** | ✅ |
 | SG-6 | API da SVRS com mTLS | Com o A1 da operação em `CFF_CERT_PFX`/`CFF_CERT_PASSWORD`, o mesmo script sem `--portal` | Mesmas contagens do SG-5 | ⛔ |
 
+### Terceira varredura, índices oficiais (#79)
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| TI-1 | Carga conferida | `doppler run --config prd -- npx tsx scripts/carregar-indices-oficiais.ts` (simulação) | Os cinco índices com 386 competências (1994-07 a 2026-08) e "conferida". **Executado em 25/09 com `--executar`: passou** | ✅ |
+| TI-2 | Catálogo carregado | `api $API/financial-indices` | `loaded_count: 5`, todos `verified: true` | ✅ |
+| TI-3 | Fator não nulo | `api "$API/financial-indices/ipca/factor?from=2025-01&to=2025-12"` | Fator numérico com a fonte citada, nunca `null` | ✅ |
+| TI-4 | Doctor | `npm run doctor` (prd) | "índices financeiros" ok. **Executado em 25/09: passou** | ✅ |
+| TI-5 | Atualização mensal | Depois do dia 15 do mês seguinte, repetir o TI-2 | Última competência avança um mês sem ninguém rodar o script | 🟡 |
+
+### Terceira varredura, CLI `audit close` (#80)
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| TC-1 | Fecha com o hash conferido | Pegar o `projection_hash` da competência do escritório de teste na tela; `doppler run --config prd -- npx tsx src/cli/audit.ts close AAAA-MM --tenant … --cnpj $CNPJ --actor … --hash <hash>` | Confirmada; `GET …/proof` com `confirmed_hash_reproduced: true` | ✅ |
+| TC-2 | Hash divergente | O mesmo com um hash qualquer | Recusa, sem evento novo no log | ✅ |
+
+### Terceira varredura, CAPAG presumida (#81 a #84)
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| TK-1 | Fórmula oficial carregada | `npm run doctor` (prd) | "CAPAG": 5 grupos com a oficial da PGFN conferida, extrator configurado. **Executado em 25/09: passou** | ✅ |
+| TK-2 | Oficial antes da doutrina | `api $API/clients/$CNPJ/capag` | `reference_formulas` com os cinco grupos, `source_kind: oficial_pgfn` e `verified: true`; PJ fora do Simples com `0.5` em V6 | ✅ |
+| TK-3 | Doutrina nunca conferida | SQL Editor: `update capag_reference_formulas set verified = true where source_kind = 'doutrina';` | Recusado por `capag_referencia_conferida_so_oficial` | ✅ |
+| TK-4 | Tela | Detalhe do cliente → CAPAG | Selo "Oficial (PGFN), conferida" em cada fórmula; grupos com rótulo em português | — |
+| TK-5 | Fora do plano | Cliente `mei` ou `simples_integrado` → CAPAG | Tela "fora do plano", com os planos que incluem; a API responde 403 `feature_not_in_plan` | ✅ |
+| TK-6 | Demonstrativo real (**pendente, aguarda documento**) | Baixar do REGULARIZE o PDF original de um cliente de teste e enviar pela tela | `reproduces: true`, `verified: true`, `problems: []`; a CAPAG calculada igual à impressa (tolerância de R$ 1) | 🟡 |
+| TK-7 | Documento que não confere | Enviar um PDF digitalizado (imagem) | 400 dizendo que o PDF parece digitalizado; o modelo não é chamado e nada é gravado | ✅ |
+| TK-8 | Limite por hora | 11 envios em uma hora pelo mesmo escritório | O 11º responde 429 | ✅ |
+
 ### Banco de teste por schema (desenvolvimento)
 
 | ID | Caso | Passos | Esperado | Auto |
@@ -380,5 +413,9 @@ outro teste que depende de regra publicada passar a oscilar, a causa provável
 - **E-mail do diagnóstico:** remover `MAIL_SMTP_URL` volta a só gravar o lead.
   O diagnóstico inteiro tem killswitch: `PUBLIC_DIAGNOSTIC_ENABLED=false`.
 - **Features do plano:** não há chave de desligar. O caminho é reverter a #60.
+- **CAPAG:** remover `ANTHROPIC_API_KEY` faz o envio de demonstrativo responder
+  503; a leitura continua. Fórmula de referência errada sai com
+  `delete from capag_reference_formulas where formula_id = '…';`, e o buscador
+  grava de novo.
 - **Migrations:** todas as desta entrega são aditivas ou só afrouxam restrições.
   Nenhuma precisa ser desfeita para reverter o código.
