@@ -631,9 +631,12 @@ paths:
         `passed`.** Sem `E110` não há apuração declarada para conferir, o que não
         é o mesmo que apuração correta; documento sem `C170` não é documento
         errado, porque a NF-e de emissão própria costuma vir só com `C100` e
-        `C190`; e quando o arquivo traz `C500`, `D100` e afins, que também lançam
-        ICMS e este leitor ainda não soma, comparar só os `C190` acusaria uma
-        diferença que é limitação nossa.
+        `C190`. A soma contra o `E110` usa a lista de registros do guia
+        (validação dos campos 02 e 06): C190, C590, D190 e D590 nos dois lados,
+        e C320, C390, C490, C690, C790 e C890 nos débitos. Quando o arquivo traz
+        um registro da lista que este leitor ainda não soma (C850, D300, D390,
+        D410, D690, D696, D730, D760), aquele lado vem `not_verified`: comparar
+        sem ele acusaria uma diferença que é limitação nossa.
 
         A conciliação é **derivada na leitura**, e não um resultado guardado:
         congelada, uma conferência nova valeria só para arquivo importado depois

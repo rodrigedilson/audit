@@ -50,11 +50,16 @@ const TITULOS: Record<string, string> = {
   '20260925130000_remove_projection_snapshots.sql': 'remove-projection-snapshots',
   '20260925140000_auditoria_continua.sql': 'auditoria-continua',
   '20260926100000_cancelamento_de_nfe.sql': 'cancelamento-de-nfe',
+  '20260926120000_efd_icms_demais_registros.sql': 'efd-icms-demais-registros',
   '20260926140000_coleta_agendada.sql': 'coleta-agendada',
   '20260926160000_relatorio_do_diagnostico.sql': 'relatorio-do-diagnostico',
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260926120000_efd_icms_demais_registros.sql':
+    'EFD ICMS/IPI: a conciliação passa a somar energia, transporte, comunicação\n' +
+    '-- e varejo (C590, D190, D590, C320 a C890) contra o E110, e cada linha diz\n' +
+    '-- qual analítico soma. Atualiza a descrição da feature sped_completo.',
   '20260926160000_relatorio_do_diagnostico.sql':
     'Relatório do diagnóstico público por e-mail: o resumo fica cifrado por até\n' +
     '-- 24h, só para o envio, e o link de remoção do e-mail (LGPD).',

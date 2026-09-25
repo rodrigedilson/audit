@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 18 de 32: efd_icms_ipi
+-- audit — passo 18 de 33: efd_icms_ipi
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260924120000_efd_icms_ipi.sql
 -- Não edite aqui: altere a migration de origem.

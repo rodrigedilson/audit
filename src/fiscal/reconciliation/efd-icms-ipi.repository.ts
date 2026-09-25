@@ -6,7 +6,8 @@
  * apuração declarada.
  *
  * O que **não** é guardado: item a item. As conferências precisam, por
- * documento, de três somas de ICMS (itens, consolidação e o do próprio C100), e
+ * documento, de quatro somas de ICMS (itens, consolidação, a parte dela que é
+ * transferência de saldo e o do próprio documento), e
  * gravar cada C170 custaria milhões de linhas por carteira para responder às
  * mesmas perguntas.
  *
@@ -34,7 +35,7 @@ export interface EfdIcmsFileRow {
 }
 
 /**
- * Documentos gravados por comando. São 11 parâmetros por documento, e o
+ * Documentos gravados por comando. São 13 parâmetros por documento, e o
  * Postgres aceita 65535 por comando — 500 deixa folga larga.
  */
 const LOTE = 500;
@@ -145,7 +146,7 @@ export class EfdIcmsIpiRepository {
       const valores: unknown[] = [];
 
       const marcadores = lote.map((documento, indice) => {
-        const base = indice * 11;
+        const base = indice * 13;
         valores.push(
           scope.tenantId,
           scope.cnpj,
@@ -158,12 +159,14 @@ export class EfdIcmsIpiRepository {
           documento.itemsIcmsCents,
           documento.analyticsIcmsCents,
           documento.documentIcmsCents,
+          documento.record,
+          documento.transferIcmsCents,
         );
         return (
           `($${base + 1}::uuid, $${base + 2}::char(14), $${base + 3}::uuid, ` +
           `$${base + 4}, $${base + 5}, $${base + 6}::char(2), $${base + 7}, ` +
           `$${base + 8}, $${base + 9}::bigint, $${base + 10}::bigint, ` +
-          `$${base + 11}::bigint)`
+          `$${base + 11}::bigint, $${base + 12}, $${base + 13}::bigint)`
         );
       });
 
@@ -171,7 +174,7 @@ export class EfdIcmsIpiRepository {
         `insert into efd_icms_documents (
            tenant_id, cnpj, sped_file_id, subject, operation, situation,
            has_items, has_analytics, items_icms_cents, analytics_icms_cents,
-           document_icms_cents
+           document_icms_cents, record, transfer_icms_cents
          ) values ${marcadores.join(', ')}`,
         valores,
       );
@@ -253,9 +256,12 @@ export class EfdIcmsIpiRepository {
       items_icms_cents: string;
       analytics_icms_cents: string;
       document_icms_cents: string;
+      record: string;
+      transfer_icms_cents: string;
     }>(
       `select subject, operation, situation, has_items, has_analytics,
-              items_icms_cents, analytics_icms_cents, document_icms_cents
+              items_icms_cents, analytics_icms_cents, document_icms_cents,
+              record, transfer_icms_cents
          from efd_icms_documents
         where tenant_id = $1::uuid and sped_file_id = $2::uuid
         order by id`,
@@ -271,6 +277,8 @@ export class EfdIcmsIpiRepository {
       itemsIcmsCents: Number(linha.items_icms_cents),
       analyticsIcmsCents: Number(linha.analytics_icms_cents),
       documentIcmsCents: Number(linha.document_icms_cents),
+      record: linha.record,
+      transferIcmsCents: Number(linha.transfer_icms_cents),
     }));
   }
 

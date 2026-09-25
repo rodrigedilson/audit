@@ -24,72 +24,14 @@
  */
 import type {
   EfdIcmsAssessment,
-  EfdIcmsDocument,
-  EfdIcmsResult,
   EfdIpiAssessment,
 } from '../ingestion/efd-icms-ipi.parser.js';
+import type { IcmsIpiDocumentSummary, IcmsIpiInput } from './icms-ipi-summary.js';
 import type { Severity } from '../reporting/audit-trails.js';
 
+export { summarizeEfdIcmsIpi, type IcmsIpiDocumentSummary, type IcmsIpiInput } from './icms-ipi-summary.js';
+
 export type CheckStatus = 'passed' | 'failed' | 'not_verified';
-
-/**
- * Documento reduzido ao que as conferências usam.
- *
- * A conciliação não recebe o arquivo lido, e sim este resumo, porque ela roda
- * duas vezes: na importação, sobre o que o leitor acabou de produzir, e depois,
- * sobre o que ficou gravado. Guardar item a item custaria milhões de linhas por
- * carteira para responder às mesmas somas — e derivar a conferência na leitura,
- * em vez de congelá-la, é o que faz uma regra nova valer para arquivo antigo.
- */
-export interface IcmsIpiDocumentSummary {
-  /** Chave de acesso, ou modelo e número quando não há chave. */
-  subject: string;
-  operation: 'inbound' | 'outbound';
-  /** `COD_SIT` cru. */
-  situation: string;
-  /** Distingue "soma zero" de "não veio C170", que não são a mesma coisa. */
-  hasItems: boolean;
-  hasAnalytics: boolean;
-  itemsIcmsCents: number;
-  analyticsIcmsCents: number;
-  /** `VL_ICMS` do próprio C100. */
-  documentIcmsCents: number;
-}
-
-export interface IcmsIpiInput {
-  period: string;
-  documents: readonly IcmsIpiDocumentSummary[];
-  icmsAssessment: EfdIcmsAssessment | null;
-  ipiAssessment: EfdIpiAssessment | null;
-  /** Registros lidos por tipo — é por eles que se sabe o que a soma não cobre. */
-  recordCounts: Record<string, number>;
-}
-
-/** Reduz o arquivo lido à entrada da conciliação. */
-export function summarizeEfdIcmsIpi(efd: EfdIcmsResult): IcmsIpiInput {
-  return {
-    period: efd.header.period,
-    documents: efd.documents.map(resumirDocumento),
-    icmsAssessment: efd.icmsAssessment,
-    ipiAssessment: efd.ipiAssessment,
-    recordCounts: efd.counts,
-  };
-}
-
-function resumirDocumento(documento: EfdIcmsDocument): IcmsIpiDocumentSummary {
-  return {
-    subject:
-      documento.accessKey ??
-      `modelo ${documento.model} nº ${documento.documentNumber ?? 's/n'}`,
-    operation: documento.operation,
-    situation: documento.situation,
-    hasItems: documento.items.length > 0,
-    hasAnalytics: documento.analytics.length > 0,
-    itemsIcmsCents: documento.items.reduce((t, i) => t + i.icms.amountCents, 0),
-    analyticsIcmsCents: documento.analytics.reduce((t, a) => t + a.icmsCents, 0),
-    documentIcmsCents: documento.icmsCents,
-  };
-}
 
 export interface IcmsIpiIssue {
   /** Chave de acesso ou número do documento — o que a divergência aponta. */
@@ -137,14 +79,26 @@ export interface IcmsIpiReconciliation {
 const SITUACOES_SEM_IMPOSTO = new Set(['02', '03', '04', '05']);
 
 /**
- * Registros de outros blocos que também alimentam a apuração do `E110` — conta
- * de energia (`C500`), transporte (`D100`), comunicação, serviços.
- *
- * A presença de qualquer um deles impede comparar a soma dos `C190` com o total
- * declarado: faltariam parcelas legítimas, e a diferença apareceria como erro do
- * cliente quando é limitação nossa.
+ * Documento extemporâneo (01) e complementar extemporâneo (07): o guia os tira
+ * de `VL_TOT_DEBITOS` (vão para `DEB_ESP`), mas não de `VL_TOT_CREDITOS`, onde
+ * entram no primeiro período do arquivo.
  */
-const BLOCOS_NAO_COBERTOS = /^(C[5-9]|D)/;
+const EXTEMPORANEOS = new Set(['01', '07']);
+
+/**
+ * Registros cujo `VL_ICMS` compõe o `E110`, da validação dos campos 02 e 06 no
+ * Guia Prático 3.2.2. É a lista do guia, e não um prefixo de bloco: todo
+ * arquivo tem `C001`, `C990`, `D001` e `D990`, que não lançam nada.
+ *
+ * Registro da lista que o arquivo traz e esta soma não cobre impede a
+ * conferência daquele lado: faltaria parcela legítima, e a diferença apareceria
+ * como erro do cliente quando é limitação nossa.
+ */
+const COMPOEM_DEBITOS = [
+  'C190', 'C320', 'C390', 'C490', 'C590', 'C690', 'C790', 'C850', 'C890',
+  'D190', 'D300', 'D390', 'D410', 'D590', 'D690', 'D696', 'D730', 'D760',
+];
+const COMPOEM_CREDITOS = ['C190', 'C590', 'D190', 'D590', 'D730'];
 
 export function reconcileIcmsIpi(entrada: IcmsIpiInput): IcmsIpiReconciliation {
   const checks: IcmsIpiCheck[] = [
@@ -353,10 +307,13 @@ function conferirItensContraConsolidacao(
 }
 
 /**
- * Soma dos `C190` contra os totais do `E110`, separados por entrada e saída.
+ * Soma dos analíticos contra os totais do `E110`, separados por débito e
+ * crédito.
  *
  * São duas conferências e não uma porque um erro de débito e um de crédito do
- * mesmo tamanho se cancelariam no total, e o arquivo passaria.
+ * mesmo tamanho se cancelariam no total, e o arquivo passaria. E cada lado tem a
+ * sua lista de registros no guia: varejo (`C490`) só lança débito, e não impede
+ * conferir os créditos.
  */
 function conferirConsolidacaoContraApuracao(entrada: IcmsIpiInput): IcmsIpiCheck[] {
   const definicoes = [
@@ -366,6 +323,7 @@ function conferirConsolidacaoContraApuracao(entrada: IcmsIpiInput): IcmsIpiCheck
       sentido: 'outbound' as const,
       declarado: entrada.icmsAssessment?.totalDebitsCents,
       rotulo: 'VL_TOT_DEBITOS',
+      registros: COMPOEM_DEBITOS,
     },
     {
       checkId: 'c190-vs-e110-creditos',
@@ -373,20 +331,25 @@ function conferirConsolidacaoContraApuracao(entrada: IcmsIpiInput): IcmsIpiCheck
       sentido: 'inbound' as const,
       declarado: entrada.icmsAssessment?.totalCreditsCents,
       rotulo: 'VL_TOT_CREDITOS',
+      registros: COMPOEM_CREDITOS,
     },
   ];
 
-  const naoCobertos = Object.keys(entrada.recordCounts)
-    .filter((registro) => BLOCOS_NAO_COBERTOS.test(registro))
-    .sort();
+  // Somado é o que tem linha: arquivo importado antes de um registro passar a
+  // ser lido traz o registro na contagem e nenhuma linha dele.
+  const somados = new Set(entrada.documents.map((d) => d.record));
+  const validos = entrada.documents.filter((d) => !SITUACOES_SEM_IMPOSTO.has(d.situation));
 
-  return definicoes.map(({ checkId, name, sentido, declarado, rotulo }) => {
+  return definicoes.map(({ checkId, name, sentido, declarado, rotulo, registros }) => {
     const base = {
       checkId,
       name,
       rule:
-        `${rotulo} do E110 deve corresponder à soma do VL_ICMS dos registros C190 ` +
-        `dos documentos de ${sentido === 'outbound' ? 'saída' : 'entrada'}.`,
+        `${rotulo} do E110 deve corresponder à soma do VL_ICMS dos registros ` +
+        `${registros.join(', ')} de ${sentido === 'outbound' ? 'saída' : 'entrada'}, ` +
+        'com a transferência de saldo devedor (CFOP 1605 e 5605) do lado oposto' +
+        (sentido === 'outbound' ? ' e sem os documentos extemporâneos (COD_SIT 01 e 07).' : '.') +
+        ' Guia Prático 3.2.2, validação dos campos 02 e 06 do E110.',
       severity: 'high' as Severity,
     };
 
@@ -394,13 +357,17 @@ function conferirConsolidacaoContraApuracao(entrada: IcmsIpiInput): IcmsIpiCheck
       return semE110(base);
     }
 
+    const naoCobertos = registros
+      .filter((r) => (entrada.recordCounts[r] ?? 0) > 0 && !somados.has(r))
+      .sort();
+
     if (naoCobertos.length > 0) {
       return {
         ...base,
         status: 'not_verified' as const,
         notVerifiedReason:
           `A escrituração traz ${naoCobertos.join(', ')}, que também lançam ICMS na ` +
-          'apuração e este leitor ainda não soma. Comparar só os C190 acusaria uma ' +
+          'apuração e este leitor ainda não soma. Comparar sem eles acusaria uma ' +
           'diferença que é limitação nossa, não erro da escrituração.',
         declaredCents: declarado,
         expectedCents: null,
@@ -409,9 +376,20 @@ function conferirConsolidacaoContraApuracao(entrada: IcmsIpiInput): IcmsIpiCheck
       };
     }
 
-    const somado = entrada.documents
-      .filter((d) => d.operation === sentido && !SITUACOES_SEM_IMPOSTO.has(d.situation))
-      .reduce((total, d) => total + d.analyticsIcmsCents, 0);
+    const somado =
+      sentido === 'outbound'
+        ? validos
+            .filter((d) => !EXTEMPORANEOS.has(d.situation))
+            .reduce(
+              (t, d) =>
+                t + (d.operation === 'outbound' ? d.analyticsIcmsCents - d.transferIcmsCents : d.transferIcmsCents),
+              0,
+            )
+        : validos.reduce(
+            (t, d) =>
+              t + (d.operation === 'inbound' ? d.analyticsIcmsCents - d.transferIcmsCents : d.transferIcmsCents),
+            0,
+          );
 
     return comparar(base, declarado, somado);
   });
