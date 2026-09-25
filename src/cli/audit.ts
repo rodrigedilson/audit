@@ -12,6 +12,8 @@ import { IntegrityViolationError } from '../esaa/shared/types/esaa-errors.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { IngestionService } from '../fiscal/ingestion/ingestion.service.js';
+import { PeriodNotAssessedError, confirmPeriod } from '../fiscal/assessment/period-confirmation.service.js';
+import { ValidationError } from '../esaa/shared/types/esaa-errors.js';
 
 /**
  * Carrega o `.env` antes de qualquer coisa.
@@ -41,11 +43,12 @@ Comandos disponíveis
   status                          Resumo da projeção corrente
   ingest <pasta>                  Ingere os XML de NF-e da pasta, pelo pipeline
                                   (exige --tenant, --cnpj, --actor e DATABASE_URL)
+  close <competência>             Confirma e fecha a competência (AAAA-MM), como
+                                  o botão da tela: exige --tenant, --cnpj,
+                                  --actor (owner ou accountant) e --hash, o
+                                  projection_hash conferido
   help                            Esta ajuda
   version                         Versão do pacote e do schema de eventos
-
-Comandos previstos (ainda não implementados)
-  close <cnpj> <competencia>      Fecha a competência de um CNPJ            [Onda 6]
 
 Opções
   --config <caminho>              Padrão: config/esaa.config.yaml
@@ -53,7 +56,9 @@ Opções
   --tenant <uuid>                 Escritório (tenant). Padrão: escopo de dev
   --cnpj <14 posições>            CNPJ do cliente, numérico ou alfanumérico.
                                   Padrão: escopo de dev
-  --actor <uuid>                  Usuário em nome de quem o ingest grava no log
+  --actor <uuid>                  Usuário em nome de quem ingest e close gravam no log
+  --hash <64 hex>                 close: o projection_hash que foi conferido
+  --nota <texto>                  close: observação gravada com a confirmação
 `;
 
 interface PendingCommand {
@@ -61,12 +66,8 @@ interface PendingCommand {
   reason: string;
 }
 
-const PENDING: Record<string, PendingCommand> = {
-  close: {
-    wave: 'Onda 6',
-    reason: 'depende do motor de regras rules/ e da apuração dual assessment/',
-  },
-};
+/** Comandos anunciados e ainda não implementados. Vazio: não há promessa pendente. */
+const PENDING: Record<string, PendingCommand> = {};
 
 async function main(argv: readonly string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -93,6 +94,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return runDoctor();
     case 'ingest':
       return runIngest(options, rest);
+    case 'close':
+      return runClose(options, rest);
     default:
       return reportUnavailable(command);
   }
@@ -281,6 +284,86 @@ async function runIngest(options: BootstrapOptions, args: readonly string[]): Pr
       process.stdout.write(`  ${r.filename}: camada ${r.layer} · ${r.reason} · ${r.message}\n`);
     }
     return resultado.rejected.length === 0 ? EXIT_OK : EXIT_ERROR;
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
+}
+
+/**
+ * Confirma e fecha a competência, pelo mesmo serviço do botão da tela.
+ *
+ * As travas são as mesmas da API: o `--hash` tem de ser o `projection_hash`
+ * atual (confirma-se o que foi conferido), a competência tem de estar
+ * conciliada, e quem confirma tem de ser owner ou accountant do escritório.
+ * A CLI não tem sessão, então o papel é conferido aqui, em `memberships`.
+ */
+async function runClose(options: BootstrapOptions, args: readonly string[]): Promise<number> {
+  const period = args.find((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]!.startsWith('--')));
+  const actor = readOption(args, '--actor');
+  const hash = readOption(args, '--hash');
+  const nota = readOption(args, '--nota');
+  if (!period || readOption(args, '--tenant') === undefined || readOption(args, '--cnpj') === undefined || !actor || !hash) {
+    throw new UsageError('close exige a competência, --tenant, --cnpj, --actor e --hash.');
+  }
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+    throw new UsageError(`Competência fora do formato AAAA-MM: ${period}.`);
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actor)) {
+    throw new UsageError('--actor deve ser o uuid de um usuário: é em nome dele que o log registra.');
+  }
+  if (!/^[0-9a-f]{64}$/.test(hash)) {
+    throw new UsageError('--hash deve ser o projection_hash: 64 caracteres hexadecimais.');
+  }
+
+  const { orchestrator, scope, pool } = await bootstrap(options);
+  if (pool === undefined) {
+    throw new UsageError('close grava no event log do Postgres: defina DATABASE_URL.');
+  }
+
+  try {
+    const { rows } = await pool.query<{ role: string }>(
+      'select role from memberships where tenant_id = $1::uuid and user_id = $2::uuid',
+      [scope.tenantId, actor],
+    );
+    const papel = rows[0]?.role;
+    if (papel !== 'owner' && papel !== 'accountant') {
+      process.stderr.write(
+        papel === undefined
+          ? `O usuário ${actor} não pertence ao escritório ${scope.tenantId}.\n`
+          : `Perfil "${papel}" não pode confirmar competência: só owner ou accountant.\n`,
+      );
+      return EXIT_ERROR;
+    }
+
+    const { event, projection } = await confirmPeriod({
+      pool,
+      scope,
+      orchestrator,
+      period,
+      projectionHash: hash,
+      actor,
+      note: nota ?? null,
+    });
+
+    process.stdout.write(
+      `escopo           ${scope.toKey()}\n` +
+        `competência      ${period} confirmada e fechada\n` +
+        `event_seq        ${event.event_seq}\n` +
+        `hash confirmado  ${hash}\n` +
+        `hash atual       ${projection.projection_hash_sha256}\n` +
+        'Correções a partir daqui exigem retificação, que preserva este hash.\n',
+    );
+    return EXIT_OK;
+  } catch (erro) {
+    if (erro instanceof PeriodNotAssessedError) {
+      process.stderr.write(`${erro.message}\n`);
+      return EXIT_ERROR;
+    }
+    if (erro instanceof ValidationError) {
+      process.stderr.write(`Recusado (camada ${erro.layer}, ${erro.reason}): ${erro.details}\n`);
+      return EXIT_ERROR;
+    }
+    throw erro;
   } finally {
     await pool.end().catch(() => undefined);
   }

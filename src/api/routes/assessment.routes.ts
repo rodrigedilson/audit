@@ -4,6 +4,7 @@ import { NotFoundError } from '../auth/tenant-resolver.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { AssessmentService } from '../../fiscal/assessment/assessment.service.js';
 import { syncPeriodState } from '../../fiscal/portfolio/portfolio-read-model.js';
+import { PeriodNotAssessedError, confirmPeriod } from '../../fiscal/assessment/period-confirmation.service.js';
 import type { Regime } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 import { PADRAO_DA_CHAVE } from '../../fiscal/ingestion/access-key.js';
@@ -302,52 +303,29 @@ export async function registerAssessmentRoutes(
       const scope = await deps.tenantResolver.scopeFor(context, request.params.cnpj);
       const { period } = request.params;
 
-      const apuracao = await assessment.find(scope, period);
-      if (!apuracao) {
-        throw new NotFoundError(`Competência ${period} não foi apurada.`);
-      }
-
       const orchestrator = await deps.orchestratorFor(scope);
-      const atual = (await orchestrator.getProjection()).projection_hash_sha256;
-
-      if (request.body.projection_hash !== atual) {
-        throw new ValidationError(
-          7,
-          'verification_mismatch',
-          `O hash enviado não corresponde ao estado atual da competência. ` +
-            `Enviado ${request.body.projection_hash.slice(0, 12)}…, atual ${atual.slice(0, 12)}…. ` +
-            'Algo mudou desde a conferência: recarregue a apuração e revise antes de confirmar.',
-        );
-      }
-
-      const evento = await orchestrator.processIntention({
-        action: 'assessment.confirmed',
-        task_id: period,
-        actor: context.user.userId,
-        period,
-        payload: {
+      let confirmado;
+      try {
+        confirmado = await confirmPeriod({
+          pool: deps.pool,
+          scope,
+          orchestrator,
           period,
-          projection_hash: atual,
-          total_due_cents: apuracao.total_due_cents,
+          projectionHash: request.body.projection_hash,
+          actor: context.user.userId,
           note: request.body.note ?? null,
-        },
-      });
-
-      if (!evento.accepted) {
-        throw new ValidationError(
-          evento.layer ?? 4,
-          'invalid_transition',
-          evento.rejectionReason ?? 'Confirmação rejeitada pelo pipeline.',
-        );
+        });
+      } catch (erro) {
+        if (erro instanceof PeriodNotAssessedError) throw new NotFoundError(erro.message);
+        throw erro;
       }
-
-      await syncPeriodState(deps.pool, evento.projection!, period);
+      const evento = { event: confirmado.event, projection: confirmado.projection };
 
       return reply.code(200).send({
-        event_id: evento.event!.event_id,
-        event_seq: evento.event!.event_seq,
-        action: evento.event!.action,
-        projection_hash: evento.projection!.projection_hash_sha256,
+        event_id: evento.event.event_id,
+        event_seq: evento.event.event_seq,
+        action: evento.event.action,
+        projection_hash: evento.projection.projection_hash_sha256,
         state: 'confirmed',
         // A competência é terminal: a correção é por retificação, não por edição.
         message:
