@@ -1,9 +1,10 @@
-# Plano de testes — substituição de mocks (Ondas 0 a 5 e correções)
+# Plano de testes — substituição de mocks (Ondas 0 a 5 e segunda varredura)
 
 > **Para quem é:** quem vai aceitar em ambiente real o que foi entregue entre
-> 23 e 24/09/2026. A suíte automatizada já cobre a lógica de cada onda (1279
-> testes, com o CI verde). Este plano cobre **o que só se prova no ambiente de
-> verdade**: SEFAZ, Asaas, Anthropic, Render, Vercel e o banco de produção.
+> 23 e 25/09/2026. A suíte automatizada já cobre a lógica de cada entrega (1705
+> testes na `main` em `dad44d8`, com o CI verde). Este plano cobre **o que só se
+> prova no ambiente de verdade**: SEFAZ, Asaas, Anthropic, SMTP, Render, Vercel
+> e o banco de produção.
 
 ## 1. Escopo
 
@@ -18,10 +19,18 @@
 | Onda 5: coleta de DF-e na SEFAZ (ADR-006) | #43 | `src/fiscal/dfe/` |
 | Banco de teste por conjunto de migrations | #42 | `tests/setup/global-db.ts` |
 | Chave de acesso com CNPJ alfanumérico | `fix/chave-alfanumerica` | `access-key.ts` + migration |
+| **Segunda varredura**, A: configuração, limites e doctor | #57 | `env.ts`, `rate-limit.ts`, `environment-doctor.ts` |
+| B: cancelamento de NF-e pela distribuição | #59 | `src/fiscal/dfe/dfe-events.ts` |
+| C: EFD ICMS/IPI contra a lista de registros do guia | #68 | `icms-ipi-checks.ts`, `efd-icms-ipi-consolidacoes.ts` |
+| D: a rota recusa o que o plano do CNPJ não inclui | #60 | `src/api/plugins/plan-gate.ts` |
+| E: coleta agendada por opt-in (ADR-007) | #62 | `dfe-auto-sync.ts`, `dfe-worker.ts` |
+| F: relatório do diagnóstico por e-mail | #65, front #30 | `readiness-delivery.ts`, `DiagnosticoReforma.tsx` |
+| G: comprovante em PDF e validação do Conformidade Fácil | #67, front `feat/comprovante-em-pdf` | `integrity-proof.service.ts`, `conformidade-facil.client.ts` |
 
 **Fora do escopo:** o que depende de API oficial ainda inexistente (formato
-oficial da proposta do Fisco, Calculadora RFB, open finance) e os eventos de
-manifestação além da ciência (210200, 210220, 210240).
+oficial da proposta do Fisco, Calculadora RFB, open finance), os eventos de
+manifestação além da ciência (210200, 210220, 210240), o leiaute 021 da EFD
+ICMS/IPI e o limite de requisições distribuído (só com mais de uma instância).
 
 ## 2. Antes de começar: três regras
 
@@ -56,10 +65,15 @@ doppler run --project audit --config prd -- npm run doctor
 doppler run --project audit --config dev -- npm run doctor
 ```
 
-**Esperado hoje:** tudo `ok`, com três avisos conhecidos:
+**Esperado hoje** (conferido em 25/09 contra `prd`): tudo `ok`, com os avisos
+conhecidos:
 - `cobrança (Asaas)`: modo só cálculo, até as chaves chegarem;
-- `assistente só na camada 1`: sem `ANTHROPIC_API_KEY`;
-- `prazos normativos`: só se o doctor ainda acusar.
+- `e-mail do diagnóstico`: sem os segredos do SMTP (ver `docs/todo_edilson.md`);
+- `.env`: arquivo local, não diz respeito a `prd`;
+- na linha das variáveis, `assistente só na camada 1`: sem `ANTHROPIC_API_KEY`.
+
+Em `dev`, a linha `e-mail do diagnóstico` fica `ok` sem SMTP, como a cobrança
+sem gateway.
 
 Qualquer `FALHA` interrompe o plano.
 
@@ -187,6 +201,127 @@ select access_key, period, ingested_at, ingest_error
 | AC-4 | Assistente reconhece a chave | Perguntar "o que aconteceu com `<chave em grupos de 4>`?" | `intent: historico_do_documento` | ✅ |
 | AC-5 | Restrição no banco | `select pg_get_constraintdef(oid) from pg_constraint where conrelid = 'public.documents'::regclass and contype = 'c'` | Padrão `^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$` | ✅ |
 
+### Segunda varredura, A (#57): configuração, limites e doctor
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SA-1 | Prod exige `TRUST_PROXY` | `npm run doctor` (prd) | Linha das variáveis: `IP do visitante pelo proxy (TRUST_PROXY)` | ✅ |
+| SA-2 | Login limitado por IP e e-mail | Seis logins seguidos com senha errada para o e-mail de teste | O sexto responde 429 `rate_limited`, com `retry_after_seconds`; o login certo volta a funcionar depois do intervalo | ✅ |
+| SA-3 | Calculadora limitada | 31 chamadas seguidas a `POST $API/price-calculator` | A 31ª responde 429 | ✅ |
+| SA-4 | Quota do diagnóstico sem convite ao trial | Estourar a quota diária do diagnóstico (ou ler o teste) | 429 com o limite e quando tentar de novo, e nenhuma menção a trial ou plano | ✅ |
+| SA-5 | Escada de faixas vigente | `curl $API/plans` | `tiers` é a escada de maior `effective_from` até hoje, inteira | ✅ |
+| SA-6 | Faixas inválidas | **Só no Postgres local**: gravar escada não monotônica e chamar `/plans` | 503 `pricing_misconfigured`, e não 500 | ✅ |
+| SA-7 | Ingestão pela CLI | `doppler run --config dev -- npx tsx src/cli/audit.ts ingest <pasta> --tenant <escritório de teste> --cnpj $CNPJ --actor <uuid>` | Resumo aceito/recusado, com `doc.received` no log do CNPJ de teste. **O banco é o de produção: só no escritório de teste** | ✅ |
+| SA-8 | Doctor aponta arquivos que existem | Qualquer ação do doctor que cite `scripts/sql/migracoes/NN-…` | O arquivo citado existe | ✅ |
+
+### Segunda varredura, B (#59): cancelamento de NF-e
+
+**Pré-condição:** a coleta real da Onda 5 funcionando, e uma NF-e de entrada do
+cliente de teste que o emitente vá cancelar (combine com um fornecedor, ou use
+uma nota de teste da própria empresa emitida para o CNPJ).
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SB-1 | Cancelamento real aplicado | Coletar depois do cancelamento na SEFAZ | `result.cancellations` ≥ 1; `doc.cancelled` no log; a nota em `GET /documents` com `cancelled_at` | 🟡 |
+| SB-2 | Cancelada sai das somas | Apurar a competência antes e depois do SB-1 | O ICMS da nota some dos totais; o comprovante traz `documents.cancelled` = 1 e o `total` sem ela | ✅ |
+| SB-3 | Competência confirmada não muda | Cancelamento de nota de competência já confirmada | `GET /dfe` lista a nota em `cancellations_needing_rectification`; nenhum `output.rejected`; os totais confirmados não mudam | ✅ |
+| SB-4 | Hash das projeções antigas intacto | Depois do deploy, `POST /clients/<cnpj de prd>/verify` e o comprovante de uma competência confirmada | `ok: true` e `confirmed_hash_reproduced: true`: o contador novo é opcional e não entra no hash de quem nunca teve cancelamento | ✅ |
+| SB-5 | Evento sem vínculo | Evento com cStat 136, se aparecer | Guardado em `dfe_events` com `blocked_reason`, sem cancelar | ✅ |
+
+```sql
+select access_key, tp_evento, cstat, protocolo, applied_at, blocked_reason
+  from dfe_events where cnpj = '<cnpj>' order by received_at desc limit 20;
+```
+
+### Segunda varredura, C (#68): EFD ICMS/IPI
+
+**Pré-condição:** a EFD ICMS/IPI real de um cliente de Lucro Real (leiaute 019
+ou 020), de preferência uma com conta de energia (C500) e CT-e (D100).
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SC-1 | A soma contra o E110 roda | Importar a EFD (`POST /clients/$CNPJ/efd-icms-ipi`) e ler `GET /icms-ipi-reconciliation/<período>` | `c190-vs-e110-debitos` e `-creditos` `passed` ou `failed` com valores; nunca `not_verified` por causa de `C990`, `D001` ou `D990` (o bug corrigido) | ✅ |
+| SC-2 | Energia e transporte entram | Mesma EFD, com C590 e D190 | `expectedCents` inclui o ICMS deles; a diferença, se houver, bate com o que o PVA mostra | 🟡 |
+| SC-3 | Registro ainda não somado | EFD de varejo com C850 (CF-e SAT) | Débitos `not_verified` citando C850; créditos conferidos | ✅ |
+| SC-4 | Arquivo importado antes da #68 | Uma EFD importada antes do deploy | Continua `not_verified` onde tinha registro não lido; reimportada, passa a ser conferida | ✅ |
+| SC-5 | Rótulo do plano | `curl $API/plans` | `sped_completo` fala em leiautes 019 e 020 | ✅ |
+
+### Segunda varredura, D (#60): o que o plano inclui
+
+Mudar o regime de um cliente em produção muda a fatura dele. **Só no
+escritório de teste.**
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SD-1 | Plano completo passa | Cliente `lucro_real`: apuração, contra-apuração, crédito em risco, dossiê, EFD | Nenhum 403 | ✅ |
+| SD-2 | Fora do plano, 403 com os planos | Cliente de teste em `mei`: `api $API/clients/$CNPJ/assessments/AAAA-MM` | 403 `feature_not_in_plan`, com `feature: apuracao_dual`, `regime: mei` e `plans_with_feature` | ✅ |
+| SD-3 | A base continua aberta | Mesmo cliente MEI: documentos, competências, eventos, Book | Nenhum 403 | ✅ |
+| SD-4 | White label pela tabela | Book com `white_label: true` num cliente `simples_hibrido` | 403 `feature_not_in_plan` (`white_label`) | ✅ |
+| SD-5 | Calendário da carteira | Escritório só com MEI: `api $API/deadlines` | 403 (`calendario`); com um CNPJ de plano maior na carteira, 200 | ✅ |
+| SD-6 | CNPJ de outro escritório | Chamar uma rota fechada com CNPJ que não é da carteira | 404, e não 403 | ✅ |
+| SD-7 | A tela diante do 403 | No front, abrir a apuração do cliente MEI | **Lacuna conhecida:** o front ainda não trata `feature_not_in_plan` e mostra o erro genérico. Registrar o que aparece | — |
+
+### Segunda varredura, E (#62): coleta agendada
+
+**Pré-condição:** a primeira coleta real (A5-4) já feita, e o A1 do cliente de
+teste em `pem_bundle` (`usable_for_sync: true`).
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SE-1 | Dev não liga | Local em dev: `api -X PUT http://localhost:3000/v1/clients/$CNPJ/dfe/auto -d '{"enabled":true}'` | 503 `dfe_gateway_not_configured`: o banco de dev é o de produção | ✅ |
+| SE-2 | Só o owner | O mesmo `PUT` em prd com token de `accountant` ou `viewer` | 403 | ✅ |
+| SE-3 | Ligar em prd | Owner: `api -X PUT $API/clients/$CNPJ/dfe/auto -d '{"enabled":true}'` | 200 com `auto_sync.enabled_by` = owner; `client.updated` com `dfe_auto_sync: true` no log | ✅ |
+| SE-4 | O agendador enfileira sozinho | Esperar o fim do bloqueio de uma hora e mais até 10 min | Job novo com `trigger = 'schedule'`, `requested_by` nulo, terminando `done` | 🟡 |
+| SE-5 | Autoria no log de uso | `api $API/clients/$CNPJ/certificate/usage` | Usos do job agendado com `actor: closer`, `triggered_by: schedule` e `enabled_by`; os manuais com `triggered_by: manual` | ✅ |
+| SE-6 | Ritmo sem punição da SEFAZ | Deixar ligado por um dia | No máximo uma coleta por hora; `dfe_sync_state.last_cstat` nunca `656` | 🟡 |
+| SE-7 | Desligar vale na hora | `PUT … {"enabled":false}` com um job agendado na fila | O job falha com "desligada", sem `certificate.used`; nenhum job novo depois | ✅ |
+| SE-8 | Processo estável | Log do Render ao longo do dia | Nenhum erro `agendador da coleta de DF-e` | — |
+
+```sql
+select trigger, requested_by, status, error, created_at, finished_at
+  from jobs where cnpj = '<cnpj>' and kind = 'dfe_sync' order by created_at desc limit 20;
+```
+
+### Segunda varredura, F (#65): relatório do diagnóstico por e-mail (⛔ até os segredos)
+
+Hoje, sem os segredos:
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SF-1 | Nada guardado sem a chave | Fazer um diagnóstico na tela pública | Resposta com `persisted: { documents: false, summary_until: null }` | ✅ |
+| SF-2 | Lead sem envio, dito na tela | Pedir a cópia por e-mail | Lead gravado; a tela diz que o envio automático ainda não está ligado (`mail_not_configured`), e não "a cópia vai para…" | ✅ |
+| SF-3 | Doctor avisa | `npm run doctor` (prd) | Aviso `e-mail do diagnóstico`, com a lista de segredos | ✅ |
+
+Com os segredos (`docs/todo_edilson.md`, item 1):
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SF-4 | Resumo guardado por 24h | Diagnóstico na tela | `summary_until` ≈ agora + 24h; a tela diz até quando o resumo fica guardado | ✅ |
+| SF-5 | E-mail chega com o PDF | Pedir a cópia para uma caixa sua (Gmail e Outlook) | E-mail na caixa de entrada, não no spam; PDF abre e os números batem com a tela | ⛔ |
+| SF-6 | Remetente autenticado | No Gmail, "Mostrar original" | `SPF: PASS` e `DKIM: PASS` para o domínio do `MAIL_FROM` | ⛔ |
+| SF-7 | Resumo apagado depois do envio | SQL abaixo | `report_ciphertext` nulo e `email_sent_at` preenchido | ✅ |
+| SF-8 | Link de remoção | Abrir o link do e-mail; abrir de novo | Primeira vez: página "o seu e-mail foi apagado", e `email` nulo; segunda: página de link inválido (404) | ✅ |
+| SF-9 | Relatório vencido | Pedir a cópia de um diagnóstico com mais de 24h | 410; a tela pede para gerar de novo; nenhum e-mail gravado | ✅ |
+| SF-10 | Falha do SMTP | Com senha errada no `MAIL_SMTP_URL`, pedir a cópia | Lead gravado, `email_sent: false` (`send_failed`), motivo em `email_error`, e aviso no doctor | ✅ |
+| SF-11 | Exportação dos leads | `doppler run --project audit --config prd -- npx tsx scripts/exportar-leads.ts > leads.csv` | CSV com e-mail, consentimento, origem e envio; nenhuma coluna do relatório | — |
+
+```sql
+select created_at, email is not null as tem_lead, report_expires_at,
+       report_ciphertext is not null as guardado, email_sent_at, email_error
+  from readiness_reports order by created_at desc limit 10;
+```
+
+### Segunda varredura, G (#67): comprovante em PDF e Conformidade Fácil
+
+| ID | Caso | Passos | Esperado | Auto |
+|---|---|---|---|---|
+| SG-1 | PDF do comprovante | `curl -s -D h.txt -o c.pdf -H "Authorization: Bearer $TOKEN" "$API/clients/$CNPJ/periods/AAAA-MM/proof?format=pdf"`, depois `sha256sum c.pdf` e `grep -i x-pdf-sha256 h.txt` | Os dois SHA-256 iguais; o PDF abre, com o hash **inteiro** no rodapé de todas as páginas | ✅ |
+| SG-2 | Mesmos números do JSON | Comparar o PDF com `GET …/proof` | Documentos, eventos, hashes e veredito iguais | ✅ |
+| SG-3 | Só leitura | Contar os eventos do CNPJ antes e depois de baixar | Iguais | ✅ |
+| SG-4 | Botão no front | Tela do comprovante → "Baixar PDF" | Arquivo `comprovante-<cnpj>-<período>.pdf` baixado; o SHA-256 aparece ao lado, copiável | — |
+| SG-5 | Validador aceita a tabela real | `doppler run --config dev -- npx tsx scripts/carregar-classificacao-ibs-cbs.ts --portal` (simulação, não grava) | "18 CST(s), 164 cClassTrib" e a amostra, sem erro de formato. **Executado em 25/09: passou** | ✅ |
+| SG-6 | API da SVRS com mTLS | Com o A1 da operação em `CFF_CERT_PFX`/`CFF_CERT_PASSWORD`, o mesmo script sem `--portal` | Mesmas contagens do SG-5 | ⛔ |
+
 ### Banco de teste por schema (desenvolvimento)
 
 | ID | Caso | Passos | Esperado | Auto |
@@ -204,7 +339,9 @@ TEST_DATABASE_URL=postgres://audit:audit@localhost:55432/audit_test npm test
 npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
 ```
 
-O CI da PR roda os três, mais a imagem Docker respondendo `/health`.
+O CI da PR roda os três, mais a imagem Docker respondendo `/health`. O lint
+do Redocly falha por erro, não por aviso: a `main` tem 60 avisos conhecidos
+(licença, servidor de exemplo, operações sem 4xx) e zero erros.
 
 **Intermitência conhecida (resolvida):** `tax_rules` é global e disputada por
 arquivos em paralelo. O teste "devido não determinável" foi isolado na #43. Se
@@ -218,6 +355,9 @@ outro teste que depende de regra publicada passar a oscilar, a causa provável
   que falta.
 - A primeira coleta real (A5-4 a A5-10) sai sem nenhum `output.rejected`
   inesperado no log do cliente de teste.
+- Um dia de coleta agendada (SE-4 a SE-6) sem nenhum `656` da SEFAZ.
+- Depois de cada deploy, o comprovante de uma competência já confirmada em
+  produção continua com `confirmed_hash_reproduced: true` (SB-4).
 
 ## 7. Registro de execução
 
@@ -233,5 +373,12 @@ outro teste que depende de regra publicada passar a oscilar, a causa provável
 - **Cobrança:** enquanto não houver `ASAAS_API_KEY`, nada é enviado ao gateway.
   Com chave, remover a variável do Doppler `prd` volta ao modo só cálculo.
 - **Assistente:** remover `ANTHROPIC_API_KEY` volta à camada 1.
+- **Coleta agendada:** desligar por cliente (`PUT /dfe/auto {"enabled":false}`)
+  ou todos de uma vez, pelo SQL Editor:
+  `update clients set dfe_auto_sync = false where dfe_auto_sync;`. O job que
+  já estiver na fila falha sem usar o certificado.
+- **E-mail do diagnóstico:** remover `MAIL_SMTP_URL` volta a só gravar o lead.
+  O diagnóstico inteiro tem killswitch: `PUBLIC_DIAGNOSTIC_ENABLED=false`.
+- **Features do plano:** não há chave de desligar. O caminho é reverter a #60.
 - **Migrations:** todas as desta entrega são aditivas ou só afrouxam restrições.
   Nenhuma precisa ser desfeita para reverter o código.
