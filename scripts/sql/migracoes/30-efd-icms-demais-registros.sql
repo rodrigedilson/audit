@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 30 de 35: efd-icms-demais-registros
+-- audit — passo 30 de 37: efd-icms-demais-registros
 --
 -- EFD ICMS/IPI: a conciliação passa a somar energia, transporte, comunicação
 -- e varejo (C590, D190, D590, C320 a C890) contra o E110, e cada linha diz

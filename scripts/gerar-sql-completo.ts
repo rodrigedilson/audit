@@ -24,6 +24,7 @@ const SAIDA_PASSOS = join(process.cwd(), 'scripts/sql/migracoes');
 
 /** Nome legível de cada migration, para o arquivo numerado. */
 const TITULOS: Record<string, string> = {
+  '20260927140000_anon_nos_catalogos.sql': 'anon-nos-catalogos',
   '20260927120000_indices_financeiros.sql': 'indices-financeiros',
   '20260918120000_multi_tenancy.sql': 'multi-tenancy',
   '20260918130000_certificate_vault.sql': 'cofre-certificados',
@@ -57,6 +58,10 @@ const TITULOS: Record<string, string> = {
 };
 
 const DESCRICOES: Record<string, string> = {
+  '20260927140000_anon_nos_catalogos.sql':
+    'Fecha a chave anon os quatro catalogos globais. Dado sem tenant_id nao e\n' +
+    '-- o mesmo que dado que precisa ser publico: nenhuma tela publica os\n' +
+    '-- consome, e quem os le e a nossa API, autenticada.',
   '20260927120000_indices_financeiros.sql':
     'Series de indice financeiro versionadas por competencia, para a correcao\n' +
     '-- monetaria dizer qual indice, qual periodo e qual fonte. Nascem vazias e\n' +

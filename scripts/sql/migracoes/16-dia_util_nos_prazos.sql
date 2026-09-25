@@ -1,5 +1,5 @@
 -- =============================================================================
--- audit — passo 16 de 35: dia_util_nos_prazos
+-- audit — passo 16 de 37: dia_util_nos_prazos
 --
 -- ARQUIVO GERADO por `npm run sql:bundle`. Origem: supabase/migrations/20260923100000_dia_util_nos_prazos.sql
 -- Não edite aqui: altere a migration de origem.
