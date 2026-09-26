@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ApiDeps } from '../server.js';
 import { ValidationError } from '../../esaa/shared/types/esaa-errors.js';
 import { AuditService } from '../../fiscal/audit/audit.service.js';
+import { CatalogService } from '../../fiscal/catalog/catalog.service.js';
 import { canApply, propose, type FindingStatus } from '../../fiscal/audit/findings.js';
 import type { AuditFinding } from '../../fiscal/audit/findings.js';
 import { CRITERIOS_INTERNOS } from '../../fiscal/shared/criterios-internos.js';
@@ -46,6 +47,7 @@ interface CnpjPeriodParams {
  */
 export async function registerAuditRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
   const audit = new AuditService(deps.pool);
+  const catalog = new CatalogService(deps.pool);
 
   /** Catálogo das trilhas. Não depende de cliente nem de competência. */
   app.get('/audit-procedures', async (_request, reply) => {
@@ -119,10 +121,16 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: ApiDeps): 
 
       const orchestrator = await deps.orchestratorFor(scope);
       const hoje = new Date().toISOString().slice(0, 10);
+      /**
+       * As tabelas oficiais, uma vez por requisição. Sem elas a verificação 3
+       * nunca comparava nada: a rota passava tabelas vazias, e toda
+       * classificação saía `not_verified` mesmo com a referência carregada.
+       */
+      const tabelas = await catalog.loadCodeTables();
       const resultados = [];
 
       for (const trilha of trilhas) {
-        const saida = await audit.run(scope, trilha, period, hoje);
+        const saida = await audit.run(scope, trilha, period, hoje, tabelas);
 
         const evento = await orchestrator.processIntention({
           action: 'audit.execution.recorded',
@@ -153,7 +161,7 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: ApiDeps): 
         await audit.persist(
           scope,
           saida,
-          trilha.criterionId,
+          trilha,
           seqDoEvento(evento),
           context.user.userId,
         );

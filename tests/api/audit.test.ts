@@ -6,6 +6,11 @@ import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../../src/api/server.js';
 import { loadEnv } from '../../src/config/env.js';
 import { createClient, createMembership, createTenant, randomCnpj } from '../helpers/db.js';
+import { accessKey } from '../helpers/nfe-xml.js';
+import { AuditService } from '../../src/fiscal/audit/audit.service.js';
+import { TRILHAS_INICIAIS } from '../../src/fiscal/audit/trilhas-iniciais.js';
+import { emptyCodeTables } from '../../src/fiscal/catalog/code-validation.js';
+import { EventScope } from '../../src/esaa/core/event-store/value-objects/event-scope.vo.js';
 
 const DATABASE_URL = process.env['TEST_DATABASE_URL'];
 const JWT_SECRET = 'segredo-de-teste-que-nao-vai-para-producao';
@@ -191,6 +196,133 @@ describe.skipIf(!DATABASE_URL)('API — auditoria contínua', () => {
       const r = await call('GET', `/v1/clients/${randomCnpj()}/audit/${PERIODO}/findings`, owner);
 
       expect(r.statusCode).toBe(404);
+    });
+  });
+
+  /**
+   * A população vista com o dado que o banco tem. Antes o motor recebia tabelas
+   * vazias, nenhuma classificação, e a competência de apropriação copiada da
+   * de emissão — e a verificação 2 passava sempre.
+   */
+  describe('população com dado real', () => {
+    const EMITENTE = '11222333000181';
+    const trilha = (id: string) => TRILHAS_INICIAIS.find((t) => t.procedureId === id)!;
+    const escopo = (): EventScope => EventScope.create(tenantId, cnpj);
+
+    const conferirCriterios = async (): Promise<void> => {
+      await pool.query(
+        `update evaluation_criteria
+            set verified = true, source_ref = 'conferido no teste', verified_at = now()`,
+      );
+    };
+
+    const documentoDeEntrada = async (period: string, numero: string): Promise<string> => {
+      const chave = accessKey(EMITENTE, numero);
+      await pool.query(
+        `insert into documents
+           (tenant_id, cnpj, access_key, model, direction, issued_at, period,
+            issuer_cnpj, counterparty_cnpj, total_cents, event_seq)
+         values ($1::uuid, $2::char(14), $3::char(44), 'nfe', 'inbound',
+                 $4::timestamptz, $5::char(7), $6::char(14), $2::char(14), 180000, 0)`,
+        [tenantId, cnpj, chave, `${period}-10T12:00:00Z`, period, EMITENTE],
+      );
+      return chave;
+    };
+
+    /** A EFD-Contribuições da competência, declarando a nota como entrada. */
+    const escriturar = async (period: string, chave: string): Promise<void> => {
+      const { rows } = await pool.query<{ id: string }>(
+        `insert into sped_files
+           (tenant_id, cnpj, period, kind, layout_version, reference, event_seq)
+         values ($1::uuid, $2::char(14), $3::char(7), 'original', '006', 'teste', 0)
+         returning id`,
+        [tenantId, cnpj, period],
+      );
+      await pool.query(
+        `insert into sped_documents (tenant_id, cnpj, sped_file_id, operation, model, access_key)
+         values ($1::uuid, $2::char(14), $3::uuid, 'inbound', '55', $4::char(44))`,
+        [tenantId, cnpj, rows[0]!.id, chave],
+      );
+    };
+
+    it('sem EFD, a apropriação é desconhecida e o crédito extemporâneo não conclui', async () => {
+      await conferirCriterios();
+      await documentoDeEntrada(PERIODO, '000000101');
+      const audit = new AuditService(pool);
+
+      const populacao = await audit.population(escopo(), PERIODO);
+      const saida = await audit.run(escopo(), trilha('credito-extemporaneo'), PERIODO, '2027-04-01');
+
+      expect(populacao).toHaveLength(1);
+      expect(populacao[0]!.appropriatedPeriod).toBeNull();
+      // Regressão: antes saía `completed`, sem achado — "limpo" onde nada foi comparado.
+      expect(saida.status).toBe('inconclusive');
+      expect(saida.findings).toHaveLength(0);
+    });
+
+    it('com EFD, a nota emitida antes e escriturada na competência é crédito extemporâneo', async () => {
+      await conferirCriterios();
+      const chave = await documentoDeEntrada('2027-02', '000000102');
+      await escriturar(PERIODO, chave);
+      const audit = new AuditService(pool);
+
+      const populacao = await audit.population(escopo(), PERIODO);
+      const saida = await audit.run(escopo(), trilha('credito-extemporaneo'), PERIODO, '2027-04-01');
+
+      expect(populacao.map((s) => s.subject)).toEqual([chave]);
+      expect(populacao[0]!.documentPeriod).toBe('2027-02');
+      expect(populacao[0]!.appropriatedPeriod).toBe(PERIODO);
+      expect(saida.status).toBe('completed');
+      expect(saida.findings).toHaveLength(1);
+      expect(saida.findings[0]!.failed).toContain('v2_data_documento_x_lancamento');
+    });
+
+    it('com EFD, nota emitida na competência e não escriturada não é crédito dela', async () => {
+      const escriturada = await documentoDeEntrada(PERIODO, '000000103');
+      await documentoDeEntrada(PERIODO, '000000104');
+      await escriturar(PERIODO, escriturada);
+
+      const populacao = await new AuditService(pool).population(escopo(), PERIODO);
+
+      expect(populacao.map((s) => s.subject)).toEqual([escriturada]);
+    });
+
+    it('a trilha de classificação examina itens, com a classificação vigente na competência', async () => {
+      await conferirCriterios();
+      const chave = await documentoDeEntrada(PERIODO, '000000105');
+      await pool.query(
+        `insert into document_items (tenant_id, cnpj, access_key, line, code, ncm, total_cents)
+         values ($1::uuid, $2::char(14), $3::char(44), 1, 'SKU-AUD', '99999999', 40000)`,
+        [tenantId, cnpj, chave],
+      );
+      await pool.query(
+        `insert into items (tenant_id, cnpj, item_id) values ($1::uuid, $2::char(14), 'SKU-AUD')`,
+        [tenantId, cnpj],
+      );
+      await pool.query(
+        `insert into item_classifications (tenant_id, cnpj, item_id, effective_from, ncm, event_seq)
+         values ($1::uuid, $2::char(14), 'SKU-AUD', '2027-01', '99999999', 0)`,
+        [tenantId, cnpj],
+      );
+      const tabelas = { ...emptyCodeTables(), ncm: new Set(['30049099']) };
+      const audit = new AuditService(pool);
+      const procedimento = trilha('classificacao-incompativel');
+
+      const saida = await audit.run(escopo(), procedimento, PERIODO, '2027-04-01', tabelas);
+
+      expect(saida.populationSize).toBe(1);
+      expect(saida.findings).toHaveLength(1);
+      expect(saida.findings[0]!.subject).toBe('SKU-AUD');
+      expect(saida.findings[0]!.failed).toContain('v3_lancamento_correto');
+      // Somente achado: item não é crédito, nada sai do saldo.
+      expect(saida.findings[0]!.impactSide).toBe('sem_efeito_no_saldo');
+
+      await audit.persist(escopo(), saida, procedimento, 0, owner);
+      const { rows } = await pool.query<{ subject_kind: string }>(
+        `select subject_kind from audit_findings where tenant_id = $1::uuid and cnpj = $2::char(14)`,
+        [tenantId, cnpj],
+      );
+      expect(rows.map((r) => r.subject_kind)).toEqual(['itens_do_catalogo']);
     });
   });
 

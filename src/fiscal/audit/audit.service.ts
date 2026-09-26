@@ -3,9 +3,10 @@ import type pg from 'pg';
 import type { EventScope } from '../../esaa/core/event-store/value-objects/event-scope.vo.js';
 import { emptyCodeTables, type CodeTables } from '../catalog/code-validation.js';
 import type { EvaluationCriterion } from '../shared/evaluation-criterion.js';
-import type { AuditProcedure, ExaminableSubject } from './audit-procedure.js';
+import type { AuditProcedure, ExaminableSubject, PopulationKind } from './audit-procedure.js';
 import { execute, type ExecutionOutput } from './execution.js';
 import type { AuditFinding, FindingStatus } from './findings.js';
+import { PopulationRepository } from './population.js';
 import { TRILHAS_INICIAIS } from './trilhas-iniciais.js';
 
 /**
@@ -32,7 +33,11 @@ export interface ExecutionRow {
 }
 
 export class AuditService {
-  constructor(private readonly pool: pg.Pool) {}
+  private readonly populations: PopulationRepository;
+
+  constructor(private readonly pool: pg.Pool) {
+    this.populations = new PopulationRepository(pool);
+  }
 
   /** As trilhas que o produto sabe executar. Catálogo, não estado do cliente. */
   procedures(): readonly AuditProcedure[] {
@@ -77,61 +82,18 @@ export class AuditService {
   }
 
   /**
-   * População de créditos de entrada da competência.
+   * População da trilha, pelo tipo que ela declara.
    *
-   * Campo que a origem não sabe vem `null`, e é `null` que faz a verificação
-   * sair `not_verified` em vez de `pass`. `cancelled` e `denied` são os casos
-   * concretos: a ingestão não coleta evento de cancelamento, então dizer
-   * `false` afirmaria que o documento não foi cancelado.
+   * Antes toda trilha recebia créditos de entrada, inclusive a que declara
+   * itens do catálogo — examinava-se outra coisa sob o nome pedido.
    */
-  async population(scope: EventScope, period: string): Promise<ExaminableSubject[]> {
-    const { rows } = await this.pool.query<{
-      access_key: string;
-      issuer_cnpj: string;
-      counterparty_cnpj: string | null;
-      issued_at: Date;
-      period: string;
-      total_cents: string;
-      cancelled_at: Date | null;
-      cancel_protocol: string | null;
-    }>(
-      `select access_key, issuer_cnpj, counterparty_cnpj, issued_at, period,
-              total_cents, cancelled_at, cancel_protocol
-         from documents
-        where tenant_id = $1::uuid and cnpj = $2::char(14)
-          and period = $3::char(7) and direction = 'inbound'
-        order by access_key`,
-      [scope.tenantId, scope.cnpj, period],
-    );
-
-    return rows.map((r) => ({
-      subject: r.access_key,
-      subjectKind: 'creditos_de_entrada' as const,
-      accessKey: r.access_key,
-      issuerCnpj: r.issuer_cnpj,
-      recipientCnpj: r.counterparty_cnpj ?? scope.cnpj,
-      issuedAt: r.issued_at.toISOString().slice(0, 10),
-      documentPeriod: r.period,
-      /**
-       * O cancelamento passou a ser coletado pela distribuição da SEFAZ, então
-       * a verificação 4 deixa de dizer "não sei" sobre ele: `cancelled` é
-       * `true` ou `false`, e não `null`.
-       *
-       * A denegação continua `null` — é situação distinta do cancelamento e a
-       * coleta não a traz. Preencher `false` afirmaria que o documento não foi
-       * denegado, que é o que não se sabe.
-       */
-      authorizationProtocol: r.cancel_protocol,
-      cancelled: r.cancelled_at !== null,
-      denied: null,
-      appropriatedPeriod: r.period,
-      classification: null,
-      ncmFlags: null,
-      cnaePrimary: null,
-      usageKind: null,
-      creditState: 'conditioned' as const,
-      amountCents: Number(r.total_cents),
-    }));
+  async population(
+    scope: EventScope,
+    period: string,
+    kind: PopulationKind = 'creditos_de_entrada',
+    tables: CodeTables = emptyCodeTables(),
+  ): Promise<ExaminableSubject[]> {
+    return this.populations.load(scope, period, kind, tables);
   }
 
   /** Débito da competência: base do impacto relativo. Zero quando não apurada. */
@@ -162,7 +124,13 @@ export class AuditService {
     return rows.map((r) => ({ findingId: r.finding_id, status: r.status as FindingStatus }));
   }
 
-  /** Executa uma trilha sem persistir. A persistência é do chamador, após o evento. */
+  /**
+   * Executa uma trilha sem persistir. A persistência é do chamador, após o evento.
+   *
+   * As tabelas vêm do chamador para serem carregadas uma vez por requisição, e
+   * não uma vez por trilha. O default vazio existe para quem só quer ver o
+   * exame sem referência — e aí a verificação 3 sai `not_verified`, como deve.
+   */
   async run(
     scope: EventScope,
     procedure: AuditProcedure,
@@ -172,7 +140,7 @@ export class AuditService {
   ): Promise<ExecutionOutput> {
     const [criterion, population, base, previous] = await Promise.all([
       this.criterion(procedure.criterionId),
-      this.population(scope, period),
+      this.population(scope, period, procedure.population, tables),
       this.periodBaseCents(scope, period),
       this.previousFindings(scope, period, procedure.procedureId),
     ]);
@@ -203,10 +171,12 @@ export class AuditService {
   async persist(
     scope: EventScope,
     output: ExecutionOutput,
-    criterionId: string,
+    procedure: Pick<AuditProcedure, 'criterionId' | 'population'>,
     eventSeq: number,
     executedBy: string,
   ): Promise<string> {
+    const { criterionId } = procedure;
+
     const client = await this.pool.connect();
 
     try {
@@ -277,7 +247,7 @@ export class AuditService {
             f.procedureId,
             f.period,
             f.subject,
-            'creditos_de_entrada',
+            procedure.population,
             JSON.stringify(f.verifications),
             f.failed,
             f.impactCents,
