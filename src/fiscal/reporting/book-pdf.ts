@@ -1,6 +1,7 @@
 import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
 import type { TrailResult, TrailsSummary } from './audit-trails.js';
+import { auditoriaContinua, type BookAuditSection } from './book-audit-section.js';
 import {
   AMBAR,
   CINZA,
@@ -70,6 +71,11 @@ export interface BookInput {
   coverage: { itemsWithReformGroup: number; itemsTotal: number };
   notComputable: readonly { subject: string; message: string }[];
   trace: readonly BookTraceLine[];
+  /**
+   * Auditoria contínua da competência. O serviço sempre preenche — a seção sai
+   * mesmo vazia; opcional só para quem renderiza o Book sem banco.
+   */
+  audit?: BookAuditSection;
 }
 
 export interface RenderedBook {
@@ -107,6 +113,10 @@ export async function renderBook(input: BookInput): Promise<RenderedBook> {
   resumoDasTrilhas(doc, input);
   apuracao(doc, input);
   detalheDasTrilhas(doc, input);
+
+  if (input.audit !== undefined) {
+    auditoriaContinua(doc, input.audit);
+  }
 
   if (input.includeTrace && input.trace.length > 0) {
     memoriaDeCalculo(doc, input);

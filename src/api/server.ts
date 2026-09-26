@@ -30,6 +30,7 @@ import { registerReconciliationRoutes } from './routes/reconciliation.routes.js'
 import { registerAssistantRoutes } from './routes/assistant.routes.js';
 import { registerCreditRoutes } from './routes/credit.routes.js';
 import { registerAuditRoutes } from './routes/audit.routes.js';
+import { registerAuditReadRoutes } from './routes/audit-read.routes.js';
 import { registerIndicesRoutes } from './routes/indices.routes.js';
 import { registerSimulationRoutes } from './routes/simulation.routes.js';
 import { registerDossierRoutes } from './routes/dossier.routes.js';
@@ -444,8 +445,9 @@ export async function buildServer(options: BuildServerOptions): Promise<FastifyI
       await registerReconciliationRoutes(instance, deps);
       await registerAssistantRoutes(instance, deps);
       await registerCreditRoutes(instance, deps);
-    await registerAuditRoutes(instance, deps);
-    await registerIndicesRoutes(instance, deps);
+      await registerAuditRoutes(instance, deps);
+      await registerAuditReadRoutes(instance, deps);
+      await registerIndicesRoutes(instance, deps);
       await registerCapagRoutes(instance, deps);
       await registerSimulationRoutes(instance, deps);
       await registerDossierRoutes(instance, deps);

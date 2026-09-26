@@ -8,6 +8,7 @@ import {
   type BookOptions,
 } from '../../fiscal/reporting/reporting.service.js';
 import type { Audience } from '../../fiscal/reporting/book-pdf.js';
+import { recentBooks } from '../../fiscal/reporting/recent-books.js';
 import type { Regime } from '../../fiscal/shared/fiscal-vocabulary.js';
 import { PADRAO_DE_CNPJ } from './cnpj-param.js';
 
@@ -149,6 +150,23 @@ export async function registerReportingRoutes(
       } catch (cause) {
         throw traduzir(cause);
       }
+    },
+  );
+
+  /** Os Books mais recentes do escritório, de todos os CNPJs. */
+  app.get<{ Querystring: { limit?: number } }>(
+    '/books',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: { limit: { type: 'integer', minimum: 1, maximum: 50, default: 10 } },
+        },
+      },
+    },
+    async (request) => {
+      const books = await recentBooks(deps.pool, request.tenant.tenantId, request.query.limit ?? 10);
+      return { books, total: books.length };
     },
   );
 

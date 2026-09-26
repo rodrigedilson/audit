@@ -16,6 +16,11 @@ import {
 } from './audit-trails.js';
 import { renderBook, type Audience, type BookInput, type BookTraceLine } from './book-pdf.js';
 import type { CriterionRef } from '../shared/evaluation-criterion.js';
+import { AuditReadModel } from '../audit/audit-read-model.js';
+import { TRILHAS_INICIAIS } from '../audit/trilhas-iniciais.js';
+import { montarSecaoDeAuditoria } from './book-audit-section.js';
+
+const NOMES_DAS_TRILHAS = new Map(TRILHAS_INICIAIS.map((t) => [t.procedureId, t.name]));
 
 export interface BookOptions {
   audience: Audience;
@@ -150,10 +155,13 @@ export class ReportingService {
       );
     }
 
-    const [cliente, escritorio, trace] = await Promise.all([
+    const auditoria = new AuditReadModel(this.pool);
+    const [cliente, escritorio, trace, execucoes, achados] = await Promise.all([
       this.loadClient(scope),
       this.loadTenant(scope.tenantId),
       options.includeTrace ? assessment.trace(scope, period, {}) : Promise.resolve([]),
+      auditoria.executions(scope, period),
+      auditoria.findings(scope, period),
     ]);
 
     const input: BookInput = {
@@ -177,6 +185,7 @@ export class ReportingService {
       coverage: apuracao.coverage,
       notComputable: apuracao.not_computable,
       trace: trace.map(paraLinhaDoBook),
+      audit: montarSecaoDeAuditoria(execucoes, achados, NOMES_DAS_TRILHAS),
     };
 
     const rendered = await renderBook(input);

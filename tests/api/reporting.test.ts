@@ -356,6 +356,53 @@ describe.skipIf(!DATABASE_URL)('API — trilhas de auditoria e Book de fechament
     });
 
     /**
+     * A seção sai mesmo sem trilha executada: omiti-la daria ao Book de uma
+     * competência não auditada a cara de uma auditada e limpa.
+     */
+    it('o Book traz a auditoria contínua, e diz quando nenhuma trilha rodou', async () => {
+      await subir([nfeXml(cnpj, fornecedor, '000000015', true)]);
+      await apurar();
+      const book = (await call('POST', `/v1/clients/${cnpj}/books/${PERIODO}`, {})).json();
+
+      const r = await app.inject({
+        method: 'GET',
+        url: `/v1/clients/${cnpj}/books/${PERIODO}/${book.id}/download`,
+        headers: { authorization: `Bearer ${await tokenFor(owner)}` },
+      });
+      const texto = extractPdfText(r.rawPayload);
+
+      expect(texto).toContain('Auditoria contínua');
+      expect(texto).toContain('Nenhuma trilha foi executada nesta competência');
+    });
+
+    it('a lista do escritório traz os Books de todos os CNPJs, sem os de outro escritório', async () => {
+      await subir([nfeXml(cnpj, fornecedor, '000000015', true)]);
+      await apurar();
+      const book = (await call('POST', `/v1/clients/${cnpj}/books/${PERIODO}`, {})).json();
+
+      const corpo = (await call('GET', '/v1/books?limit=5')).json();
+
+      expect(corpo.books).toHaveLength(1);
+      expect(corpo.books[0]).toMatchObject({
+        id: book.id,
+        cnpj,
+        legal_name: 'CLIENTE LTDA',
+        period: PERIODO,
+        pdf_sha256: book.pdf_sha256,
+      });
+      expect(corpo.books[0]).not.toHaveProperty('pdf');
+
+      const outro = await createTenant(pool, 'Outro escritório');
+      const estranho = await createMembership(pool, outro, 'owner');
+      const alheio = await app.inject({
+        method: 'GET',
+        url: '/v1/books',
+        headers: { authorization: `Bearer ${await tokenFor(estranho)}` },
+      });
+      expect(alheio.json().books).toEqual([]);
+    });
+
+    /**
      * Os bytes são guardados, não regerados. Se o Book fosse remontado no
      * download, mudar uma regra produziria outro arquivo com o mesmo id — e o
      * contador perderia a capacidade de mostrar o que enviou.

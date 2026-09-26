@@ -46,6 +46,11 @@ tags:
     description: Cenários Integrado × Híbrido × Presumido
   - name: reporting
     description: Trilhas de auditoria e Book de fechamento
+  - name: audit
+    description: >
+      Auditoria contínua — trilhas executadas por censo, achados com matriz de
+      risco, revisão do contador e estorno com impedimentos. O sistema examina,
+      o contador revisa, e só então alguém estorna.
   - name: certificates
     description: Cofre de certificados A1 com log de uso
   - name: assistant
@@ -1355,6 +1360,242 @@ paths:
               schema: { type: string, format: binary }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /books:
+    get:
+      tags: [reporting]
+      operationId: listRecentBooks
+      summary: Os Books mais recentes do escritório, de todos os CNPJs, sem os bytes
+      description: >
+        A lista do que já saiu do escritório. O download continua pela rota do
+        CNPJ, que confere o escopo antes de entregar o PDF.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [books, total]
+                properties:
+                  books:
+                    type: array
+                    items: { $ref: "#/components/schemas/RecentBook" }
+                  total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ------------------------------------------------------------- audit
+  /audit-procedures:
+    get:
+      tags: [audit]
+      operationId: listAuditProcedures
+      summary: Catálogo das trilhas executáveis, com o estado do critério de cada uma
+      description: >
+        Não depende de cliente nem de competência. O critério vem junto porque é
+        ele que decide se a execução afirma alguma coisa: com `verified: false`
+        toda execução da trilha sai `inconclusive` e os achados não afirmam.
+        Conferir o critério é ato humano, fora da API.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [procedures, inactive_count]
+                properties:
+                  procedures:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditProcedure" }
+                  inactive_count:
+                    type: integer
+                    description: Trilhas que dependem de dado que a ingestão ainda não coleta.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /audit/overview:
+    get:
+      tags: [audit]
+      operationId: getAuditOverview
+      summary: Painel do escritório — achados abertos por severidade e os CNPJs com mais risco
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditOverview" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /clients/{cnpj}/audit/{period}/executions:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [audit]
+      operationId: listAuditExecutions
+      summary: A execução mais recente de cada trilha na competência
+      description: Lista vazia quer dizer "nunca executada", e não "executada sem achado".
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [period, executions]
+                properties:
+                  period: { $ref: "#/components/schemas/PeriodId" }
+                  executions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditExecution" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [audit]
+      operationId: runAuditProcedures
+      summary: Executa as trilhas (emite `audit.execution.recorded` por trilha)
+      description: >
+        Síncrono. Sem corpo, executa todas as trilhas ativas. Responde **207**
+        sempre, inclusive quando todas concluíram. Reexecutar substitui o
+        resultado anterior e preserva a revisão humana já feita. Exige a
+        competência aberta no pipeline (camada 4). Viewer não executa.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                procedure_ids:
+                  type: array
+                  maxItems: 50
+                  items: { type: string }
+      responses:
+        "207":
+          description: Uma entrada por trilha executada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [period, executions]
+                properties:
+                  period: { $ref: "#/components/schemas/PeriodId" }
+                  executions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditExecutionResult" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/audit/{period}/findings:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/PeriodPath"
+    get:
+      tags: [audit]
+      operationId: listAuditFindings
+      summary: Achados da competência, por severidade, com os impedimentos de estorno
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [open, accepted, rejected, resolved] }
+        - in: query
+          name: procedure_id
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [period, findings]
+                properties:
+                  period: { $ref: "#/components/schemas/PeriodId" }
+                  findings:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditFinding" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /clients/{cnpj}/audit/findings/{finding_id}/review:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/FindingId"
+    post:
+      tags: [audit]
+      operationId: reviewAuditFinding
+      summary: O contador aceita, recusa ou dá por resolvido (emite `audit.finding.reviewed`)
+      description: >
+        Recusar exige `note`: ela vai impressa no Book. Achado inexistente
+        responde `422`, e não `404`, para não revelar achado de outra carteira.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [accepted, rejected, resolved] }
+                note: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [finding_id, status]
+                properties:
+                  finding_id: { type: string }
+                  status: { type: string, enum: [accepted, rejected, resolved] }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Rejected" }
+
+  /clients/{cnpj}/audit/findings/{finding_id}/reversal:
+    parameters:
+      - $ref: "#/components/parameters/Cnpj"
+      - $ref: "#/components/parameters/FindingId"
+    post:
+      tags: [audit]
+      operationId: applyAuditReversal
+      summary: Aplica o estorno do achado (emite `audit.reversal.applied`)
+      description: >
+        Move a competência para `assessed`. Com qualquer impedimento responde
+        `422` com a lista inteira em `blockers` — a mesma que o `GET` dos achados
+        já devolve em `reversal_blockers`.
+      responses:
+        "201":
+          description: Estorno aplicado
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [finding_id, period, credit_reversed_cents, debit_constituted_cents,
+                   net_effect_cents, citation]
+                properties:
+                  finding_id: { type: string }
+                  period: { $ref: "#/components/schemas/PeriodId" }
+                  credit_reversed_cents: { type: integer }
+                  debit_constituted_cents: { type: integer }
+                  net_effect_cents:
+                    type: integer
+                    description: Positivo = mais imposto a pagar.
+                  citation: { type: string, nullable: true }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: >
+            Impedimentos de estorno (corpo com `blockers`) ou achado inexistente
+            (corpo de rejeição do pipeline).
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/ReversalBlocked"
+                  - $ref: "#/components/schemas/Rejection"
+
   # -------------------------------------------------------- certificates
   /clients/{cnpj}/certificate:
     parameters:
@@ -2125,6 +2366,12 @@ components:
       name: period
       required: true
       schema: { $ref: "#/components/schemas/PeriodId" }
+    FindingId:
+      in: path
+      name: finding_id
+      required: true
+      description: "`trilha:competência:sujeito`. Codifique com `encodeURIComponent`."
+      schema: { type: string, minLength: 1 }
     Page:
       in: query
       name: page
@@ -3748,3 +3995,225 @@ components:
       properties:
         code: { type: string }
         message: { type: string }
+
+    RecentBook:
+      type: object
+      required:
+        [id, cnpj, legal_name, period, audience, white_label, pages, pdf_bytes,
+         pdf_sha256, event_seq, generated_at]
+      properties:
+        id: { type: string, format: uuid }
+        cnpj: { type: string, pattern: "^[0-9]{14}$" }
+        legal_name: { type: string, nullable: true }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        audience: { type: string, enum: [accountant, business_owner] }
+        white_label: { type: boolean }
+        pages: { type: integer }
+        pdf_bytes: { type: integer }
+        pdf_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        event_seq: { type: integer }
+        generated_at: { type: string, format: date-time }
+
+    AuditCriterion:
+      type: object
+      required: [criterion_id, kind, citation, verified, source_ref, valid_from, valid_to]
+      properties:
+        criterion_id: { type: string }
+        kind: { type: string }
+        citation: { type: string }
+        verified:
+          type: boolean
+          description: >
+            `false` = ninguém conferiu a norma em texto oficial. A tela mostra
+            "critério não conferido" em cor de aviso, nunca verde.
+        source_ref: { type: string, nullable: true }
+        valid_from: { type: string, format: date, nullable: true }
+        valid_to: { type: string, format: date, nullable: true }
+
+    AuditVerification:
+      type: string
+      enum:
+        - v1_fidedignidade_e_atores
+        - v2_data_documento_x_lancamento
+        - v3_lancamento_correto
+        - v4_autorizacao_competente
+        - v5_relacao_com_a_atividade
+
+    AuditProcedure:
+      type: object
+      required:
+        [procedure_id, name, description, population, sampling_technique,
+         verifications, criterion_id, criterion, reversal_policy, active]
+      properties:
+        procedure_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        population:
+          type: string
+          enum: [documentos_de_entrada, documentos_de_saida, itens_do_catalogo, creditos_de_entrada]
+        sampling_technique: { type: string, enum: [censo, aleatoria_simples, por_relevancia] }
+        verifications:
+          type: array
+          items: { $ref: "#/components/schemas/AuditVerification" }
+        criterion_id: { type: string }
+        criterion:
+          type: object
+          allOf: [{ $ref: "#/components/schemas/AuditCriterion" }]
+          nullable: true
+          description: "`null` quando a trilha cita um critério que não está carregado."
+        reversal_policy: { type: string, enum: [propor_estorno, somente_achado] }
+        active: { type: boolean }
+
+    AuditExecutionResult:
+      type: object
+      required:
+        [procedure_id, status, inconclusive_reason, population_size, examined_count,
+         findings_count, total_impact_cents, criterion_verified]
+      properties:
+        procedure_id: { type: string }
+        status:
+          type: string
+          enum: [completed, inconclusive]
+          description: >
+            `inconclusive` não é `completed` com zero achados: é "rodou e não
+            concluiu", e `inconclusive_reason` diz por quê.
+        inconclusive_reason: { type: string, nullable: true }
+        population_size: { type: integer }
+        examined_count: { type: integer }
+        findings_count: { type: integer }
+        total_impact_cents: { type: integer }
+        criterion_verified: { type: boolean }
+
+    AuditExecution:
+      allOf:
+        - $ref: "#/components/schemas/AuditExecutionResult"
+        - type: object
+          required: [criterion_id, event_seq, executed_by, executed_at]
+          properties:
+            criterion_id: { type: string }
+            event_seq: { type: integer }
+            executed_by: { type: string, format: uuid, nullable: true }
+            executed_at: { type: string, format: date-time }
+
+    ReversalBlocker:
+      type: string
+      enum:
+        - criterio_nao_conferido
+        - teste_inconclusivo
+        - competencia_confirmada
+        - achado_nao_aceito_pelo_contador
+        - sem_efeito_no_saldo
+        - estorno_ja_aplicado
+
+    AuditFinding:
+      type: object
+      required:
+        [finding_id, procedure_id, period, subject, subject_kind, failed, impact_cents,
+         impact_side, likelihood, impact, risk_score, severity, observed_failures,
+         observed_examined, criterion_id, assertable, status, review_note, reviewed_at,
+         verifications, reversed, reversal_blockers]
+      properties:
+        finding_id: { type: string }
+        procedure_id: { type: string }
+        period: { $ref: "#/components/schemas/PeriodId" }
+        subject:
+          type: string
+          description: Chave de acesso (créditos) ou código do item (catálogo). Nunca truncar.
+        subject_kind:
+          type: string
+          enum: [documentos_de_entrada, documentos_de_saida, itens_do_catalogo, creditos_de_entrada]
+        failed:
+          type: array
+          items: { $ref: "#/components/schemas/AuditVerification" }
+        impact_cents: { type: integer }
+        impact_side:
+          type: string
+          enum: [credito_a_estornar, debito_a_constituir, sem_efeito_no_saldo]
+        likelihood: { type: integer, minimum: 1, maximum: 5 }
+        impact: { type: integer, minimum: 1, maximum: 5 }
+        risk_score: { type: integer, minimum: 1, maximum: 25 }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        observed_failures: { type: integer }
+        observed_examined: { type: integer }
+        criterion_id: { type: string }
+        assertable:
+          type: boolean
+          description: "`false` = critério não conferido: o achado aparece e não afirma."
+        status: { type: string, enum: [open, accepted, rejected, resolved] }
+        review_note: { type: string, nullable: true }
+        reviewed_at: { type: string, format: date-time, nullable: true }
+        verifications:
+          type: array
+          description: >
+            As verificações do sujeito, cada uma com `outcome` (`pass`, `fail` ou
+            `not_verified`), `rationale` e os campos comparados documento × critério.
+          items:
+            type: object
+            properties:
+              verification: { $ref: "#/components/schemas/AuditVerification" }
+              outcome: { type: string, enum: [pass, fail, not_verified] }
+              rationale: { type: string }
+              compared:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    field: { type: string }
+                    documentValue: { type: string }
+                    criterionValue: { type: string, nullable: true }
+                    matches: { type: boolean }
+        reversed: { type: boolean }
+        reversal_blockers:
+          type: array
+          description: Vazio = o estorno pode ser aplicado. Mesmos códigos do `422` do estorno.
+          items: { $ref: "#/components/schemas/ReversalBlocker" }
+
+    ReversalBlocked:
+      type: object
+      required: [finding_id, blockers, net_effect_cents, message]
+      properties:
+        finding_id: { type: string }
+        blockers:
+          type: array
+          items: { $ref: "#/components/schemas/ReversalBlocker" }
+        net_effect_cents: { type: integer }
+        message: { type: string }
+
+    AuditOverview:
+      type: object
+      required:
+        [open_findings, open_assertable, clients_total, clients_never_audited,
+         last_execution_at, top_clients]
+      properties:
+        open_findings:
+          type: object
+          required: [critical, high, medium, low, total]
+          properties:
+            critical: { type: integer }
+            high: { type: integer }
+            medium: { type: integer }
+            low: { type: integer }
+            total: { type: integer }
+        open_assertable:
+          type: integer
+          description: Dos abertos, quantos afirmam (critério conferido). O resto é ressalva.
+        clients_total: { type: integer }
+        clients_never_audited:
+          type: integer
+          description: CNPJs em que nenhuma trilha foi executada ainda.
+        last_execution_at: { type: string, format: date-time, nullable: true }
+        top_clients:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required:
+              [cnpj, legal_name, open_findings, critical, high, open_impact_cents, last_execution_at]
+            properties:
+              cnpj: { type: string, pattern: "^[0-9]{14}$" }
+              legal_name: { type: string, nullable: true }
+              open_findings: { type: integer }
+              critical: { type: integer }
+              high: { type: integer }
+              open_impact_cents: { type: integer }
+              last_execution_at: { type: string, format: date-time, nullable: true }

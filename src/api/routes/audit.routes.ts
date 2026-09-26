@@ -23,7 +23,7 @@ function seqDoEvento(evento: { accepted: boolean; event?: { event_seq: number } 
   return evento.event.event_seq;
 }
 
-const CNPJ_PERIOD_SCHEMA = {
+export const CNPJ_PERIOD_SCHEMA = {
   type: 'object',
   required: ['cnpj', 'period'],
   properties: {
@@ -32,7 +32,7 @@ const CNPJ_PERIOD_SCHEMA = {
   },
 } as const;
 
-interface CnpjPeriodParams {
+export interface CnpjPeriodParams {
   cnpj: string;
   period: string;
 }
@@ -48,31 +48,6 @@ interface CnpjPeriodParams {
 export async function registerAuditRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
   const audit = new AuditService(deps.pool);
   const catalog = new CatalogService(deps.pool);
-
-  /** Catálogo das trilhas. Não depende de cliente nem de competência. */
-  app.get('/audit-procedures', async (_request, reply) => {
-    const procedures = audit.procedures();
-
-    return reply.send({
-      procedures: procedures.map((p) => ({
-        procedure_id: p.procedureId,
-        name: p.name,
-        description: p.description,
-        population: p.population,
-        sampling_technique: p.sampling.technique,
-        verifications: p.verifications,
-        criterion_id: p.criterionId,
-        reversal_policy: p.reversalPolicy,
-        active: p.active,
-      })),
-      /**
-       * Declarado, e não escondido: das trilhas listadas, as inativas dependem
-       * de dado que a ingestão ainda não coleta. O escritório precisa ver o que
-       * ainda não é conferido, em vez de supor que é.
-       */
-      inactive_count: procedures.filter((p) => !p.active).length,
-    });
-  });
 
   /**
    * Executa as trilhas ativas sobre a competência.
@@ -179,40 +154,6 @@ export async function registerAuditRoutes(app: FastifyInstance, deps: ApiDeps): 
       }
 
       return reply.code(207).send({ period, executions: resultados });
-    },
-  );
-
-  app.get<{
-    Params: CnpjPeriodParams;
-    Querystring: { status?: FindingStatus; procedure_id?: string };
-  }>(
-    '/clients/:cnpj/audit/:period/findings',
-    {
-      schema: {
-        params: CNPJ_PERIOD_SCHEMA,
-        querystring: {
-          type: 'object',
-          properties: {
-            status: { type: 'string', enum: ['open', 'accepted', 'rejected', 'resolved'] },
-            procedure_id: { type: 'string' },
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      const scope = await deps.tenantResolver.scopeFor(request.tenant, request.params.cnpj);
-
-      const filtro: { status?: FindingStatus; procedureId?: string } = {};
-      if (request.query.status !== undefined) {
-        filtro.status = request.query.status;
-      }
-      if (request.query.procedure_id !== undefined) {
-        filtro.procedureId = request.query.procedure_id;
-      }
-
-      const achados = await audit.findings(scope, request.params.period, filtro);
-
-      return reply.send({ period: request.params.period, findings: achados });
     },
   );
 

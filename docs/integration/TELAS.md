@@ -513,6 +513,42 @@ Rotas na Onda 3 (`/users`, `/invites`). Papéis já valem na API:
 A tela deve esconder o que o papel não permite, **e** tratar o `403`: esconder
 botão não é autorização.
 
+### 17. Auditoria contínua da competência
+`GET /v1/audit-procedures` · `GET|POST /clients/{cnpj}/audit/{period}/executions` ·
+`GET /clients/{cnpj}/audit/{period}/findings` · `POST /clients/{cnpj}/audit/findings/{finding_id}/review` ·
+`POST /clients/{cnpj}/audit/findings/{finding_id}/reversal` · `GET /v1/audit/overview`
+
+Três atos, e a tela não atalha nenhum: o sistema **examina**, o contador
+**revisa**, e só então alguém **estorna**.
+
+- **O critério vem antes da execução.** Cada trilha de `/audit-procedures` traz
+  `criterion.verified`. Com `false`, a execução sai `inconclusive` e os achados
+  não afirmam — mostre "critério não conferido" em cor de aviso **antes** de o
+  contador clicar em executar, para a inconclusão não parecer defeito. Conferir
+  o critério é ato humano, fora da API; a tela não oferece botão para isso.
+- **`inconclusive` não é `completed` com zero achados.** Mostre o
+  `inconclusive_reason` por extenso. Lista de execuções vazia é "nunca
+  executada", com texto próprio, e não "nada encontrado".
+- **Pré-requisitos dizem qual verificação vai sair "não verificado".** Sem a
+  EFD-Contribuições da competência, a verificação 2 (crédito extemporâneo) não
+  tem com o que comparar. Sem as tabelas oficiais, a 3 não compara nada. A
+  trilha "teste completo" continua inconclusiva enquanto a destinação (insumo ×
+  uso e consumo) não estiver no cadastro — é estado declarado.
+- **`POST executions` responde `207` sempre** e exige competência aberta
+  (`422`, camada 4). Viewer não executa.
+- **O sujeito nunca é truncado.** Chave de acesso tem 44 dígitos e é por ela que
+  o contador acha a nota.
+- **`assertable: false` é "não afirma"**, não "baixa prioridade". Na gaveta do
+  achado, `not_verified` fica visualmente distinto de `pass` e de `fail`, e os
+  `compared` mostram documento × critério lado a lado.
+- **Recusar exige nota** — ela vai impressa no Book.
+- **O botão de estorno lê `reversal_blockers`.** Vazio habilita; com itens,
+  desabilite e liste cada impedimento traduzido. O `422` do estorno traz a mesma
+  lista em `blockers`, caso o estado mude entre a leitura e o clique. Estorno
+  aplicado move a competência para `assessed`.
+- **O Book traz a seção "Auditoria contínua" sempre**, inclusive quando nenhuma
+  trilha rodou — e aí diz isso, em vez de omitir.
+
 ## Telas das ondas seguintes
 
 Nenhuma: o roadmap do briefing está coberto da Onda 0 à 12. O que sobrou está no

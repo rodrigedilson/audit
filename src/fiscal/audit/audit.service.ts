@@ -18,20 +18,6 @@ import { TRILHAS_INICIAIS } from './trilhas-iniciais.js';
  * resultado seja reproduzido a partir do log.
  */
 
-export interface ExecutionRow {
-  id: string;
-  procedureId: string;
-  period: string;
-  status: string;
-  inconclusiveReason: string | null;
-  populationSize: number;
-  examinedCount: number;
-  findingsCount: number;
-  totalImpactCents: number;
-  criterionVerified: boolean;
-  executedAt: string;
-}
-
 export class AuditService {
   private readonly populations: PopulationRepository;
 
@@ -284,30 +270,6 @@ export class AuditService {
     } finally {
       client.release();
     }
-  }
-
-  async findings(
-    scope: EventScope,
-    period: string,
-    filtro: { status?: FindingStatus; procedureId?: string } = {},
-  ): Promise<Record<string, unknown>[]> {
-    const { rows } = await this.pool.query<Record<string, unknown>>(
-      `select finding_id, procedure_id, period, subject, failed, impact_cents,
-              impact_side, likelihood, impact, risk_score, severity,
-              observed_failures, observed_examined, criterion_id, assertable,
-              status, review_note, verifications
-         from audit_findings
-        where tenant_id = $1::uuid and cnpj = $2::char(14) and period = $3::char(7)
-          and ($4::text is null or status = $4)
-          and ($5::text is null or procedure_id = $5)
-        order by case severity
-                   when 'critical' then 0 when 'high' then 1
-                   when 'medium' then 2 else 3 end,
-                 impact_cents desc, finding_id`,
-      [scope.tenantId, scope.cnpj, period, filtro.status ?? null, filtro.procedureId ?? null],
-    );
-
-    return rows;
   }
 
   async finding(scope: EventScope, findingId: string): Promise<Record<string, unknown> | null> {

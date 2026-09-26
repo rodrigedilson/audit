@@ -326,6 +326,124 @@ describe.skipIf(!DATABASE_URL)('API — auditoria contínua', () => {
     });
   });
 
+  /** O que a tela lê: critério antes de rodar, execução por trilha, impedimentos. */
+  describe('leitura para a tela', () => {
+    const conferirCriterios = async (): Promise<void> => {
+      await pool.query(
+        `update evaluation_criteria
+            set verified = true, source_ref = 'conferido no teste', verified_at = now()`,
+      );
+    };
+
+    const executar = () => call('POST', `/v1/clients/${cnpj}/audit/${PERIODO}/executions`, owner);
+    const achados = async () =>
+      (await call('GET', `/v1/clients/${cnpj}/audit/${PERIODO}/findings`, owner)).json().findings;
+
+    it('o catálogo traz o critério de cada trilha, com o estado da conferência', async () => {
+      const corpo = (await call('GET', '/v1/audit-procedures', viewer)).json();
+
+      for (const p of corpo.procedures) {
+        expect(p.criterion).not.toBeNull();
+        expect(p.criterion.criterion_id).toBe(p.criterion_id);
+        expect(p.criterion.verified).toBe(false);
+        expect(String(p.criterion.citation).length).toBeGreaterThan(0);
+      }
+    });
+
+    it('antes de executar, a lista de execuções é vazia — nunca executada', async () => {
+      const r = await call('GET', `/v1/clients/${cnpj}/audit/${PERIODO}/executions`, viewer);
+
+      expect(r.statusCode).toBe(200);
+      expect(r.json().executions).toEqual([]);
+    });
+
+    it('depois de executar duas vezes, lista só a última de cada trilha', async () => {
+      await abrirCompetencia();
+      await documentoComChaveQuebrada();
+      const primeira = (await executar()).json();
+      await executar();
+
+      const corpo = (await call('GET', `/v1/clients/${cnpj}/audit/${PERIODO}/executions`, viewer)).json();
+
+      expect(corpo.executions).toHaveLength(primeira.executions.length);
+      for (const e of corpo.executions) {
+        expect(e.status).toBe('inconclusive');
+        expect(e.event_seq).toBeGreaterThan(0);
+        expect(e.executed_by).toBe(owner);
+        expect(typeof e.total_impact_cents).toBe('number');
+      }
+    });
+
+    it('o achado vem com impacto numérico e os impedimentos do estorno', async () => {
+      await abrirCompetencia();
+      await documentoComChaveQuebrada();
+      await executar();
+
+      const [achado] = await achados();
+
+      expect(typeof achado.impact_cents).toBe('number');
+      expect(achado.reversed).toBe(false);
+      expect(achado.reversal_blockers).toEqual(
+        expect.arrayContaining(['criterio_nao_conferido', 'achado_nao_aceito_pelo_contador']),
+      );
+    });
+
+    /** A tela e o portão dão a mesma resposta: impedimento vazio é estorno aceito. */
+    it('critério conferido e achado aceito zeram os impedimentos; o estorno aplicado volta como impedimento', async () => {
+      await conferirCriterios();
+      await abrirCompetencia();
+      await documentoComChaveQuebrada();
+      await executar();
+      const alvo = (await achados()).find(
+        (a: { impact_side: string }) => a.impact_side === 'credito_a_estornar',
+      );
+      const url = `/v1/clients/${cnpj}/audit/findings/${encodeURIComponent(alvo.finding_id)}`;
+      await call('POST', `${url}/review`, owner, { status: 'accepted' });
+
+      const aceito = (await achados()).find(
+        (a: { finding_id: string }) => a.finding_id === alvo.finding_id,
+      );
+      expect(aceito.reversal_blockers).toEqual([]);
+
+      expect((await call('POST', `${url}/reversal`, owner)).statusCode).toBe(201);
+      const estornado = (await achados()).find(
+        (a: { finding_id: string }) => a.finding_id === alvo.finding_id,
+      );
+      expect(estornado.reversed).toBe(true);
+      expect(estornado.reversal_blockers).toContain('estorno_ja_aplicado');
+    });
+
+    it('o painel do escritório conta os achados abertos e aponta o CNPJ', async () => {
+      await abrirCompetencia();
+      await documentoComChaveQuebrada();
+      await executar();
+      const abertos = (await achados()).length;
+
+      const corpo = (await call('GET', '/v1/audit/overview', viewer)).json();
+
+      expect(corpo.open_findings.total).toBe(abertos);
+      expect(corpo.open_assertable).toBe(0);
+      expect(corpo.clients_total).toBe(1);
+      expect(corpo.clients_never_audited).toBe(0);
+      expect(corpo.top_clients[0].cnpj).toBe(cnpj);
+      expect(corpo.last_execution_at).not.toBeNull();
+    });
+
+    it('o painel não mostra a carteira de outro escritório', async () => {
+      await abrirCompetencia();
+      await documentoComChaveQuebrada();
+      await executar();
+      const outro = await createTenant(pool, 'Outro escritório');
+      const estranho = await createMembership(pool, outro, 'owner');
+
+      const corpo = (await call('GET', '/v1/audit/overview', estranho)).json();
+
+      expect(corpo.open_findings.total).toBe(0);
+      expect(corpo.top_clients).toEqual([]);
+      expect(corpo.clients_total).toBe(0);
+    });
+  });
+
   describe('revisão e estorno', () => {
     const conferirCriterios = async (): Promise<void> => {
       await pool.query(
